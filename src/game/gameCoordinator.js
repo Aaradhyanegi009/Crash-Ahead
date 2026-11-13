@@ -40,8 +40,8 @@ export class CrashAheadGame {
     this.koPendingRound = 0;
     this._pendingAward = 0;
 
-    this.p1Input = { l: false, r: false };
-    this.p2Input = { l: false, r: false };
+    this.p1Input = { l: false, r: false, jump: false };
+    this.p2Input = { l: false, r: false, jump: false };
     this.localRematchWant = false;
     this.remoteRematchWant = false;
     this._autoStartTimer = null;
@@ -71,10 +71,7 @@ export class CrashAheadGame {
         if (!this.koPending) {
           this.koPending = true;
           if (!isWater) this.sim.popHelmet(loserIdx, pt);
-          else {
-            const c = loserIdx === 1 ? this.sim.p1Car : this.sim.p2Car;
-            if (c) c.dead = true;
-          }
+          else this.sim.ejectWaterRagdoll(loserIdx, pt);
           this.koTimerMs = 900;
         }
         return;
@@ -89,12 +86,11 @@ export class CrashAheadGame {
           this.net.sendEvent('bonk', { x: Math.round(pt.x), y: Math.round(pt.y), p: loserIdx });
         }
       } else {
-        const c = loserIdx === 1 ? this.sim.p1Car : this.sim.p2Car;
-        if (c) c.dead = true;
+        this.sim.ejectWaterRagdoll(loserIdx, pt);
         this.renderer.spawnWaterSplash(pt.x, this.sim.waterCrestY);
         this.sound.playSplash();
         if (this.mode === 'online_host') {
-          this.net.sendEvent('splash', { x: Math.round(pt.x), y: Math.round(this.sim.waterCrestY) });
+          this.net.sendEvent('splash', { x: Math.round(pt.x), y: Math.round(this.sim.waterCrestY), p: loserIdx });
         }
       }
 
@@ -117,9 +113,17 @@ export class CrashAheadGame {
       if (norm > 0.4) Haptics.bump();
       if (this.mode === 'online_host') this.net.sendEvent('bump', { n: Math.round(norm * 100) / 100 });
     };
-    this.sim.onJump = (_idx, pt) => {
+    this.sim.onJump = (idx, pt) => {
+      if (this.mode === 'online_client' && idx !== 2) return;
       this.renderer.spawnJumpBurst(pt.x, pt.y);
       if (this.mode !== 'attract') this.sound.playJump();
+      if (this.mode === 'online_host') {
+        this.net.sendEvent('jump', { p: idx, x: Math.round(pt.x), y: Math.round(pt.y) });
+      }
+    };
+    this.sim.onRagdollSplash = (x, crestY) => {
+      this.renderer.spawnWaterSplash(x, crestY);
+      if (this.mode !== 'attract') this.sound.playSplash();
     };
   }
 
@@ -179,6 +183,7 @@ export class CrashAheadGame {
           this.koPendingRound = this.roundNumber;
           this.phase = 'KO';
           this.bannerText = 'BONK!';
+          if (msg.p) this.sim.popHelmet(msg.p, { x: msg.x, y: msg.y });
           this.renderer.spawnBonkPop(msg.x, msg.y, msg.p === 1 ? PALETTE.red.body : PALETTE.blue.body);
           this.sound.playBonk();
           Haptics.ko();
@@ -186,9 +191,15 @@ export class CrashAheadGame {
           this.koPendingRound = this.roundNumber;
           this.phase = 'KO';
           this.bannerText = 'SPLASH!';
+          if (msg.p) this.sim.ejectWaterRagdoll(msg.p, { x: msg.x, y: msg.y });
           this.renderer.spawnWaterSplash(msg.x, msg.y || this.sim.waterCrestY);
           this.sound.playSplash();
           Haptics.ko();
+        } else if (msg.kind === 'jump') {
+          if (msg.p === 1) {
+            this.renderer.spawnJumpBurst(msg.x, msg.y);
+            this.sound.playJump();
+          }
         } else if (msg.kind === 'match_over') {
           this.scores = msg.scores;
           this.ui.updateScores(this.scores);
@@ -438,8 +449,8 @@ export class CrashAheadGame {
     this.koWindowMs = 0;
     this.koTimerMs = 0;
     this._pendingAward = 0;
-    this.p1Input = { l: false, r: false };
-    this.p2Input = { l: false, r: false };
+    this.p1Input = { l: false, r: false, jump: false };
+    this.p2Input = { l: false, r: false, jump: false };
     if (this.mode === 'online_host' || this.mode === 'online_client') {
       this.net.resetRoundInput();
     }
@@ -601,6 +612,11 @@ export class CrashAheadGame {
         this.mode !== 'attract' && this.phase === 'FIGHT',
         this.sim.roundElapsedMs,
         this.sim.waterRising
+      );
+      this.ui.updateJumpPads(
+        this.sim.getJumpCooldownRemaining(1),
+        this.sim.getJumpCooldownRemaining(2),
+        this.mode !== 'attract' && this.phase === 'FIGHT'
       );
       return elapsed;
     };

@@ -9,6 +9,7 @@ export const FIXED_DT = 1000 / 60;
 export const WIN_SCORE = 5;
 export const KO_FREEZE_MS = 650;
 export const DOUBLE_KO_WINDOW_MS = 100;
+export const JUMP_COOLDOWN_MS = 5000;
 export const PEER_PREFIX = 'crash-ahead-p2p-';
 
 export const WATER_CREST_Y = WORLD_H - 62;  // 658
@@ -67,7 +68,13 @@ export const VEHICLE_PHYSICS = Object.freeze({
   REVERSE_TORQUE,
   MAX_FORWARD_SPEED,
   MAX_REVERSE_SPEED,
-  MAX_WORLD_SPEED: 9.5,
+  GRAVITY_Y: 1.12,
+  JUMP_COOLDOWN_MS,
+  JUMP_IMPULSE_VY: 8.0,
+  JUMP_MAX_VY: 9.6,
+  JUMP_MIN_VY: 6.0,
+  JUMP_FWD_BOOST: 1.35,
+  MAX_WORLD_SPEED: 10.2,
   SLOPE_GRIP_MULTIPLIER,
   CENTER_OF_MASS_OFFSET,
   SUSPENSION_DAMPING,
@@ -78,7 +85,7 @@ export const VEHICLE_PHYSICS = Object.freeze({
   ACCEL_MIN_GAIN: 0.24,
   ACCEL_RELEASE_DECAY: 2.4,
   COAST_DRAG_COEFF: 0.00055,
-  CURVE_ADHESION_FORCE: 0.0118, // Centripetal grip for steep concave walls & curved bowls
+  CURVE_ADHESION_FORCE: 0.014,  // Centripetal grip for steep concave walls & curved bowls (tuned for 1.12x gravity)
   BRAKE_DECEL_FORCE: 0.025,
   BRAKE_ZERO_THRESHOLD: 0.28,
   MAX_ANGULAR_VELOCITY: 0.145,
@@ -97,7 +104,7 @@ export const VEHICLE_PHYSICS = Object.freeze({
   WHEEL_COAST_FRICTION: 0.68,
   WHEEL_MAX_SPIN: 0.515,         // 6.6 / 13.05 = 0.506 rad/tick + grip headroom
   WHEEL_REVERSE_MAX_SPIN: 0.400, // 5.1 / 13.05 = 0.391 rad/tick + grip headroom
-  GRAVITY_COMP_SCALE: 0.82
+  GRAVITY_COMP_SCALE: 0.90
 });
 
 export const CAR_SPEC = Object.freeze({
@@ -106,7 +113,7 @@ export const CAR_SPEC = Object.freeze({
   height: 26 * CAR_SCALE,       // 23.4
   density: 0.005,
   restitution: 0.10,
-  friction: 0.35,
+  friction: 0.05,
   wheelOffsetX: 27 * CAR_SCALE, // 24.3
   wheelOffsetY: 13 * CAR_SCALE, // 11.7
   wheelRadius: 14.5 * CAR_SCALE,// 13.05

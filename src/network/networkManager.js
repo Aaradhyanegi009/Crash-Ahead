@@ -86,14 +86,14 @@ export class NetworkManager {
     this.lastRemoteAt = 0;
 
     this.matchEpoch = 1;
-    this.remoteInput = { seq: 0, l: false, r: false, holdMs: 0 };
+    this.remoteInput = { seq: 0, l: false, r: false, j: false, jump: false, holdMs: 0 };
     this.remoteInputAt = 0;
-    this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
+    this.lastHostP1Input = { l: false, r: false, jump: false, holdMs: 0 };
     this.hostInputPredictTicks = 0;
     this.inputSeq = 0;
     this.inputSendTick = 0;
     this.releaseBurstLeft = 0;
-    this.lastInputSent = { l: false, r: false };
+    this.lastInputSent = { l: false, r: false, j: false };
     this.pendingInputs = [];
     this.pendingSnapshot = null;
     this.lastSeq = 0;
@@ -323,35 +323,37 @@ export class NetworkManager {
   }
 
   resetRoundInput() {
-    this.remoteInput = { seq: this.remoteInput.seq || 0, l: false, r: false, holdMs: 0 };
+    this.remoteInput = { seq: this.remoteInput.seq || 0, l: false, r: false, j: false, jump: false, holdMs: 0 };
     this.remoteInputAt = 0;
-    this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
+    this.lastHostP1Input = { l: false, r: false, jump: false, holdMs: 0 };
     this.hostInputPredictTicks = 0;
     this.releaseBurstLeft = 0;
-    this.lastInputSent = { l: false, r: false };
+    this.lastInputSent = { l: false, r: false, j: false };
     this.pendingInputs = [];
   }
 
   resetPredictionState(nextEpoch = null) {
     if (typeof nextEpoch === 'number') this.matchEpoch = nextEpoch;
-    this.remoteInput = { seq: 0, l: false, r: false, holdMs: 0 };
+    this.remoteInput = { seq: 0, l: false, r: false, j: false, jump: false, holdMs: 0 };
     this.remoteInputAt = 0;
-    this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
+    this.lastHostP1Input = { l: false, r: false, jump: false, holdMs: 0 };
     this.hostInputPredictTicks = 0;
     this.inputSeq = 0;
     this.inputSendTick = 0;
     this.releaseBurstLeft = 0;
-    this.lastInputSent = { l: false, r: false };
+    this.lastInputSent = { l: false, r: false, j: false };
     this.pendingInputs = [];
     this.pendingSnapshot = null;
     this.lastSeq = 0;
   }
 
   tickHostWatchdog() {
-    if ((this.remoteInput.l || this.remoteInput.r) && this.remoteInputAt > 0) {
+    if ((this.remoteInput.l || this.remoteInput.r || this.remoteInput.j) && this.remoteInputAt > 0) {
       if (performance.now() - this.remoteInputAt > 420) {
         this.remoteInput.l = false;
         this.remoteInput.r = false;
+        this.remoteInput.j = false;
+        this.remoteInput.jump = false;
         this.remoteInput.holdMs = 0;
       }
     }
@@ -677,7 +679,8 @@ export class NetworkManager {
         if (typeof msg.ep === 'number' && msg.ep !== this.matchEpoch) return;
         const seq = msg.seq || 0;
         if (seq >= this.remoteInput.seq || seq === 0) {
-          this.remoteInput = { seq, l: !!msg.l, r: !!msg.r, holdMs: msg.holdMs || 0 };
+          const j = !!msg.j;
+          this.remoteInput = { seq, l: !!msg.l, r: !!msg.r, j, jump: j, holdMs: msg.holdMs || 0 };
           this.remoteInputAt = performance.now();
         }
         break;
@@ -716,11 +719,11 @@ export class NetworkManager {
 
   flushClientRelease() {
     if (!this.isConnected()) return;
-    if (this.lastInputSent.l || this.lastInputSent.r) {
+    if (this.lastInputSent.l || this.lastInputSent.r || this.lastInputSent.j) {
       const seq = ++this.inputSeq;
-      this.lastInputSent = { l: false, r: false };
+      this.lastInputSent = { l: false, r: false, j: false };
       this.releaseBurstLeft = 2;
-      this._sendRaw({ t: 'input', ep: this.matchEpoch, seq, l: false, r: false, holdMs: 0 }, true);
+      this._sendRaw({ t: 'input', ep: this.matchEpoch, seq, l: false, r: false, j: false, holdMs: 0 }, true);
     }
   }
 
@@ -728,23 +731,24 @@ export class NetworkManager {
     const seq = ++this.inputSeq;
     const l = !!(inp && inp.l);
     const r = !!(inp && inp.r);
+    const j = !!(inp && inp.jump);
     const holdMs = (inp && inp.holdMs) || 0;
-    const cmd = { seq, l, r, holdMs };
+    const cmd = { seq, l, r, j, jump: j, holdMs };
     this.pendingInputs.push(cmd);
     if (this.pendingInputs.length > 60) this.pendingInputs.shift();
 
     if (this.isConnected()) {
       this.inputSendTick++;
-      const changed = l !== this.lastInputSent.l || r !== this.lastInputSent.r;
-      if (changed && !l && !r) this.releaseBurstLeft = 2;
+      const changed = l !== this.lastInputSent.l || r !== this.lastInputSent.r || j !== this.lastInputSent.j;
+      if (changed && !l && !r && !j) this.releaseBurstLeft = 2;
       const relayOnly = this.transportName() === 'relay';
       const heldSend = (l || r) && (this.inputSendTick % (relayOnly ? 3 : 2) === 0);
-      const releaseEcho = !l && !r && this.releaseBurstLeft > 0;
+      const releaseEcho = !l && !r && !j && this.releaseBurstLeft > 0;
       const idleHeartbeat = this.inputSendTick % (relayOnly ? 8 : 4) === 0;
       if (changed || heldSend || releaseEcho || idleHeartbeat) {
         if (releaseEcho) this.releaseBurstLeft--;
-        this.lastInputSent = { l, r };
-        this._sendRaw({ t: 'input', ep: this.matchEpoch, seq, l, r, holdMs }, true);
+        this.lastInputSent = { l, r, j };
+        this._sendRaw({ t: 'input', ep: this.matchEpoch, seq, l, r, j, holdMs }, true);
       }
     }
     return cmd;
@@ -797,7 +801,7 @@ export class NetworkManager {
       bt: meta.bannerText,
       rt: Math.round(sim.roundElapsedMs),
       wy: Math.round(sim.waterCrestY * 10) / 10,
-      i1: p1 ? [p1.l ? 1 : 0, p1.r ? 1 : 0, p1.holdMs || 0] : [0, 0, 0],
+      i1: p1 ? [p1.l ? 1 : 0, p1.r ? 1 : 0, p1.holdMs || 0, p1.jump ? 1 : 0] : [0, 0, 0, 0],
       d1: sim.p1Car.dead ? 1 : 0,
       d2: sim.p2Car.dead ? 1 : 0,
       dr1: sim.p1Car.driving ? 1 : 0,
@@ -806,6 +810,8 @@ export class NetworkManager {
       hm2: Math.round(sim.p2Car.accelHoldMs || 0),
       ad1: sim.p1Car.accelDir || 0,
       ad2: sim.p2Car.accelDir || 0,
+      lj1: Math.round(sim.p1Car.lastJumpAtMs || -99999),
+      lj2: Math.round(sim.p2Car.lastJumpAtMs || -99999),
       sw: sim.seesaws.map((s) => [
         Math.round(s.body.angle * 1000) / 1000,
         Math.round(s.body.angularVelocity * 1000) / 1000
@@ -846,9 +852,9 @@ export class NetworkManager {
       this.pendingInputs = this.pendingInputs.filter((cmd) => cmd.seq > ackSeq);
     }
     if (Array.isArray(snap.i1)) {
-      this.lastHostP1Input = { l: !!snap.i1[0], r: !!snap.i1[1], holdMs: snap.i1[2] || 0 };
+      this.lastHostP1Input = { l: !!snap.i1[0], r: !!snap.i1[1], holdMs: snap.i1[2] || 0, jump: !!snap.i1[3] };
     } else {
-      this.lastHostP1Input = snap.i1 || { l: false, r: false, holdMs: 0 };
+      this.lastHostP1Input = snap.i1 || { l: false, r: false, jump: false, holdMs: 0 };
     }
     this.hostInputPredictTicks = 0;
 
@@ -858,18 +864,21 @@ export class NetworkManager {
     // Step 1: Snap rigid bodies + water height to authoritative host snapshot
     sim.applyNetState(snap);
 
-    // Step 2: Rewind/replay unacknowledged local client inputs without over-predicting P1 or coasting idle frames
+    // Step 2: Rewind/replay unacknowledged local client inputs without over-predicting P1 or re-firing jump audio
     if (snap.ph === 'FIGHT' && this.pendingInputs.length > 0) {
-      const hasActiveInput = this.pendingInputs.some((c) => c.l || c.r);
+      const hasActiveInput = this.pendingInputs.some((c) => c.l || c.r || c.j);
       const oneWayEst = this.pingMs > 0 ? clamp(Math.round((this.pingMs * 0.5) / 16.7), 2, 6) : 4;
       const replayCap = hasActiveInput ? 12 : oneWayEst;
       const maxReplay = Math.min(this.pendingInputs.length, replayCap);
       const startIdx = this.pendingInputs.length - maxReplay;
-      const coast = { l: false, r: false, holdMs: 0 };
+      const coast = { l: false, r: false, jump: false, holdMs: 0 };
+      const savedOnJump = sim.onJump;
+      sim.onJump = null;
       for (let i = startIdx; i < this.pendingInputs.length; i++) {
         const p1Step = (i - startIdx) < 3 ? this.lastHostP1Input : coast;
         sim.step(p1Step, this.pendingInputs[i], true, false);
       }
+      sim.onJump = savedOnJump;
     }
 
     // Step 3: Progressive error convergence to avoid cycling teleports

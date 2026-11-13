@@ -2,6 +2,7 @@ import {
   WORLD_W,
   WORLD_H,
   FIXED_DT,
+  JUMP_COOLDOWN_MS,
   WATER_CREST_Y,
   WATER_HAZARD_Y,
   WATER_RISE,
@@ -28,7 +29,7 @@ export class PhysicsSimulation {
     this.Query = Matter.Query;
 
     this.engine = this.Engine.create({
-      gravity: { x: 0, y: 1.0, scale: 0.001 },
+      gravity: { x: 0, y: VEHICLE_PHYSICS.GRAVITY_Y, scale: 0.001 },
       positionIterations: 10,
       velocityIterations: 8,
       constraintIterations: 4
@@ -41,6 +42,7 @@ export class PhysicsSimulation {
     this.p2Car = null;
     this.seesaws = [];
     this.driveSurfaces = [];
+    this.ragdolls = [];
     this.grounded = { p1R: false, p1F: false, p2R: false, p2F: false };
     this._resetWheelContacts();
 
@@ -53,14 +55,15 @@ export class PhysicsSimulation {
     this.onWaterKO = null;
     this.onCarBump = null;
     this.onJump = null;
+    this.onRagdollSplash = null;
 
     this._bindCollisions();
   }
 
   _resetWheelContacts() {
     this.wheelContacts = {
-      p1: { rear: { count: 0, nx: 0, ny: 0 }, front: { count: 0, nx: 0, ny: 0 } },
-      p2: { rear: { count: 0, nx: 0, ny: 0 }, front: { count: 0, nx: 0, ny: 0 } }
+      p1: { rear: { count: 0, bestDot: -1, nx: 0, ny: 0 }, front: { count: 0, bestDot: -1, nx: 0, ny: 0 } },
+      p2: { rear: { count: 0, bestDot: -1, nx: 0, ny: 0 }, front: { count: 0, bestDot: -1, nx: 0, ny: 0 } }
     };
   }
 
@@ -70,14 +73,28 @@ export class PhysicsSimulation {
     });
 
     this.Events.on(this.engine, 'collisionActive', (ev) => {
-      const addWheelContact = (wheelBody, pKey, wKey, pair) => {
+      const addWheelContact = (wheelBody, pKey, wKey, pair, car) => {
         const wc = this.wheelContacts[pKey][wKey];
         const n = pair.collision && pair.collision.normal;
         if (!n) return;
         const sign = pair.bodyA === wheelBody ? -1 : 1;
-        wc.nx += n.x * sign;
-        wc.ny += n.y * sign;
-        wc.count += 1;
+        const nx = n.x * sign;
+        const ny = n.y * sign;
+        const len = Math.hypot(nx, ny);
+        if (len < 0.001) return;
+        const unx = nx / len;
+        const uny = ny / len;
+        let upDot = 1;
+        if (car && car.chassis) {
+          const ang = car.chassis.angle;
+          upDot = unx * Math.sin(ang) + uny * (-Math.cos(ang));
+        }
+        if (upDot > 0.25 && upDot >= wc.bestDot) {
+          wc.bestDot = upDot;
+          wc.nx = unx;
+          wc.ny = uny;
+          wc.count += 1;
+        }
       };
 
       for (let i = 0; i < ev.pairs.length; i++) {
@@ -86,18 +103,19 @@ export class PhysicsSimulation {
         const b = pair.bodyB;
         const la = a.label || '';
         const lb = b.label || '';
-        const solidA = la === 'island' || la === 'seesaw' || la.startsWith('chassis_') || la.startsWith('wheel_');
-        const solidB = lb === 'island' || lb === 'seesaw' || lb.startsWith('chassis_') || lb.startsWith('wheel_');
+        // Only treat arena terrain & seesaws as drivable ground surfaces (never opponent bumpers or ragdolls)
+        const terrainA = la === 'island' || la === 'seesaw';
+        const terrainB = lb === 'island' || lb === 'seesaw';
 
-        if (la === 'wheel_p1_r' && solidB && !lb.includes('_p1')) addWheelContact(a, 'p1', 'rear', pair);
-        if (lb === 'wheel_p1_r' && solidA && !la.includes('_p1')) addWheelContact(b, 'p1', 'rear', pair);
-        if (la === 'wheel_p1_f' && solidB && !lb.includes('_p1')) addWheelContact(a, 'p1', 'front', pair);
-        if (lb === 'wheel_p1_f' && solidA && !la.includes('_p1')) addWheelContact(b, 'p1', 'front', pair);
+        if (la === 'wheel_p1_r' && terrainB) addWheelContact(a, 'p1', 'rear', pair, this.p1Car);
+        if (lb === 'wheel_p1_r' && terrainA) addWheelContact(b, 'p1', 'rear', pair, this.p1Car);
+        if (la === 'wheel_p1_f' && terrainB) addWheelContact(a, 'p1', 'front', pair, this.p1Car);
+        if (lb === 'wheel_p1_f' && terrainA) addWheelContact(b, 'p1', 'front', pair, this.p1Car);
 
-        if (la === 'wheel_p2_r' && solidB && !lb.includes('_p2')) addWheelContact(a, 'p2', 'rear', pair);
-        if (lb === 'wheel_p2_r' && solidA && !la.includes('_p2')) addWheelContact(b, 'p2', 'rear', pair);
-        if (la === 'wheel_p2_f' && solidB && !lb.includes('_p2')) addWheelContact(a, 'p2', 'front', pair);
-        if (lb === 'wheel_p2_f' && solidA && !la.includes('_p2')) addWheelContact(b, 'p2', 'front', pair);
+        if (la === 'wheel_p2_r' && terrainB) addWheelContact(a, 'p2', 'rear', pair, this.p2Car);
+        if (lb === 'wheel_p2_r' && terrainA) addWheelContact(b, 'p2', 'rear', pair, this.p2Car);
+        if (la === 'wheel_p2_f' && terrainB) addWheelContact(a, 'p2', 'front', pair, this.p2Car);
+        if (lb === 'wheel_p2_f' && terrainA) addWheelContact(b, 'p2', 'front', pair, this.p2Car);
       }
     });
 
@@ -143,7 +161,7 @@ export class PhysicsSimulation {
 
   _addSurfacePolyline(pts, inwardSign = 1, thickness = 34, closeLoop = false) {
     const count = closeLoop ? pts.length : pts.length - 1;
-    const jointRadius = thickness * 0.48;
+    const jointRadius = thickness * 0.49;
     const normals = [];
     for (let i = 0; i < count; i++) {
       const p0 = pts[i];
@@ -162,11 +180,12 @@ export class PhysicsSimulation {
       const cx = (p0.x + p1.x) * 0.5 + nx * (thickness * 0.5);
       const cy = (p0.y + p1.y) * 0.5 + ny * (thickness * 0.5);
 
-      // Use exact segment length (+0.5px weld) so corners never poke above concave curves.
-      const rect = this.Bodies.rectangle(cx, cy, segLen + 0.5, thickness, {
+      // Exact segment length with generous corner chamfer prevents poking edges at walls & open lips
+      const segChamfer = Math.min(6, segLen * 0.35, thickness * 0.38);
+      const rect = this.Bodies.rectangle(cx, cy, segLen, thickness, {
         isStatic: true,
         angle,
-        chamfer: { radius: 2 },
+        chamfer: { radius: segChamfer },
         friction: 0.92,
         restitution: 0.08,
         slop: 0.015,
@@ -216,9 +235,10 @@ export class PhysicsSimulation {
       const angle = Math.atan2(dy, dx);
       const cx = (p0.x + p1.x) * 0.5;
       const cy = (p0.y + p1.y) * 0.5;
-      const seg = this.Bodies.rectangle(cx, cy, segLen + 0.5, pipe.thickness, {
+      const seg = this.Bodies.rectangle(cx, cy, segLen, pipe.thickness, {
         isStatic: true,
         angle,
+        chamfer: { radius: Math.min(3, segLen * 0.35) },
         friction: 0.92,
         restitution: 0.10,
         slop: 0.015,
@@ -229,7 +249,7 @@ export class PhysicsSimulation {
     }
     for (let i = 0; i < pts.length; i++) {
       const pt = pts[i];
-      const capRadius = (i === 0 || i === pts.length - 1) ? pipe.thickness * 0.5 : pipe.thickness * 0.49;
+      const capRadius = pipe.thickness * 0.5;
       const cap = this.Bodies.circle(pt.x, pt.y, capRadius, {
         isStatic: true,
         friction: 0.92,
@@ -282,6 +302,7 @@ export class PhysicsSimulation {
     this.engine.timing.timeScale = 1.0;
     this.seesaws = [];
     this.driveSurfaces = [];
+    this.ragdolls = [];
     this.grounded = { p1R: false, p1F: false, p2R: false, p2F: false };
     this._resetWheelContacts();
 
@@ -323,12 +344,14 @@ export class PhysicsSimulation {
     }
 
     for (const blk of arena.blocks) {
+      const blkChamfer = Math.min(blk.chamfer || 8, blk.w * 0.4, blk.h * 0.44);
       const rect = this.Bodies.rectangle(blk.x, blk.y, blk.w, blk.h, {
         isStatic: true,
         angle: blk.angle || 0,
-        chamfer: { radius: blk.chamfer || 4 },
-        friction: 1.0,
+        chamfer: { radius: blkChamfer },
+        friction: 0.92,
         restitution: 0.14,
+        slop: 0.015,
         label: 'island'
       });
       this.Composite.add(this.engine.world, rect);
@@ -349,10 +372,11 @@ export class PhysicsSimulation {
     const group = this.Body.nextGroup(true);
 
     const chassis = this.Bodies.rectangle(x, y, CAR_SPEC.width, CAR_SPEC.height, {
-      chamfer: { radius: 7 * CAR_SCALE },
+      chamfer: { radius: 8.5 * CAR_SCALE },
       density: CAR_SPEC.density,
       restitution: CAR_SPEC.restitution,
       friction: CAR_SPEC.friction,
+      frictionStatic: 0.04,
       frictionAir: 0.0045,
       slop: 0.015,
       collisionFilter: { group },
@@ -419,17 +443,17 @@ export class PhysicsSimulation {
     const neckSpine = this.Constraint.create({
       bodyA: chassis, pointA: { x: 0, y: collarY },
       bodyB: head, pointB: { x: 0, y: 0 },
-      stiffness: 0.92, damping: 0.16
+      stiffness: 0.90, damping: 0.15
     });
     const neckL = this.Constraint.create({
       bodyA: chassis, pointA: { x: -neckSpanX, y: collarY },
       bodyB: head, pointB: { x: 0, y: 0 },
-      stiffness: 0.78, damping: 0.16
+      stiffness: 0.74, damping: 0.14
     });
     const neckR = this.Constraint.create({
       bodyA: chassis, pointA: { x: neckSpanX, y: collarY },
       bodyB: head, pointB: { x: 0, y: 0 },
-      stiffness: 0.78, damping: 0.16
+      stiffness: 0.74, damping: 0.14
     });
 
     this.Composite.add(this.engine.world, [
@@ -442,12 +466,14 @@ export class PhysicsSimulation {
       playerIndex,
       isRedPlayer: playerIndex === 1,
       facing,
+      collisionGroup: group,
       chassis,
       wheelR,
       wheelF,
       head,
       headConstraints: [neckSpine, neckL, neckR],
       headSevered: false,
+      ragdollSpawned: false,
       dead: false,
       airTicks: 0,
       isAirborne: false,
@@ -458,26 +484,53 @@ export class PhysicsSimulation {
       driving: false,
       speedScale: 1.0,
       accelScale: 1.0,
-      lastJumpAtMs: -99999
+      lastJumpAtMs: -99999,
+      driverState: {
+        lean: 0,
+        leanVel: 0,
+        armL: 0.78,
+        armLVel: 0,
+        armR: 0.88,
+        armRVel: 0,
+        prevVx: 0,
+        prevVy: 0
+      }
     };
   }
 
-  triggerBotJump(car, chaseDir = 0) {
+  getJumpCooldownRemaining(playerIndex) {
+    const car = playerIndex === 1 ? this.p1Car : this.p2Car;
+    if (!car) return 0;
+    const elapsedSince = this.roundElapsedMs - car.lastJumpAtMs;
+    if (elapsedSince >= JUMP_COOLDOWN_MS) return 0;
+    return Math.max(0, JUMP_COOLDOWN_MS - elapsedSince);
+  }
+
+  triggerJump(car, chaseDir = 0) {
     if (!car || car.dead) return false;
-    if (this.roundElapsedMs - car.lastJumpAtMs < 9000) return false;
+    if (this.roundElapsedMs - car.lastJumpAtMs < JUMP_COOLDOWN_MS) return false;
     if (car.isAirborne && car.airTicks > 8) return false;
 
-    const dxBoost = chaseDir * 1.35;
+    const dxBoost = chaseDir * VEHICLE_PHYSICS.JUMP_FWD_BOOST;
     const bodies = [car.chassis, car.wheelR, car.wheelF, car.head];
     for (const b of bodies) {
-      const targetVy = clamp(b.velocity.y - 7.8, -9.2, -5.8);
+      const targetVy = clamp(
+        b.velocity.y - VEHICLE_PHYSICS.JUMP_IMPULSE_VY,
+        -VEHICLE_PHYSICS.JUMP_MAX_VY,
+        -VEHICLE_PHYSICS.JUMP_MIN_VY
+      );
       this.Body.setVelocity(b, {
-        x: clamp(b.velocity.x + dxBoost, -10.0, 10.0),
+        x: clamp(b.velocity.x + dxBoost, -10.5, 10.5),
         y: targetVy
       });
     }
     car.lastJumpAtMs = this.roundElapsedMs;
     car.airTicks = Math.max(car.airTicks, 2);
+    if (car.driverState) {
+      car.driverState.armLVel -= 0.35;
+      car.driverState.armRVel -= 0.40;
+      car.driverState.leanVel -= car.facing * 0.22;
+    }
     if (this.onJump) {
       this.onJump(car.playerIndex, {
         x: car.chassis.position.x,
@@ -485,6 +538,10 @@ export class PhysicsSimulation {
       });
     }
     return true;
+  }
+
+  triggerBotJump(car, chaseDir = 0) {
+    return this.triggerJump(car, chaseDir);
   }
 
   captureCarPose(car) {
@@ -536,17 +593,21 @@ export class PhysicsSimulation {
 
     for (const [carKey, bodyKey, shortKey] of BODY_KEYS) {
       const car = this[carKey];
-      if (car && snap[shortKey]) applyBody(car[bodyKey], snap[shortKey]);
+      if (!car || !snap[shortKey]) continue;
+      if (bodyKey === 'head' && car.headSevered) continue;
+      applyBody(car[bodyKey], snap[shortKey]);
     }
     if (this.p1Car) {
       this.p1Car.driving = !!snap.dr1;
       if (typeof snap.hm1 === 'number') this.p1Car.accelHoldMs = snap.hm1;
       if (typeof snap.ad1 === 'number') this.p1Car.accelDir = snap.ad1;
+      if (typeof snap.lj1 === 'number') this.p1Car.lastJumpAtMs = snap.lj1;
     }
     if (this.p2Car) {
       this.p2Car.driving = !!snap.dr2;
       if (typeof snap.hm2 === 'number') this.p2Car.accelHoldMs = snap.hm2;
       if (typeof snap.ad2 === 'number') this.p2Car.accelDir = snap.ad2;
+      if (typeof snap.lj2 === 'number') this.p2Car.lastJumpAtMs = snap.lj2;
     }
     if (typeof snap.rt === 'number') this.roundElapsedMs = snap.rt;
     if (typeof snap.wy === 'number') {
@@ -570,6 +631,134 @@ export class PhysicsSimulation {
     }
   }
 
+  _spawnRagdollBodies(car, impactPt, isWater = false) {
+    if (!car || car.ragdollSpawned) return;
+    car.ragdollSpawned = true;
+
+    const ragGroup = car.collisionGroup;
+    car.head.collisionFilter.group = ragGroup;
+    car.head.restitution = 0.42;
+    car.head.friction = 0.45;
+    car.head.frictionAir = 0.005;
+
+    const hx = car.head.position.x;
+    const hy = car.head.position.y;
+    const dx = hx - (impactPt ? impactPt.x : car.chassis.position.x);
+    const dy = hy - (impactPt ? impactPt.y : car.chassis.position.y);
+    const len = Math.hypot(dx, dy) || 1;
+
+    const baseVx = isWater
+      ? -car.facing * 2.8 + car.chassis.velocity.x * 0.25
+      : (dx / len) * 7.8 + car.chassis.velocity.x * 0.35;
+    const baseVy = isWater ? -11.4 : -9.4;
+
+    this.Body.setVelocity(car.head, { x: baseVx, y: baseVy - 0.8 });
+    this.Body.setAngularVelocity(car.head, -car.facing * 0.38);
+
+    const torso = this.Bodies.rectangle(hx, hy + 4 * CAR_SCALE, 12 * CAR_SCALE, 19 * CAR_SCALE, {
+      chamfer: { radius: 5.5 * CAR_SCALE },
+      density: 0.0008,
+      restitution: 0.38,
+      friction: 0.45,
+      frictionAir: 0.006,
+      collisionFilter: { group: ragGroup },
+      label: 'ragdoll'
+    });
+    const armL = this.Bodies.rectangle(hx - 10 * CAR_SCALE, hy, 5.5 * CAR_SCALE, 15 * CAR_SCALE, {
+      chamfer: { radius: 2.75 * CAR_SCALE },
+      density: 0.0004,
+      restitution: 0.42,
+      friction: 0.38,
+      frictionAir: 0.007,
+      collisionFilter: { group: ragGroup },
+      label: 'ragdoll'
+    });
+    const armR = this.Bodies.rectangle(hx + 10 * CAR_SCALE, hy, 5.5 * CAR_SCALE, 15 * CAR_SCALE, {
+      chamfer: { radius: 2.75 * CAR_SCALE },
+      density: 0.0004,
+      restitution: 0.42,
+      friction: 0.38,
+      frictionAir: 0.007,
+      collisionFilter: { group: ragGroup },
+      label: 'ragdoll'
+    });
+    const legL = this.Bodies.rectangle(hx - 5 * CAR_SCALE, hy + 18 * CAR_SCALE, 6 * CAR_SCALE, 16 * CAR_SCALE, {
+      chamfer: { radius: 3 * CAR_SCALE },
+      density: 0.00045,
+      restitution: 0.38,
+      friction: 0.42,
+      frictionAir: 0.007,
+      collisionFilter: { group: ragGroup },
+      label: 'ragdoll'
+    });
+    const legR = this.Bodies.rectangle(hx + 5 * CAR_SCALE, hy + 18 * CAR_SCALE, 6 * CAR_SCALE, 16 * CAR_SCALE, {
+      chamfer: { radius: 3 * CAR_SCALE },
+      density: 0.00045,
+      restitution: 0.38,
+      friction: 0.42,
+      frictionAir: 0.007,
+      collisionFilter: { group: ragGroup },
+      label: 'ragdoll'
+    });
+
+    const neckJ = this.Constraint.create({
+      bodyA: torso, pointA: { x: 0, y: -9 * CAR_SCALE },
+      bodyB: car.head, pointB: { x: 0, y: 4 * CAR_SCALE },
+      length: 3 * CAR_SCALE, stiffness: 0.72, damping: 0.10
+    });
+    const shoulderL = this.Constraint.create({
+      bodyA: torso, pointA: { x: -5.5 * CAR_SCALE, y: -6 * CAR_SCALE },
+      bodyB: armL, pointB: { x: 0, y: -6 * CAR_SCALE },
+      length: 1, stiffness: 0.78, damping: 0.08
+    });
+    const shoulderR = this.Constraint.create({
+      bodyA: torso, pointA: { x: 5.5 * CAR_SCALE, y: -6 * CAR_SCALE },
+      bodyB: armR, pointB: { x: 0, y: -6 * CAR_SCALE },
+      length: 1, stiffness: 0.78, damping: 0.08
+    });
+    const hipL = this.Constraint.create({
+      bodyA: torso, pointA: { x: -3.5 * CAR_SCALE, y: 8.5 * CAR_SCALE },
+      bodyB: legL, pointB: { x: 0, y: -6.5 * CAR_SCALE },
+      length: 1, stiffness: 0.78, damping: 0.08
+    });
+    const hipR = this.Constraint.create({
+      bodyA: torso, pointA: { x: 3.5 * CAR_SCALE, y: 8.5 * CAR_SCALE },
+      bodyB: legR, pointB: { x: 0, y: -6.5 * CAR_SCALE },
+      length: 1, stiffness: 0.78, damping: 0.08
+    });
+
+    // Deterministic spread velocities & tumbling angular impulses for cartwheeling comic ragdoll
+    this.Body.setVelocity(torso, { x: baseVx * 0.96, y: baseVy });
+    this.Body.setAngularVelocity(torso, -car.facing * 0.28);
+
+    this.Body.setVelocity(armL, { x: baseVx - 3.0, y: baseVy - 1.6 });
+    this.Body.setVelocity(armR, { x: baseVx + 3.0, y: baseVy - 1.1 });
+    this.Body.setAngularVelocity(armL, 0.48);
+    this.Body.setAngularVelocity(armR, -0.44);
+
+    this.Body.setVelocity(legL, { x: baseVx - 2.0, y: baseVy + 1.0 });
+    this.Body.setVelocity(legR, { x: baseVx + 2.0, y: baseVy + 1.2 });
+    this.Body.setAngularVelocity(legL, -0.36);
+    this.Body.setAngularVelocity(legR, 0.40);
+
+    this.Composite.add(this.engine.world, [
+      torso, armL, armR, legL, legR,
+      neckJ, shoulderL, shoulderR, hipL, hipR
+    ]);
+
+    this.ragdolls.push({
+      isRedPlayer: car.isRedPlayer,
+      facing: car.facing,
+      head: car.head,
+      torso,
+      armL,
+      armR,
+      legL,
+      legR,
+      splashed: false
+    });
+  }
+
   popHelmet(playerIndex, impactPt) {
     const car = playerIndex === 1 ? this.p1Car : this.p2Car;
     if (!car || car.headSevered) return;
@@ -580,16 +769,48 @@ export class PhysicsSimulation {
       this.Composite.remove(this.engine.world, c);
     }
     car.headConstraints = [];
-    car.head.collisionFilter.group = 0;
+    this._spawnRagdollBodies(car, impactPt, false);
+  }
 
-    const dx = car.head.position.x - (impactPt ? impactPt.x : car.chassis.position.x);
-    const dy = car.head.position.y - (impactPt ? impactPt.y : car.chassis.position.y);
-    const len = Math.hypot(dx, dy) || 1;
-    this.Body.setVelocity(car.head, {
-      x: (dx / len) * 7.5,
-      y: -8.2
-    });
-    this.Body.setAngularVelocity(car.head, -car.facing * 0.28);
+  ejectWaterRagdoll(playerIndex, impactPt) {
+    const car = playerIndex === 1 ? this.p1Car : this.p2Car;
+    if (!car || car.headSevered) return;
+    car.headSevered = true;
+    car.dead = true;
+
+    for (const c of car.headConstraints) {
+      this.Composite.remove(this.engine.world, c);
+    }
+    car.headConstraints = [];
+    this._spawnRagdollBodies(car, impactPt, true);
+  }
+
+  _updateDriverSpring(car) {
+    if (!car || car.dead || !car.driverState) return;
+    const ds = car.driverState;
+    const vx = car.chassis.velocity.x;
+    const vy = car.chassis.velocity.y;
+    const ax = vx - ds.prevVx;
+    const ay = vy - ds.prevVy;
+    ds.prevVx = vx;
+    ds.prevVy = vy;
+
+    // Deterministic spring-damper whipping the driver torso & arms with G-forces and air-time
+    const localAx = (ax * Math.cos(car.chassis.angle) + ay * Math.sin(car.chassis.angle)) * car.facing;
+    const targetLean = clamp(-localAx * 0.24 - car.chassis.angularVelocity * 1.4, -0.48, 0.48);
+    ds.leanVel = ds.leanVel * 0.78 + (targetLean - ds.lean) * 0.22;
+    ds.lean = clamp(ds.lean + ds.leanVel, -0.52, 0.52);
+
+    const spinRate = Math.abs(car.chassis.angularVelocity);
+    const wave = Math.sin(this.roundElapsedMs * 0.024 + (car.isRedPlayer ? 0 : 1.7));
+    const airFlail = car.isAirborne || spinRate > 0.045;
+    const targetArmL = airFlail ? (-0.15 + wave * 0.75) : (0.78 + clamp(-ay * 0.16, -0.55, 0.30));
+    const targetArmR = airFlail ? (-0.05 - wave * 0.75) : (0.88 + clamp(-ay * 0.16, -0.55, 0.30));
+
+    ds.armLVel = ds.armLVel * 0.74 + (targetArmL - ds.armL) * 0.26;
+    ds.armRVel = ds.armRVel * 0.74 + (targetArmR - ds.armR) * 0.26;
+    ds.armL = clamp(ds.armL + ds.armLVel, -1.65, 1.45);
+    ds.armR = clamp(ds.armR + ds.armRVel, -1.65, 1.45);
   }
 
   _updateRisingWater() {
@@ -614,9 +835,13 @@ export class PhysicsSimulation {
     const g1 = this.vehicleController.updateVehicle(this.p1Car, activeP1, this.wheelContacts.p1, this.driveSurfaces);
     const g2 = this.vehicleController.updateVehicle(this.p2Car, activeP2, this.wheelContacts.p2, this.driveSurfaces);
 
+    if (canControl && activeP1.jump && this.p1Car && !this.p1Car.dead) {
+      const chaseDir1 = activeP1.r ? 1 : (activeP1.l ? -1 : 0);
+      this.triggerJump(this.p1Car, chaseDir1);
+    }
     if (canControl && activeP2.jump && this.p2Car && !this.p2Car.dead) {
-      const chaseDir = activeP2.r ? 1 : (activeP2.l ? -1 : 0);
-      this.triggerBotJump(this.p2Car, chaseDir);
+      const chaseDir2 = activeP2.r ? 1 : (activeP2.l ? -1 : 0);
+      this.triggerJump(this.p2Car, chaseDir2);
     }
 
     this.grounded.p1R = g1.rearGrounded;
@@ -628,6 +853,15 @@ export class PhysicsSimulation {
 
     this.vehicleController.clampAirborneAndMaxSpeed(this.p1Car);
     this.vehicleController.clampAirborneAndMaxSpeed(this.p2Car);
+    this._updateDriverSpring(this.p1Car);
+    this._updateDriverSpring(this.p2Car);
+
+    for (const rag of this.ragdolls) {
+      if (!rag.splashed && rag.torso.position.y > this.waterHazardY - 4 && rag.torso.velocity.y > 1.2) {
+        rag.splashed = true;
+        if (this.onRagdollSplash) this.onRagdollSplash(rag.torso.position.x, this.waterCrestY);
+      }
+    }
 
     for (const sw of this.seesaws) {
       let av = sw.body.angularVelocity * 0.985;

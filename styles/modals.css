@@ -383,3 +383,21 @@
   color: #5A5F66;
   margin-bottom: 12px;
 }
+
+@media (max-height: 460px) {
+  .overlay { padding: 8px; }
+  .lobby-card {
+    padding: 12px 16px 12px;
+    border-radius: 22px;
+    max-height: 96vh;
+  }
+  .lobby-top-row { margin-bottom: 6px; }
+  .game-title { font-size: 22px; }
+  .game-sub { font-size: 10px; }
+  .map-picker-row { margin-bottom: 8px; padding: 4px 6px; }
+  .map-step-btn { width: 32px; height: 32px; font-size: 16px; }
+  .mode-stack { gap: 6px; }
+  .cartoon-btn { padding: 9px 14px; font-size: 14px; border-width: 3.5px; }
+  .bot-diff-btn { padding: 4px 5px; font-size: 11px; }
+  .lobby-footer { margin-top: 7px; }
+}

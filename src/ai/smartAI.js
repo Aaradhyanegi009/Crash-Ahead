@@ -1,3 +1,4 @@
+import { JUMP_COOLDOWN_MS } from '../config/constants.js';
 import { ARENAS } from '../maps/arenas.js';
 import { clamp, normalizeAngle } from '../utils/math.js';
 
@@ -28,7 +29,7 @@ export const BOT_DIFFICULTIES = Object.freeze({
     speedScale: 1.15,
     accelScale: 1.24,
     aggression: 2.0,
-    jumpCooldownMs: 9000,
+    jumpCooldownMs: JUMP_COOLDOWN_MS,
     smartPathing: true,
     reactionCadence: 1
   })
@@ -95,7 +96,7 @@ export class SmartAI {
       return this._lastCmd;
     };
 
-    // Extreme jump triggers (9s cooldown)
+    // Extreme jump triggers (5s cooldown)
     const evaluateJump = () => {
       if (!canJump) return false;
       const dxAbs = Math.abs(ox - mx);

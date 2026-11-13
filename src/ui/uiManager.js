@@ -38,7 +38,12 @@ export class UIManager {
       victoryTitle: document.getElementById('victory-title'),
       victoryScore: document.getElementById('victory-score'),
       victoryNote: document.getElementById('victory-note'),
-      btnRematch: document.getElementById('btn-rematch')
+      btnRematch: document.getElementById('btn-rematch'),
+
+      padP1Jump: document.getElementById('pad-p1-jump'),
+      padP1JumpLbl: document.getElementById('pad-p1-jump-lbl'),
+      padP2Jump: document.getElementById('pad-p2-jump'),
+      padP2JumpLbl: document.getElementById('pad-p2-jump-lbl')
     };
     this.discoveredLocalRoom = '';
   }
@@ -226,6 +231,18 @@ export class UIManager {
   updateScores(scores) {
     this.dom.scoreP1.textContent = String(scores[0]);
     this.dom.scoreP2.textContent = String(scores[1]);
+  }
+
+  updateJumpPads(rem1Ms, rem2Ms, activeFight) {
+    const syncPad = (btn, lbl, remMs) => {
+      if (!btn || !lbl) return;
+      const cooling = activeFight && remMs > 0;
+      btn.classList.toggle('on-cooldown', cooling);
+      const nextText = cooling ? `${(remMs / 1000).toFixed(1)}s` : 'JUMP';
+      if (lbl.textContent !== nextText) lbl.textContent = nextText;
+    };
+    syncPad(this.dom.padP1Jump, this.dom.padP1JumpLbl, rem1Ms);
+    syncPad(this.dom.padP2Jump, this.dom.padP2JumpLbl, rem2Ms);
   }
 
   updateWaterAlert(activeFight, roundElapsedMs, waterRising) {

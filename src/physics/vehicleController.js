@@ -43,7 +43,7 @@ export class VehiclePhysicsController {
         nx /= len;
         ny /= len;
         const upDot = nx * carUpX + ny * carUpY;
-        if (upDot > 0.14 && upDot > bestDot) {
+        if (upDot > 0.24 && upDot > bestDot) {
           bestDot = upDot;
           bestN = { x: nx, y: ny };
         }
@@ -54,7 +54,7 @@ export class VehiclePhysicsController {
     const primary = castDir(carDown.x, carDown.y, CAR_SPEC.wheelRadius + 5.6);
     if (primary) return primary;
     if (carDown.y > 0.35 && Math.abs(carDown.x) > 0.25) {
-      return castDir(0, 1, CAR_SPEC.wheelRadius + 2.8);
+      return castDir(0, 1, CAR_SPEC.wheelRadius + 2.6);
     }
     return null;
   }
@@ -64,58 +64,66 @@ export class VehiclePhysicsController {
     const carDown = { x: -Math.sin(angle), y: Math.cos(angle) };
     const carUp = { x: Math.sin(angle), y: -Math.cos(angle) };
 
-    let rearGrounded = false;
-    let frontGrounded = false;
-    let sumNx = 0;
-    let sumNy = 0;
-
     const checkWheel = (wheel, contact) => {
       if (contact && contact.count > 0) {
         const len = Math.hypot(contact.nx, contact.ny);
         if (len > 0.001) {
           const nx = contact.nx / len;
           const ny = contact.ny / len;
-          if (nx * carUp.x + ny * carUp.y > 0.15) {
-            return { grounded: true, nx, ny };
+          const upDot = nx * carUp.x + ny * carUp.y;
+          if (upDot > 0.24) {
+            return { grounded: true, nx, ny, upDot };
           }
         }
       }
-      if (car.isAirborne && Math.abs(angle) < 0.45 && wheel.velocity.y > 2.3) {
-        return { grounded: false, nx: 0, ny: 0 };
+      if (car.isAirborne && wheel.velocity.y > 2.3) {
+        return { grounded: false, nx: 0, ny: 0, upDot: 0 };
       }
       const rayNormal = this._probeWheelRay(wheel, carDown, driveBodies);
       if (rayNormal) {
-        return { grounded: true, nx: rayNormal.x, ny: rayNormal.y };
+        const upDot = rayNormal.x * carUp.x + rayNormal.y * carUp.y;
+        return { grounded: true, nx: rayNormal.x, ny: rayNormal.y, upDot };
       }
-      return { grounded: false, nx: 0, ny: 0 };
+      return { grounded: false, nx: 0, ny: 0, upDot: 0 };
     };
 
     const rRes = checkWheel(car.wheelR, wheelContacts.rear);
     const fRes = checkWheel(car.wheelF, wheelContacts.front);
 
-    if (rRes.grounded) {
-      rearGrounded = true;
-      sumNx += rRes.nx;
-      sumNy += rRes.ny;
-    }
-    if (fRes.grounded) {
-      frontGrounded = true;
-      sumNx += fRes.nx;
-      sumNy += fRes.ny;
-    }
-
+    const rearGrounded = rRes.grounded;
+    const frontGrounded = fRes.grounded;
     const groundedCount = (rearGrounded ? 1 : 0) + (frontGrounded ? 1 : 0);
     const grounded = groundedCount > 0;
 
     if (grounded) {
-      const len = Math.hypot(sumNx, sumNy) || 1;
-      const targetNx = sumNx / len;
-      const targetNy = sumNy / len;
-      const blendNx = lerp(car.groundNormal.x, targetNx, 0.72);
-      const blendNy = lerp(car.groundNormal.y, targetNy, 0.72);
-      const bLen = Math.hypot(blendNx, blendNy) || 1;
-      car.groundNormal = { x: blendNx / bLen, y: blendNy / bLen };
-      car.groundAngle = Math.atan2(car.groundNormal.x, -car.groundNormal.y);
+      let targetNx = 0;
+      let targetNy = -1;
+      if (rearGrounded && frontGrounded) {
+        const len = Math.hypot(rRes.nx + fRes.nx, rRes.ny + fRes.ny) || 1;
+        targetNx = (rRes.nx + fRes.nx) / len;
+        targetNy = (rRes.ny + fRes.ny) / len;
+      } else {
+        const one = rearGrounded ? rRes : fRes;
+        targetNx = one.nx;
+        targetNy = one.ny;
+      }
+
+      if (car.airTicks > 0) {
+        const blendNx = lerp(car.groundNormal.x, targetNx, 0.84);
+        const blendNy = lerp(car.groundNormal.y, targetNy, 0.84);
+        const bLen = Math.hypot(blendNx, blendNy) || 1;
+        car.groundNormal = { x: blendNx / bLen, y: blendNy / bLen };
+        car.groundAngle = Math.atan2(car.groundNormal.x, -car.groundNormal.y);
+      } else {
+        // Clamp sudden corner/lip whips to max ~18 deg/tick while allowing tight quarter-pipe climbing
+        const curAng = Math.atan2(car.groundNormal.x, -car.groundNormal.y);
+        const targetAng = Math.atan2(targetNx, -targetNy);
+        const dAng = normalizeAngle(targetAng - curAng);
+        const stepAng = clamp(dAng * 0.72, -0.32, 0.32);
+        const nextAng = curAng + stepAng;
+        car.groundNormal = { x: Math.sin(nextAng), y: -Math.cos(nextAng) };
+        car.groundAngle = normalizeAngle(nextAng);
+      }
       car.airTicks = 0;
     } else {
       car.airTicks += 1;
@@ -193,6 +201,16 @@ export class VehiclePhysicsController {
       if (spd > worldCap) {
         const scale = worldCap / spd;
         this.Body.setVelocity(body, { x: body.velocity.x * scale, y: body.velocity.y * scale });
+      }
+    }
+
+    if (!car.isAirborne && !car.dead) {
+      const edgeSpinCap = VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY * 1.45;
+      if (Math.abs(car.chassis.angularVelocity) > edgeSpinCap) {
+        this.Body.setAngularVelocity(
+          car.chassis,
+          clamp(car.chassis.angularVelocity, -edgeSpinCap, edgeSpinCap)
+        );
       }
     }
   }

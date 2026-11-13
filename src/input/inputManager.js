@@ -1,8 +1,8 @@
 export class InputManager {
   constructor(sound) {
     this.sound = sound;
-    this.state = { p1_l: false, p1_r: false, p2_l: false, p2_r: false };
-    this.pressTimes = { p1_l: 0, p1_r: 0, p2_l: 0, p2_r: 0 };
+    this.state = { p1_l: false, p1_r: false, p1_jump: false, p2_l: false, p2_r: false, p2_jump: false };
+    this.pressTimes = { p1_l: 0, p1_r: 0, p1_jump: 0, p2_l: 0, p2_r: 0, p2_jump: 0 };
     this.heldCodes = new Map();
     this.activePointers = new Map();
     this.singleLayout = localStorage.getItem('crashahead_1p_layout') || 'split';
@@ -14,15 +14,19 @@ export class InputManager {
       groupP2: document.getElementById('group-p2'),
       p1L: document.getElementById('pad-p1-l'),
       p1R: document.getElementById('pad-p1-r'),
+      p1Jump: document.getElementById('pad-p1-jump'),
       p2L: document.getElementById('pad-p2-l'),
-      p2R: document.getElementById('pad-p2-r')
+      p2R: document.getElementById('pad-p2-r'),
+      p2Jump: document.getElementById('pad-p2-jump')
     };
 
     this.pads = [
       { el: this.dom.p1L, key: 'p1_l' },
       { el: this.dom.p1R, key: 'p1_r' },
+      { el: this.dom.p1Jump, key: 'p1_jump' },
       { el: this.dom.p2L, key: 'p2_l' },
-      { el: this.dom.p2R, key: 'p2_r' }
+      { el: this.dom.p2R, key: 'p2_r' },
+      { el: this.dom.p2Jump, key: 'p2_jump' }
     ];
 
     this._bindKeyboard();
@@ -33,24 +37,28 @@ export class InputManager {
   _mapKeyCodeToAction(code) {
     if (this.mode === 'local') {
       if (code === 'KeyA' || code === 'KeyS') return 'p1_l';
-      if (code === 'KeyD' || code === 'KeyW') return 'p1_r';
-      if (code === 'ArrowLeft' || code === 'ArrowUp') return 'p2_l';
+      if (code === 'KeyD') return 'p1_r';
+      if (code === 'KeyW') return 'p1_jump';
+      if (code === 'ArrowLeft') return 'p2_l';
       if (code === 'ArrowRight' || code === 'ArrowDown') return 'p2_r';
+      if (code === 'ArrowUp') return 'p2_jump';
       return null;
     }
     if (this.mode === 'online_client') {
-      if (code === 'KeyA' || code === 'ArrowLeft' || code === 'KeyW' || code === 'ArrowUp') return 'p2_l';
-      if (code === 'KeyD' || code === 'ArrowRight' || code === 'KeyS' || code === 'ArrowDown') return 'p2_r';
+      if (code === 'KeyA' || code === 'ArrowLeft' || code === 'KeyS' || code === 'ArrowDown') return 'p2_l';
+      if (code === 'KeyD' || code === 'ArrowRight') return 'p2_r';
+      if (code === 'KeyW' || code === 'ArrowUp' || code === 'Space') return 'p2_jump';
       return null;
     }
     if (code === 'KeyA' || code === 'ArrowLeft' || code === 'KeyS' || code === 'ArrowDown') return 'p1_l';
-    if (code === 'KeyD' || code === 'ArrowRight' || code === 'KeyW' || code === 'ArrowUp') return 'p1_r';
+    if (code === 'KeyD' || code === 'ArrowRight') return 'p1_r';
+    if (code === 'KeyW' || code === 'ArrowUp' || code === 'Space') return 'p1_jump';
     return null;
   }
 
   _recomputeState() {
-    const next = { p1_l: false, p1_r: false, p2_l: false, p2_r: false };
-    const earliest = { p1_l: 0, p1_r: 0, p2_l: 0, p2_r: 0 };
+    const next = { p1_l: false, p1_r: false, p1_jump: false, p2_l: false, p2_r: false, p2_jump: false };
+    const earliest = { p1_l: 0, p1_r: 0, p1_jump: 0, p2_l: 0, p2_r: 0, p2_jump: 0 };
 
     const applyEntry = (key, startTime) => {
       if (!key) return;
@@ -154,9 +162,9 @@ export class InputManager {
           this._recomputeState();
           return;
         }
-        if (this.mode === 'local') {
+        if (this.mode === 'local' && !existing.key.endsWith('_jump')) {
           const hoveredKey = this._padKeyAtPoint(e.clientX, e.clientY);
-          if (hoveredKey && hoveredKey !== existing.key) {
+          if (hoveredKey && !hoveredKey.endsWith('_jump') && hoveredKey !== existing.key) {
             this.activePointers.set(e.pointerId, {
               key: hoveredKey,
               startTime: performance.now()
@@ -191,8 +199,10 @@ export class InputManager {
   _syncVisuals() {
     this.dom.p1L.classList.toggle('pressed', this.state.p1_l);
     this.dom.p1R.classList.toggle('pressed', this.state.p1_r);
+    if (this.dom.p1Jump) this.dom.p1Jump.classList.toggle('pressed', this.state.p1_jump);
     this.dom.p2L.classList.toggle('pressed', this.state.p2_l);
     this.dom.p2R.classList.toggle('pressed', this.state.p2_r);
+    if (this.dom.p2Jump) this.dom.p2Jump.classList.toggle('pressed', this.state.p2_jump);
   }
 
   setSingleLayout(layout) {
@@ -255,15 +265,17 @@ export class InputManager {
     if (this.mode === 'ai' || this.mode === 'online_host') {
       const l = this.state.p1_l || this.state.p2_l;
       const r = this.state.p1_r || this.state.p2_r;
+      const jump = this.state.p1_jump || this.state.p2_jump;
       const lHoldMs = Math.max(this._getHoldMsFor('p1_l', now), this._getHoldMsFor('p2_l', now));
       const rHoldMs = Math.max(this._getHoldMsFor('p1_r', now), this._getHoldMsFor('p2_r', now));
-      return { l, r, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
+      return { l, r, jump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
     }
     const l = this.state.p1_l;
     const r = this.state.p1_r;
+    const jump = this.state.p1_jump;
     const lHoldMs = this._getHoldMsFor('p1_l', now);
     const rHoldMs = this._getHoldMsFor('p1_r', now);
-    return { l, r, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
+    return { l, r, jump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
   }
 
   getP2() {
@@ -271,14 +283,16 @@ export class InputManager {
     if (this.mode === 'online_client') {
       const l = this.state.p1_l || this.state.p2_l;
       const r = this.state.p1_r || this.state.p2_r;
+      const jump = this.state.p1_jump || this.state.p2_jump;
       const lHoldMs = Math.max(this._getHoldMsFor('p1_l', now), this._getHoldMsFor('p2_l', now));
       const rHoldMs = Math.max(this._getHoldMsFor('p1_r', now), this._getHoldMsFor('p2_r', now));
-      return { l, r, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
+      return { l, r, jump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
     }
     const l = this.state.p2_l;
     const r = this.state.p2_r;
+    const jump = this.state.p2_jump;
     const lHoldMs = this._getHoldMsFor('p2_l', now);
     const rHoldMs = this._getHoldMsFor('p2_r', now);
-    return { l, r, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
+    return { l, r, jump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
   }
 }

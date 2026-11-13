@@ -54,6 +54,12 @@
     <!-- Unified Touch & Pointer Circular Cartoon Controls -->
     <div id="touch-controls">
       <div id="group-p1" class="btn-pair left-pair">
+        <button id="pad-p1-jump" class="circle-pad pad-jump pad-jump-p1" type="button" aria-label="Red Jump">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M10 24 L20 13 L30 24" />
+          </svg>
+          <span id="pad-p1-jump-lbl" class="pad-tag jump-tag">JUMP</span>
+        </button>
         <button id="pad-p1-l" class="circle-pad pad-red" type="button" aria-label="Red Reverse or Left">
           <svg viewBox="0 0 40 40" aria-hidden="true">
             <path d="M24 10 L13 20 L24 30" />
@@ -69,6 +75,12 @@
       </div>
 
       <div id="group-p2" class="btn-pair right-pair">
+        <button id="pad-p2-jump" class="circle-pad pad-jump pad-jump-p2" type="button" aria-label="Blue Jump">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M10 24 L20 13 L30 24" />
+          </svg>
+          <span id="pad-p2-jump-lbl" class="pad-tag jump-tag">JUMP</span>
+        </button>
         <button id="pad-p2-l" class="circle-pad pad-blue" type="button" aria-label="Blue Gas or Left">
           <svg viewBox="0 0 40 40" aria-hidden="true">
             <path d="M24 10 L13 20 L24 30" />
@@ -126,7 +138,7 @@
 
         <div class="lobby-footer">
           <button id="btn-ctrl-toggle" class="toggle-chip" type="button">1P TOUCH: SPLIT THUMBS</button>
-          <span class="keys-hint">KEYS: A / D (RED) &bull; &larr; / &rarr; (BLUE)</span>
+          <span class="keys-hint">A/D + W JUMP (RED) &bull; &larr;/&rarr; + &uarr; JUMP (BLUE)</span>
         </div>
       </div>
     </div>

@@ -8,7 +8,7 @@ import {
 } from '../config/constants.js';
 import { ARENAS } from '../maps/arenas.js';
 import { lerp } from '../utils/math.js';
-import { drawRoadster } from './roadsterRenderer.js';
+import { drawRoadster, drawRagdoll } from './roadsterRenderer.js';
 
 const SKYLINE_BUILDINGS = [
   { x: -10, w: 120, h: 255, back: true, cols: 3, rows: 7 },
@@ -395,6 +395,9 @@ export class CanvasRenderer {
     this._drawArenaTerrain(ctx, sim);
     if (sim.p1Car) drawRoadster(ctx, sim.p1Car, true);
     if (sim.p2Car) drawRoadster(ctx, sim.p2Car, false);
+    if (sim.ragdolls) {
+      for (const rag of sim.ragdolls) drawRagdoll(ctx, rag);
+    }
     this._drawWaterWaves(ctx, performance.now(), sim.waterCrestY, sim.waterRising);
     this._drawEffects(ctx, bannerText);
 

@@ -122,6 +122,37 @@
 .pad-red { background: var(--red); }
 .pad-blue { background: var(--blue); }
 
+.pad-jump {
+  position: absolute;
+  bottom: calc(100% + 14px);
+  width: 64px;
+  height: 64px;
+  background: var(--yellow);
+}
+
+.pad-jump-p1 { right: 6px; }
+.pad-jump-p2 { left: 6px; }
+
+.pad-jump svg {
+  width: 30px;
+  height: 30px;
+}
+
+.pad-jump.on-cooldown {
+  background: #D5D9DF;
+  box-shadow: none;
+  opacity: 0.92;
+}
+
+.pad-jump.on-cooldown svg {
+  stroke: #686E78;
+}
+
+.pad-jump.on-cooldown .jump-tag {
+  background: var(--slate);
+  color: var(--white);
+}
+
 .circle-pad svg {
   width: 38px;
   height: 38px;
@@ -155,12 +186,16 @@
   display: none;
 }
 
+#touch-controls.mode-2p .pad-tag.jump-tag {
+  display: block;
+}
+
 .circle-pad.pressed {
   transform: translateY(3px) scale(0.94);
   box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
 }
 
-/* Split-Thumbs 1P Layout: Left button on bottom-left, Right button on bottom-right */
+/* Split-Thumbs 1P Layout: Left button on bottom-left, Right button on bottom-right, Jump above right */
 #touch-controls.mode-1p-split .btn-pair {
   display: contents;
 }
@@ -179,6 +214,14 @@
   pointer-events: auto;
 }
 
+#touch-controls.mode-1p-split .pad-jump {
+  position: fixed;
+  right: max(32px, env(safe-area-inset-right, 0px));
+  left: auto;
+  bottom: calc(max(18px, env(safe-area-inset-bottom, 0px)) + 92px);
+  pointer-events: auto;
+}
+
 @media (max-height: 460px), (max-width: 760px) {
   .btn-pair {
     bottom: 14px;
@@ -194,6 +237,10 @@
     bottom: 14px;
     right: 16px;
   }
+  #touch-controls.mode-1p-split .pad-jump {
+    right: 22px;
+    bottom: 92px;
+  }
   .circle-pad {
     width: 68px;
     height: 68px;
@@ -202,5 +249,14 @@
   .circle-pad svg {
     width: 32px;
     height: 32px;
+  }
+  .pad-jump {
+    width: 56px;
+    height: 56px;
+    bottom: calc(100% + 12px);
+  }
+  .pad-jump svg {
+    width: 26px;
+    height: 26px;
   }
 }
