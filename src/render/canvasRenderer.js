@@ -373,15 +373,19 @@ export class CanvasRenderer {
 
     if (bannerText) {
       ctx.save();
-      ctx.font = '800 54px "Fredoka", "Rubik", sans-serif';
+      const isDigitCountdown = bannerText === '3' || bannerText === '2' || bannerText === '1';
+      const isGo = bannerText === 'GO!';
+      const fontSize = isDigitCountdown ? 96 : isGo ? 74 : 54;
+      ctx.font = `800 ${fontSize}px "Fredoka", "Rubik", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.lineWidth = 10;
+      ctx.lineWidth = isDigitCountdown ? 12 : 10;
       ctx.lineJoin = 'round';
       ctx.strokeStyle = PALETTE.ink;
-      ctx.strokeText(bannerText, WORLD_W * 0.5, 138);
-      ctx.fillStyle = PALETTE.white;
-      ctx.fillText(bannerText, WORLD_W * 0.5, 138);
+      const yPos = isDigitCountdown || isGo ? 156 : 138;
+      ctx.strokeText(bannerText, WORLD_W * 0.5, yPos);
+      ctx.fillStyle = isDigitCountdown ? PALETTE.stripeGold : PALETTE.white;
+      ctx.fillText(bannerText, WORLD_W * 0.5, yPos);
       ctx.restore();
     }
   }

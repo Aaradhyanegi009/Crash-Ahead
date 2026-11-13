@@ -1,8 +1,11 @@
 import {
   FIXED_DT,
   WIN_SCORE,
+  ROUND_COUNTDOWN_MS,
   KO_FREEZE_MS,
+  KO_SLOWMO_SCALE,
   DOUBLE_KO_WINDOW_MS,
+  VEHICLE_PHYSICS,
   PALETTE
 } from '../config/constants.js';
 import { clamp } from '../utils/math.js';
@@ -27,13 +30,16 @@ export class CrashAheadGame {
     this.sim = new PhysicsSimulation(true);
 
     this.mode = 'attract'; // 'attract' | 'ai' | 'local' | 'online_host' | 'online_client'
-    this.phase = 'MENU';   // 'MENU' | 'FIGHT' | 'KO' | 'MATCH_OVER'
+    this.phase = 'MENU';   // 'MENU' | 'COUNTDOWN' | 'FIGHT' | 'KO' | 'MATCH_OVER'
     this.scores = [0, 0];
     this.roundNumber = 1;
     this.bannerText = '';
     this.selectedArenaIdx = -1; // -1 = ALL 9 MAPS IN ORDER, 0..8 = locked specific map
     this.attractMapTicks = 0;
 
+    this.countdownMs = 0;
+    this.goBannerMs = 0;
+    this._lastCountdownSec = 0;
     this.koPending = false;
     this.koWindowMs = 0;
     this.koTimerMs = 0;
@@ -42,6 +48,11 @@ export class CrashAheadGame {
 
     this.p1Input = { l: false, r: false, jump: false };
     this.p2Input = { l: false, r: false, jump: false };
+    if (this.ai) {
+      this.ai.runupTicks = 0;
+      this.ai.commitTicks = 0;
+      this.ai.commitMode = null;
+    }
     this.localRematchWant = false;
     this.remoteRematchWant = false;
     this._autoStartTimer = null;
@@ -95,6 +106,8 @@ export class CrashAheadGame {
       }
 
       Haptics.ko();
+      // Immediately enter 2s slow-motion on KO hit so impacts aren't hyper-fast
+      this.sim.engine.timing.timeScale = KO_SLOWMO_SCALE;
 
       if (!this.koPending) {
         this.koPending = true;
@@ -141,10 +154,15 @@ export class CrashAheadGame {
         this.scores = [snap.sc[0], snap.sc[1]];
         this.ui.updateScores(this.scores);
       }
-      const staleFight = this.koPendingRound === snap.rn && snap.ph === 'FIGHT';
+      const staleFight = this.koPendingRound === snap.rn && (snap.ph === 'FIGHT' || snap.ph === 'COUNTDOWN');
       if (!staleFight) this.phase = snap.ph;
       if (snap.ph === 'KO') this.koPendingRound = snap.rn;
-      this.bannerText = snap.bt || '';
+      const nextBanner = snap.bt || '';
+      if (nextBanner !== this.bannerText && (nextBanner === '3' || nextBanner === '2' || nextBanner === '1' || nextBanner === 'GO!')) {
+        this.sound.playCountdown(nextBanner === 'GO!');
+      }
+      this.bannerText = nextBanner;
+      this.sim.engine.timing.timeScale = (this.phase === 'KO' || snap.d1 || snap.d2) ? KO_SLOWMO_SCALE : 1.0;
       if (this.sim.p1Car) this.sim.p1Car.dead = !!snap.d1;
       if (this.sim.p2Car) this.sim.p2Car.dead = !!snap.d2;
     };
@@ -183,6 +201,7 @@ export class CrashAheadGame {
           this.koPendingRound = this.roundNumber;
           this.phase = 'KO';
           this.bannerText = 'BONK!';
+          this.sim.engine.timing.timeScale = KO_SLOWMO_SCALE;
           if (msg.p) this.sim.popHelmet(msg.p, { x: msg.x, y: msg.y });
           this.renderer.spawnBonkPop(msg.x, msg.y, msg.p === 1 ? PALETTE.red.body : PALETTE.blue.body);
           this.sound.playBonk();
@@ -191,6 +210,7 @@ export class CrashAheadGame {
           this.koPendingRound = this.roundNumber;
           this.phase = 'KO';
           this.bannerText = 'SPLASH!';
+          this.sim.engine.timing.timeScale = KO_SLOWMO_SCALE;
           if (msg.p) this.sim.ejectWaterRagdoll(msg.p, { x: msg.x, y: msg.y });
           this.renderer.spawnWaterSplash(msg.x, msg.y || this.sim.waterCrestY);
           this.sound.playSplash();
@@ -395,6 +415,7 @@ export class CrashAheadGame {
     this.ui.showHomeMenu();
 
     this.sim.isHostSide = true;
+    this.sim.engine.timing.timeScale = 1.0;
     const previewIdx = this.selectedArenaIdx >= 0 ? this.selectedArenaIdx : 0;
     this.sim.resetArena(previewIdx);
     this.renderer.clearEffects();
@@ -443,22 +464,32 @@ export class CrashAheadGame {
   }
 
   _resetRound(explicitArenaIdx = null) {
-    this.phase = 'FIGHT';
-    this.bannerText = '';
+    this.phase = 'COUNTDOWN';
+    this.countdownMs = ROUND_COUNTDOWN_MS;
+    this.goBannerMs = 0;
+    this._lastCountdownSec = 3;
+    this.bannerText = '3';
     this.koPending = false;
     this.koWindowMs = 0;
     this.koTimerMs = 0;
     this._pendingAward = 0;
     this.p1Input = { l: false, r: false, jump: false };
     this.p2Input = { l: false, r: false, jump: false };
+    if (this.ai) {
+      this.ai.runupTicks = 0;
+      this.ai.commitTicks = 0;
+      this.ai.commitMode = null;
+    }
     if (this.mode === 'online_host' || this.mode === 'online_client') {
       this.net.resetRoundInput();
     }
 
     const nextIdx = explicitArenaIdx !== null ? explicitArenaIdx : this._pickArenaIndex(this.sim.arenaIndex);
     this.sim.resetArena(nextIdx);
+    this.sim.engine.timing.timeScale = 1.0;
     this._applyDifficultySpeeds();
     this.renderer.clearEffects();
+    if (this.mode !== 'attract') this.sound.playCountdown(false);
   }
 
   _showVictory() {
@@ -500,18 +531,38 @@ export class CrashAheadGame {
       if (this.koWindowMs <= 0) {
         this.phase = 'KO';
         this.koTimerMs = KO_FREEZE_MS;
-        this.sim.engine.timing.timeScale = 0.25;
+        this.sim.engine.timing.timeScale = KO_SLOWMO_SCALE;
         this.bannerText = this._pendingAward === 0 ? 'DRAW!' : 'BONK!';
         if (this.mode === 'online_host') this.net.resetRoundInput();
       }
     }
 
-    if (this.phase === 'KO') {
+    if (this.phase === 'COUNTDOWN') {
+      const empty = { l: false, r: false, jump: false };
+      this.p1Input = empty;
+      this.p2Input = empty;
+      this.sim.step(empty, empty, false, false);
+      this.countdownMs -= FIXED_DT;
+      if (this.countdownMs <= 0) {
+        this.phase = 'FIGHT';
+        this.bannerText = 'GO!';
+        this.goBannerMs = 600;
+        this.sound.playCountdown(true);
+      } else {
+        const sec = clamp(Math.ceil(this.countdownMs / 1000), 1, 3);
+        if (sec !== this._lastCountdownSec) {
+          this._lastCountdownSec = sec;
+          this.bannerText = String(sec);
+          this.sound.playCountdown(false);
+        }
+      }
+    } else if (this.phase === 'KO') {
       this.p1Input = { l: false, r: false };
       this.p2Input = { l: false, r: false };
       this.sim.step({ l: false, r: false }, { l: false, r: false }, false, false);
       this.koTimerMs -= FIXED_DT;
       if (this.koTimerMs <= 0) {
+        this.sim.engine.timing.timeScale = 1.0;
         if (this._pendingAward === 1) this.scores[0]++;
         else if (this._pendingAward === 2) this.scores[1]++;
         this.ui.updateScores(this.scores);
@@ -525,6 +576,10 @@ export class CrashAheadGame {
         this._resetRound();
       }
     } else {
+      if (this.goBannerMs > 0) {
+        this.goBannerMs -= FIXED_DT;
+        if (this.goBannerMs <= 0 && !this.koPending) this.bannerText = '';
+      }
       this.p1Input = this.input.getP1();
       if (this.mode === 'ai') this.p2Input = this.ai.decide(this.sim, false);
       else if (this.mode === 'local') this.p2Input = this.input.getP2();
@@ -581,7 +636,7 @@ export class CrashAheadGame {
     let spd = 0;
     if (this.sim.p1Car) spd = Math.max(spd, Math.abs(this.sim.p1Car.wheelF.angularVelocity));
     if (this.sim.p2Car) spd = Math.max(spd, Math.abs(this.sim.p2Car.wheelF.angularVelocity));
-    this.sound.updateEngine(true, throttle, clamp(spd / 0.515, 0, 1));
+    this.sound.updateEngine(true, throttle, clamp(spd / VEHICLE_PHYSICS.WHEEL_MAX_SPIN, 0, 1));
   }
 
   _startMainLoop() {

@@ -53,9 +53,11 @@ function cloverFloorY(x) {
 }
 
 function makeWingedFloatingIsland(xLeft, xRight, yJoint, rWing, topFn, bellyMidY = 564) {
-  const leftWingTop = sampleArcPoints(xLeft, yJoint - rWing, rWing, Math.PI * 1.14, Math.PI * 0.5, 16);
+  // End wings at ~1.04*PI / -0.04*PI (~7 deg inward) so reversing up launches
+  // cleanly upward/inward for air time without curling into a razor perch beak.
+  const leftWingTop = sampleArcPoints(xLeft, yJoint - rWing, rWing, Math.PI * 1.04, Math.PI * 0.5, 16);
   const centerTop = sampleCurveX(xLeft, xRight, 34, topFn);
-  const rightWingTop = sampleArcPoints(xRight, yJoint - rWing, rWing, Math.PI * 0.5, -Math.PI * 0.14, 16);
+  const rightWingTop = sampleArcPoints(xRight, yJoint - rWing, rWing, Math.PI * 0.5, -Math.PI * 0.04, 16);
   const top = [...leftWingTop, ...centerTop.slice(1, -1), ...rightWingTop];
 
   const rTipX = rightWingTop[rightWingTop.length - 1].x;
@@ -65,7 +67,9 @@ function makeWingedFloatingIsland(xLeft, xRight, yJoint, rWing, topFn, bellyMidY
 
   const belly = chaikinSmooth([
     { x: rTipX, y: rTipY },
-    { x: rTipX + 26, y: rTipY + 12 },
+    { x: rTipX + 11, y: rTipY - 1 },
+    { x: rTipX + 22, y: rTipY + 14 },
+    { x: rTipX + 27, y: rTipY + 38 },
     { x: xRight + rWing + 24, y: yJoint - rWing * 0.25 },
     { x: xRight + rWing - 6, y: yJoint + 56 },
     { x: xRight - 40, y: 604 },
@@ -73,7 +77,9 @@ function makeWingedFloatingIsland(xLeft, xRight, yJoint, rWing, topFn, bellyMidY
     { x: xLeft + 40, y: 604 },
     { x: xLeft - rWing + 6, y: yJoint + 56 },
     { x: xLeft - rWing - 24, y: yJoint - rWing * 0.25 },
-    { x: lTipX - 26, y: lTipY + 12 },
+    { x: lTipX - 27, y: lTipY + 38 },
+    { x: lTipX - 22, y: lTipY + 14 },
+    { x: lTipX - 11, y: lTipY - 1 },
     { x: lTipX, y: lTipY }
   ], false, 2);
 
@@ -352,7 +358,7 @@ export const ARENAS = Object.freeze([
       const rWing = 104;
       const yDeck = 452;
       if (isLeft) {
-        const wing = sampleArcPoints(255, yDeck - rWing, rWing, Math.PI * 1.12, Math.PI * 0.5, 14);
+        const wing = sampleArcPoints(255, yDeck - rWing, rWing, Math.PI * 1.04, Math.PI * 0.5, 14);
         const flat = sampleCurveX(255, 472, 12, (x) => {
           const t = (x - 255) / 217;
           return yDeck - 4 * Math.sin(t * Math.PI);
@@ -366,7 +372,9 @@ export const ARENAS = Object.freeze([
           { x: 325, y: 584 },
           { x: 205, y: 562 },
           { x: 145, y: 495 },
-          { x: tip.x - 24, y: tip.y + 12 },
+          { x: tip.x - 26, y: tip.y + 36 },
+          { x: tip.x - 21, y: tip.y + 13 },
+          { x: tip.x - 10, y: tip.y - 1 },
           { x: tip.x, y: tip.y }
         ], false, 2);
         return { top, belly, poly: [...top, ...belly.slice(1, -1)] };
@@ -375,12 +383,14 @@ export const ARENAS = Object.freeze([
           const t = (x - 808) / 217;
           return yDeck - 4 * Math.sin(t * Math.PI);
         });
-        const wing = sampleArcPoints(1025, yDeck - rWing, rWing, Math.PI * 0.5, -Math.PI * 0.12, 14);
+        const wing = sampleArcPoints(1025, yDeck - rWing, rWing, Math.PI * 0.5, -Math.PI * 0.04, 14);
         const top = [...flat, ...wing.slice(1)];
         const tip = wing[wing.length - 1];
         const belly = chaikinSmooth([
           { x: tip.x, y: tip.y },
-          { x: tip.x + 24, y: tip.y + 12 },
+          { x: tip.x + 10, y: tip.y - 1 },
+          { x: tip.x + 21, y: tip.y + 13 },
+          { x: tip.x + 26, y: tip.y + 36 },
           { x: 1135, y: 495 },
           { x: 1075, y: 562 },
           { x: 955, y: 584 },

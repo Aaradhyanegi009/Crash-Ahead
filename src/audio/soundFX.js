@@ -55,6 +55,22 @@ export class SoundFX {
     this.engineGain.gain.setTargetAtTime(targetVol, now, 0.06);
   }
 
+  playCountdown(isGo = false) {
+    if (this.muted || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = isGo ? 'triangle' : 'sine';
+    osc.frequency.setValueAtTime(isGo ? 880 : 520, t);
+    if (isGo) osc.frequency.exponentialRampToValueAtTime(1046, t + 0.14);
+    gain.gain.setValueAtTime(isGo ? 0.22 : 0.16, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + (isGo ? 0.22 : 0.12));
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + (isGo ? 0.24 : 0.14));
+  }
+
   playBump(strength = 0.6) {
     if (this.muted || !this.ctx) return;
     const nowMs = performance.now();

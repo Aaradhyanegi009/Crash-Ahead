@@ -27,8 +27,8 @@ export const BOT_DIFFICULTIES = Object.freeze({
     id: 'extreme',
     label: 'EXTREME',
     speedScale: 1.15,
-    accelScale: 1.24,
-    aggression: 2.0,
+    accelScale: 1.32,
+    aggression: 2.8,
     jumpCooldownMs: JUMP_COOLDOWN_MS,
     smartPathing: true,
     reactionCadence: 1
@@ -43,6 +43,7 @@ export class SmartAI {
     this.runupTicks = 0;
     this.commitDir = 0;
     this.commitTicks = 0;
+    this.commitMode = null;
     this._lastCmd = { l: false, r: false, jump: false };
   }
 
@@ -100,8 +101,10 @@ export class SmartAI {
     const evaluateJump = () => {
       if (!canJump) return false;
       const dxAbs = Math.abs(ox - mx);
-      // 1) Strike pounce when closing into opponent or breaking close-quarters grapple
-      if (dxAbs < 185 && oy <= my + 48 && mvx * chaseDir > 0.9) return true;
+      const pounceDist = profile.aggression >= 2.5 ? 215 : 185;
+      // 1) Aggressive pounce / overhead helmet slam / close grapple breakaway
+      if (dxAbs < pounceDist && oy <= my + 56 && mvx * chaseDir > 0.75) return true;
+      if (profile.aggression >= 2.5 && dxAbs < 85 && Math.abs(mvx) < 1.3 && sim.roundElapsedMs > 800) return true;
       if (profile.aggression >= 2.0 && dxAbs < 120 && Math.abs(oy - my) < 62 && sim.roundElapsedMs > 1200) return true;
       // 2) Chasm / bridge leap
       if (arena.id === 8 && ((mx > 540 && mx < 582 && ox >= 640 && mvx > 2.2) || (mx < 740 && mx > 698 && ox < 640 && mvx < -2.2))) {
@@ -124,7 +127,28 @@ export class SmartAI {
     }
 
     // Map 8 (Half-Pipe Bowls): Smart run-up & leap across the central sea chasm (x ~ 585..695)
+    // If opponent is perched up high on/above the central stone deck, climb own outer C-wall to drop from above!
     if (arena.id === 8) {
+      const oppPerchedCenter = oy < my - 85 && Math.abs(ox - 640) < 175 && my > 360;
+      if (profile.smartPathing && oppPerchedCenter && Math.abs(mvx) < 9) {
+        if (this.commitTicks <= 0 || this.commitMode !== 'climb') {
+          this.commitDir = mx < 640 ? -1 : 1;
+          this.commitTicks = 92;
+          this.commitMode = 'climb';
+        }
+      }
+      if (this.commitTicks > 0 && this.commitMode === 'climb') {
+        const landedTop = my <= oy + 24 && Math.abs(mx - ox) < 220;
+        if (!landedTop) {
+          this.commitTicks--;
+          if (this.commitTicks === 0) this.commitMode = null;
+          const apexJump = canJump && my < 320 && Math.abs(ox - mx) < 320 && (ox - mx) * mvx > 0;
+          return emit(this.commitDir < 0 ? this._moveLeft(apexJump) : this._moveRight(apexJump));
+        }
+        this.commitTicks = 0;
+        this.commitMode = null;
+      }
+
       const speed = Math.hypot(mvx, me.chassis.velocity.y);
       const meLeftBowl = mx < 640;
       const oppLeftBowl = ox < 640;
@@ -181,19 +205,53 @@ export class SmartAI {
       }
     }
 
-    // Open-water edge guards (2x tighter aggression margin on Hard/Extreme)
+    // Open-water island cliff guards (never trigger on enclosed curved-wall arenas 3..7 where sides are C-ramps)
     const edgeMargin = profile.aggression >= 2.0 ? 22 : 65;
     if (arena.id === 1 || arena.id === 2 || arena.id === 9) {
       if (mx < 165 + edgeMargin && mvx < -1.1) return emit(this._moveRight(canJump && my > sim.waterCrestY - 90));
       if (mx > 1115 - edgeMargin && mvx > 1.1) return emit(this._moveLeft(canJump && my > sim.waterCrestY - 90));
-    } else {
-      if (mx < 200 + edgeMargin * 0.5 && mvx < -0.2) return emit(this._moveRight());
-      if (mx > 1080 - edgeMargin * 0.5 && mvx > 0.2) return emit(this._moveLeft());
     }
 
-    // Inverted mid-air pitch recovery & opportunistic flip dive
+    // Active curved-wall climb commit toward player elevated on balancing rods / upper platforms
+    const oppOnSeesaw = arena.seesaws && arena.seesaws.some(
+      (sw) => oy < sw.y + 34 && Math.abs(ox - sw.x) < sw.w * 0.75
+    );
+    const oppElevated = oy < my - 56 && (
+      oppOnSeesaw ||
+      (arena.seesaws && arena.seesaws.length > 0) ||
+      (arena.blocks && arena.blocks.length > 0) ||
+      oy < my - 84
+    );
+
+    if (profile.smartPathing && arena.id >= 3 && arena.id <= 8) {
+      if (this.commitTicks > 0 && this.commitMode === 'climb') {
+        const reachedTopTarget = my <= oy + 32 && Math.abs(mx - ox) < 270 && (ox - mx) * mvx >= 0;
+        const oppDroppedToFloor = oy > 465 && my > 440;
+        if (reachedTopTarget || oppDroppedToFloor) {
+          this.commitTicks = 0;
+          this.commitMode = null;
+        } else {
+          this.commitTicks--;
+          if (this.commitTicks === 0) this.commitMode = null;
+          const launchJump = canJump && my < oy + 36 && (ox - mx) * mvx > 0.6;
+          return emit(this.commitDir < 0 ? this._moveLeft(launchJump) : this._moveRight(launchJump));
+        }
+      }
+
+      if (oppElevated && Math.abs(ox - mx) < 420) {
+        this.commitDir = mx < 580 ? -1 : mx > 700 ? 1 : (mvx < -0.2 ? -1 : mvx > 0.2 ? 1 : (mx < 640 ? -1 : 1));
+        this.commitTicks = 92;
+        this.commitMode = 'climb';
+        return emit(this.commitDir < 0 ? this._moveLeft(false) : this._moveRight(false));
+      }
+    }
+
+    // Inverted mid-air pitch recovery & opportunistic flip/slam dive
     if (!gx && my < 495) {
       if (this.decisionTick % 20 === 0) this.flipBias = ((this.decisionTick / 20) % 3) * 0.35;
+      if (profile.aggression >= 2.5 && oy > my + 24 && Math.abs(ox - mx) < 195) {
+        return emit(ox < mx ? this._moveLeft() : this._moveRight());
+      }
       if (Math.abs(angle) > 0.55) {
         return emit(angle > 0 ? this._moveRight() : this._moveLeft());
       }
@@ -210,22 +268,9 @@ export class SmartAI {
     }
 
     // Extreme & Hard enhanced curved-track / bridge / overhead path tracking
-    const deadzone = profile.aggression >= 2.0 ? 10 : 48;
-    const lookaheadFrames = profile.smartPathing ? 12 : 4;
+    const deadzone = profile.aggression >= 2.5 ? 6 : (profile.aggression >= 2.0 ? 10 : 48);
+    const lookaheadFrames = profile.aggression >= 2.5 ? 15 : (profile.smartPathing ? 12 : 4);
     const targetX = clamp(ox + ovx * lookaheadFrames, 200, 1080);
-
-    // If stuck directly underneath elevated enemy in arch/platform maps, commit along a curved climb run-up
-    if (profile.smartPathing && (arena.id === 3 || arena.id === 4 || arena.id === 5 || arena.id === 6)) {
-      if (this.commitTicks > 0) {
-        this.commitTicks--;
-        return emit(this.commitDir < 0 ? this._moveLeft(evaluateJump()) : this._moveRight(evaluateJump()));
-      }
-      if (oy < my - 85 && Math.abs(ox - mx) < 130 && Math.abs(mvx) < 1.6) {
-        this.commitDir = mx < 640 ? -1 : 1;
-        this.commitTicks = 32;
-        return emit(this.commitDir < 0 ? this._moveLeft(canJump) : this._moveRight(canJump));
-      }
-    }
 
     const doJump = evaluateJump();
     if (targetX < mx - deadzone) return emit(this._moveLeft(doJump));

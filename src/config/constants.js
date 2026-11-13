@@ -7,7 +7,9 @@ export const WORLD_W = 1280;
 export const WORLD_H = 720;
 export const FIXED_DT = 1000 / 60;
 export const WIN_SCORE = 5;
-export const KO_FREEZE_MS = 650;
+export const ROUND_COUNTDOWN_MS = 3000;
+export const KO_FREEZE_MS = 2000;
+export const KO_SLOWMO_SCALE = 0.25;
 export const DOUBLE_KO_WINDOW_MS = 100;
 export const JUMP_COOLDOWN_MS = 5000;
 export const PEER_PREFIX = 'crash-ahead-p2p-';
@@ -45,8 +47,8 @@ export const PALETTE = Object.freeze({
   blue: Object.freeze({ body: '#00B4FF', lip: '#0082B8', rim: '#00B4FF', helmet: '#00B4FF' })
 });
 
-// 10% smaller vehicles across chassis, wheels, driver, and CoM offset
-export const CAR_SCALE = 0.9;
+// Additional 7% sleek size reduction across chassis, wheels, driver, and CoM offset (0.9 * 0.93 = 0.837)
+export const CAR_SCALE = 0.837;
 
 // Grounded Stability, 25% Reduced Max Speed, Progressive Accel, Curved Wall Climb & Backflips
 export const BASE_MAX_FORWARD_SPEED = 8.8;
@@ -102,27 +104,27 @@ export const VEHICLE_PHYSICS = Object.freeze({
   PITCH_TORQUE_LIMIT: 0.052,
   WHEEL_BASE_FRICTION: 0.96,
   WHEEL_COAST_FRICTION: 0.68,
-  WHEEL_MAX_SPIN: 0.515,         // 6.6 / 13.05 = 0.506 rad/tick + grip headroom
-  WHEEL_REVERSE_MAX_SPIN: 0.400, // 5.1 / 13.05 = 0.391 rad/tick + grip headroom
+  WHEEL_MAX_SPIN: 0.555,         // 6.6 / 12.14 = 0.544 rad/tick + grip headroom
+  WHEEL_REVERSE_MAX_SPIN: 0.432, // 5.1 / 12.14 = 0.420 rad/tick + grip headroom
   GRAVITY_COMP_SCALE: 0.90
 });
 
 export const CAR_SPEC = Object.freeze({
   scale: CAR_SCALE,
-  width: 90 * CAR_SCALE,        // 81
-  height: 26 * CAR_SCALE,       // 23.4
-  density: 0.005,
+  width: 90 * CAR_SCALE,          // 75.33 (-7% from 81)
+  height: 23.5 * CAR_SCALE,       // 19.67 (sleek low-profile hitbox)
+  density: 0.0064,                // Mass-balanced for 7% smaller + sleeker hull
   restitution: 0.10,
   friction: 0.05,
-  wheelOffsetX: 27 * CAR_SCALE, // 24.3
-  wheelOffsetY: 13 * CAR_SCALE, // 11.7
-  wheelRadius: 14.5 * CAR_SCALE,// 13.05
-  wheelDensity: 0.0094,
+  wheelOffsetX: 27 * CAR_SCALE,   // 22.60
+  wheelOffsetY: 12.6 * CAR_SCALE, // 10.55
+  wheelRadius: 14.5 * CAR_SCALE,  // 12.14
+  wheelDensity: 0.0109,
   wheelFriction: VEHICLE_PHYSICS.WHEEL_BASE_FRICTION,
   wheelRestitution: 0.08,
-  headRadius: 11.5 * CAR_SCALE, // 10.35
-  headOffsetY: -16 * CAR_SCALE, // -14.4
-  headDensity: 0.0005,
+  headRadius: 11.5 * CAR_SCALE,   // 9.63
+  headOffsetY: -14.2 * CAR_SCALE, // -11.89
+  headDensity: 0.00055,
   headRestitution: 0.15,
   maxWheelSpin: VEHICLE_PHYSICS.WHEEL_MAX_SPIN
 });

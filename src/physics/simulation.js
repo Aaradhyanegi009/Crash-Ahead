@@ -62,8 +62,8 @@ export class PhysicsSimulation {
 
   _resetWheelContacts() {
     this.wheelContacts = {
-      p1: { rear: { count: 0, bestDot: -1, nx: 0, ny: 0 }, front: { count: 0, bestDot: -1, nx: 0, ny: 0 } },
-      p2: { rear: { count: 0, bestDot: -1, nx: 0, ny: 0 }, front: { count: 0, bestDot: -1, nx: 0, ny: 0 } }
+      p1: { rear: { count: 0, bestDot: -1, nx: 0, ny: 0, hasFront: false, isBackside: false }, front: { count: 0, bestDot: -1, nx: 0, ny: 0, hasFront: false, isBackside: false } },
+      p2: { rear: { count: 0, bestDot: -1, nx: 0, ny: 0, hasFront: false, isBackside: false }, front: { count: 0, bestDot: -1, nx: 0, ny: 0, hasFront: false, isBackside: false } }
     };
   }
 
@@ -73,8 +73,10 @@ export class PhysicsSimulation {
     });
 
     this.Events.on(this.engine, 'collisionActive', (ev) => {
-      const addWheelContact = (wheelBody, pKey, wKey, pair, car) => {
+      const addWheelContact = (wheelBody, otherBody, pKey, wKey, pair, car) => {
         const wc = this.wheelContacts[pKey][wKey];
+        const otherIsBack = Boolean(otherBody && otherBody.isBackside);
+        if (otherIsBack && wc.hasFront) return;
         const n = pair.collision && pair.collision.normal;
         if (!n) return;
         const sign = pair.bodyA === wheelBody ? -1 : 1;
@@ -89,10 +91,12 @@ export class PhysicsSimulation {
           const ang = car.chassis.angle;
           upDot = unx * Math.sin(ang) + uny * (-Math.cos(ang));
         }
-        if (upDot > 0.25 && upDot >= wc.bestDot) {
+        if (upDot > 0.25 && ((!otherIsBack && !wc.hasFront) || upDot >= wc.bestDot)) {
           wc.bestDot = upDot;
           wc.nx = unx;
           wc.ny = uny;
+          wc.isBackside = otherIsBack;
+          if (!otherIsBack) wc.hasFront = true;
           wc.count += 1;
         }
       };
@@ -107,15 +111,15 @@ export class PhysicsSimulation {
         const terrainA = la === 'island' || la === 'seesaw';
         const terrainB = lb === 'island' || lb === 'seesaw';
 
-        if (la === 'wheel_p1_r' && terrainB) addWheelContact(a, 'p1', 'rear', pair, this.p1Car);
-        if (lb === 'wheel_p1_r' && terrainA) addWheelContact(b, 'p1', 'rear', pair, this.p1Car);
-        if (la === 'wheel_p1_f' && terrainB) addWheelContact(a, 'p1', 'front', pair, this.p1Car);
-        if (lb === 'wheel_p1_f' && terrainA) addWheelContact(b, 'p1', 'front', pair, this.p1Car);
+        if (la === 'wheel_p1_r' && terrainB) addWheelContact(a, b, 'p1', 'rear', pair, this.p1Car);
+        if (lb === 'wheel_p1_r' && terrainA) addWheelContact(b, a, 'p1', 'rear', pair, this.p1Car);
+        if (la === 'wheel_p1_f' && terrainB) addWheelContact(a, b, 'p1', 'front', pair, this.p1Car);
+        if (lb === 'wheel_p1_f' && terrainA) addWheelContact(b, a, 'p1', 'front', pair, this.p1Car);
 
-        if (la === 'wheel_p2_r' && terrainB) addWheelContact(a, 'p2', 'rear', pair, this.p2Car);
-        if (lb === 'wheel_p2_r' && terrainA) addWheelContact(b, 'p2', 'rear', pair, this.p2Car);
-        if (la === 'wheel_p2_f' && terrainB) addWheelContact(a, 'p2', 'front', pair, this.p2Car);
-        if (lb === 'wheel_p2_f' && terrainA) addWheelContact(b, 'p2', 'front', pair, this.p2Car);
+        if (la === 'wheel_p2_r' && terrainB) addWheelContact(a, b, 'p2', 'rear', pair, this.p2Car);
+        if (lb === 'wheel_p2_r' && terrainA) addWheelContact(b, a, 'p2', 'rear', pair, this.p2Car);
+        if (la === 'wheel_p2_f' && terrainB) addWheelContact(a, b, 'p2', 'front', pair, this.p2Car);
+        if (lb === 'wheel_p2_f' && terrainA) addWheelContact(b, a, 'p2', 'front', pair, this.p2Car);
       }
     });
 
@@ -159,9 +163,10 @@ export class PhysicsSimulation {
     });
   }
 
-  _addSurfacePolyline(pts, inwardSign = 1, thickness = 34, closeLoop = false) {
+  _addSurfacePolyline(pts, inwardSign = 1, thickness = 34, closeLoop = false, opts = {}) {
+    const isBackside = Boolean(opts.isBackside);
+    const taperEnds = Boolean(opts.taperEnds && !closeLoop);
     const count = closeLoop ? pts.length : pts.length - 1;
-    const jointRadius = thickness * 0.49;
     const normals = [];
     for (let i = 0; i < count; i++) {
       const p0 = pts[i];
@@ -177,19 +182,27 @@ export class PhysicsSimulation {
       const nx = -Math.sin(angle) * inwardSign;
       const ny = Math.cos(angle) * inwardSign;
       normals.push({ nx, ny });
-      const cx = (p0.x + p1.x) * 0.5 + nx * (thickness * 0.5);
-      const cy = (p0.y + p1.y) * 0.5 + ny * (thickness * 0.5);
+      const segThick = taperEnds
+        ? (i === 0 || i === count - 1)
+          ? Math.min(thickness, 10)
+          : (i === 1 || i === count - 2)
+            ? Math.min(thickness, 18)
+            : thickness
+        : thickness;
+      const cx = (p0.x + p1.x) * 0.5 + nx * (segThick * 0.5);
+      const cy = (p0.y + p1.y) * 0.5 + ny * (segThick * 0.5);
 
-      // Exact segment length with generous corner chamfer prevents poking edges at walls & open lips
-      const segChamfer = Math.min(6, segLen * 0.35, thickness * 0.38);
-      const rect = this.Bodies.rectangle(cx, cy, segLen, thickness, {
+      // Tiny segment chamfer avoids carved V-notches between curve segments while interior weld circles seal convex joints
+      const segChamfer = Math.min(1.2, segLen * 0.2, segThick * 0.25);
+      const rect = this.Bodies.rectangle(cx, cy, segLen, segThick, {
         isStatic: true,
         angle,
         chamfer: { radius: segChamfer },
         friction: 0.92,
         restitution: 0.08,
         slop: 0.015,
-        label: 'island'
+        label: 'island',
+        isBackside
       });
       this.Composite.add(this.engine.world, rect);
       this.driveSurfaces.push(rect);
@@ -206,20 +219,56 @@ export class PhysicsSimulation {
       const ay = n0.ny + n1.ny;
       const len = Math.hypot(ax, ay) || 1;
       const pt = pts[i];
+      const localThick = taperEnds
+        ? (i === 1 || i === count - 1)
+          ? Math.min(thickness, 14)
+          : (i === 2 || i === count - 2)
+            ? Math.min(thickness, 22)
+            : thickness
+        : thickness;
       const joint = this.Bodies.circle(
-        pt.x + (ax / len) * (thickness * 0.5),
-        pt.y + (ay / len) * (thickness * 0.5),
-        jointRadius,
+        pt.x + (ax / len) * (localThick * 0.5),
+        pt.y + (ay / len) * (localThick * 0.5),
+        localThick * 0.49,
         {
           isStatic: true,
           friction: 0.92,
           restitution: 0.08,
           slop: 0.015,
-          label: 'island'
+          label: 'island',
+          isBackside
         }
       );
       this.Composite.add(this.engine.world, joint);
       this.driveSurfaces.push(joint);
+    }
+
+    // Add rounded open-end nose caps flush inside the visual cheek so open wing tips have no jagged shelf.
+    if (!closeLoop && opts.endCaps && count >= 2) {
+      const capR = Math.min(thickness, 12) * 0.48;
+      const addCap = (pEnd, pAdj, nEnd) => {
+        if (!nEnd) return;
+        const tx = pAdj.x - pEnd.x;
+        const ty = pAdj.y - pEnd.y;
+        const tLen = Math.hypot(tx, ty) || 1;
+        const cap = this.Bodies.circle(
+          pEnd.x + nEnd.nx * capR + (tx / tLen) * (capR * 0.7),
+          pEnd.y + nEnd.ny * capR + (ty / tLen) * (capR * 0.7),
+          capR,
+          {
+            isStatic: true,
+            friction: 0.92,
+            restitution: 0.08,
+            slop: 0.015,
+            label: 'island',
+            isBackside
+          }
+        );
+        this.Composite.add(this.engine.world, cap);
+        this.driveSurfaces.push(cap);
+      };
+      addCap(pts[0], pts[1], normals[0]);
+      addCap(pts[count], pts[count - 1], normals[count - 1]);
     }
   }
 
@@ -238,7 +287,7 @@ export class PhysicsSimulation {
       const seg = this.Bodies.rectangle(cx, cy, segLen, pipe.thickness, {
         isStatic: true,
         angle,
-        chamfer: { radius: Math.min(3, segLen * 0.35) },
+        chamfer: { radius: Math.min(1.0, segLen * 0.2) },
         friction: 0.92,
         restitution: 0.10,
         slop: 0.015,
@@ -312,8 +361,8 @@ export class PhysicsSimulation {
     this.waterRising = false;
 
     for (const isl of arena.islands) {
-      this._addSurfacePolyline(isl.top, 1, 34, false);
-      this._addSurfacePolyline(isl.belly, 1, 24, false);
+      this._addSurfacePolyline(isl.top, 1, 28, false, { taperEnds: true, endCaps: true });
+      this._addSurfacePolyline(isl.belly, 1, 14, false, { isBackside: true });
     }
 
     for (const caveLoop of arena.caves) {
@@ -352,7 +401,8 @@ export class PhysicsSimulation {
         friction: 0.92,
         restitution: 0.14,
         slop: 0.015,
-        label: 'island'
+        label: 'island',
+        isBackside: Boolean(blk.hiddenVisual)
       });
       this.Composite.add(this.engine.world, rect);
       this.driveSurfaces.push(rect);

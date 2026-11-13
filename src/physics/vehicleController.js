@@ -17,44 +17,56 @@ export class VehiclePhysicsController {
     this.engine = engine;
   }
 
-  _probeWheelRay(wheel, carDown, driveBodies) {
+  _probeWheelRay(wheel, carDown, driveBodies, prevNormal) {
     if (!driveBodies || driveBodies.length === 0) return null;
     const start = wheel.position;
     const carUpX = -carDown.x;
     const carUpY = -carDown.y;
+    const pnx = prevNormal ? prevNormal.x : 0;
+    const pny = prevNormal ? prevNormal.y : -1;
 
     const castDir = (dx, dy, dist) => {
       const end = { x: start.x + dx * dist, y: start.y + dy * dist };
       const hits = this.Query.ray(driveBodies, start, end, 4);
       if (!hits || hits.length === 0) return null;
 
-      let bestN = null;
-      let bestDot = -1;
-      for (let i = 0; i < hits.length; i++) {
-        const h = hits[i];
-        let nx = h.normal ? h.normal.x : -dx;
-        let ny = h.normal ? h.normal.y : -dy;
-        if (nx * dx + ny * dy > 0) {
-          nx = -nx;
-          ny = -ny;
+      const pickBest = (allowBackside) => {
+        let bestN = null;
+        let bestScore = -2;
+        for (let i = 0; i < hits.length; i++) {
+          const h = hits[i];
+          const isBack = Boolean(h.body && h.body.isBackside);
+          if (!allowBackside && isBack) continue;
+          let nx = h.normal ? h.normal.x : -dx;
+          let ny = h.normal ? h.normal.y : -dy;
+          if (nx * dx + ny * dy > 0) {
+            nx = -nx;
+            ny = -ny;
+          }
+          const len = Math.hypot(nx, ny);
+          if (len < 0.001) continue;
+          nx /= len;
+          ny /= len;
+          const upDot = nx * carUpX + ny * carUpY;
+          if (upDot > 0.24) {
+            const continuity = nx * pnx + ny * pny;
+            const score = upDot * 0.72 + continuity * 0.28;
+            if (score > bestScore) {
+              bestScore = score;
+              bestN = { x: nx, y: ny, isBackside: isBack };
+            }
+          }
         }
-        const len = Math.hypot(nx, ny);
-        if (len < 0.001) continue;
-        nx /= len;
-        ny /= len;
-        const upDot = nx * carUpX + ny * carUpY;
-        if (upDot > 0.24 && upDot > bestDot) {
-          bestDot = upDot;
-          bestN = { x: nx, y: ny };
-        }
-      }
-      return bestN;
+        return bestN;
+      };
+
+      return pickBest(false) || pickBest(true);
     };
 
-    const primary = castDir(carDown.x, carDown.y, CAR_SPEC.wheelRadius + 5.6);
+    const primary = castDir(carDown.x, carDown.y, CAR_SPEC.wheelRadius + 3.4);
     if (primary) return primary;
     if (carDown.y > 0.35 && Math.abs(carDown.x) > 0.25) {
-      return castDir(0, 1, CAR_SPEC.wheelRadius + 2.6);
+      return castDir(0, 1, CAR_SPEC.wheelRadius + 2.4);
     }
     return null;
   }
@@ -72,19 +84,20 @@ export class VehiclePhysicsController {
           const ny = contact.ny / len;
           const upDot = nx * carUp.x + ny * carUp.y;
           if (upDot > 0.24) {
-            return { grounded: true, nx, ny, upDot };
+            return { grounded: true, nx, ny, upDot, isBackside: Boolean(contact.isBackside && !contact.hasFront) };
           }
         }
       }
-      if (car.isAirborne && wheel.velocity.y > 2.3) {
-        return { grounded: false, nx: 0, ny: 0, upDot: 0 };
+      const velUp = wheel.velocity.x * carUp.x + wheel.velocity.y * carUp.y;
+      if (car.isAirborne && velUp > 1.4) {
+        return { grounded: false, nx: 0, ny: 0, upDot: 0, isBackside: false };
       }
-      const rayNormal = this._probeWheelRay(wheel, carDown, driveBodies);
+      const rayNormal = this._probeWheelRay(wheel, carDown, driveBodies, car.groundNormal);
       if (rayNormal) {
         const upDot = rayNormal.x * carUp.x + rayNormal.y * carUp.y;
-        return { grounded: true, nx: rayNormal.x, ny: rayNormal.y, upDot };
+        return { grounded: true, nx: rayNormal.x, ny: rayNormal.y, upDot, isBackside: Boolean(rayNormal.isBackside) };
       }
-      return { grounded: false, nx: 0, ny: 0, upDot: 0 };
+      return { grounded: false, nx: 0, ny: 0, upDot: 0, isBackside: false };
     };
 
     const rRes = checkWheel(car.wheelR, wheelContacts.rear);
@@ -94,14 +107,21 @@ export class VehiclePhysicsController {
     const frontGrounded = fRes.grounded;
     const groundedCount = (rearGrounded ? 1 : 0) + (frontGrounded ? 1 : 0);
     const grounded = groundedCount > 0;
+    const isBackside = grounded && (!rearGrounded || rRes.isBackside) && (!frontGrounded || fRes.isBackside);
 
     if (grounded) {
       let targetNx = 0;
       let targetNy = -1;
       if (rearGrounded && frontGrounded) {
-        const len = Math.hypot(rRes.nx + fRes.nx, rRes.ny + fRes.ny) || 1;
-        targetNx = (rRes.nx + fRes.nx) / len;
-        targetNy = (rRes.ny + fRes.ny) / len;
+        if (rRes.isBackside !== fRes.isBackside) {
+          const pref = rRes.isBackside ? fRes : rRes;
+          targetNx = pref.nx;
+          targetNy = pref.ny;
+        } else {
+          const len = Math.hypot(rRes.nx + fRes.nx, rRes.ny + fRes.ny) || 1;
+          targetNx = (rRes.nx + fRes.nx) / len;
+          targetNy = (rRes.ny + fRes.ny) / len;
+        }
       } else {
         const one = rearGrounded ? rRes : fRes;
         targetNx = one.nx;
@@ -115,11 +135,12 @@ export class VehiclePhysicsController {
         car.groundNormal = { x: blendNx / bLen, y: blendNy / bLen };
         car.groundAngle = Math.atan2(car.groundNormal.x, -car.groundNormal.y);
       } else {
-        // Clamp sudden corner/lip whips to max ~18 deg/tick while allowing tight quarter-pipe climbing
+        // Blend curve normals smoothly along poly segments to prevent polygonal hitching
         const curAng = Math.atan2(car.groundNormal.x, -car.groundNormal.y);
         const targetAng = Math.atan2(targetNx, -targetNy);
         const dAng = normalizeAngle(targetAng - curAng);
-        const stepAng = clamp(dAng * 0.72, -0.32, 0.32);
+        const blendGain = Math.abs(dAng) < 0.25 ? 0.58 : 0.72;
+        const stepAng = clamp(dAng * blendGain, -0.28, 0.28);
         const nextAng = curAng + stepAng;
         car.groundNormal = { x: Math.sin(nextAng), y: -Math.cos(nextAng) };
         car.groundAngle = normalizeAngle(nextAng);
@@ -143,6 +164,7 @@ export class VehiclePhysicsController {
       groundedCount,
       rearGrounded,
       frontGrounded,
+      isBackside,
       normal: car.groundNormal,
       groundAngle: car.groundAngle
     };
@@ -191,6 +213,14 @@ export class VehiclePhysicsController {
         const dy = car.accelDir * ty * trim;
         for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
           this.Body.setVelocity(b, { x: b.velocity.x - dx, y: b.velocity.y - dy });
+        }
+      }
+      const totalSpd = Math.hypot(car.chassis.velocity.x, car.chassis.velocity.y);
+      const totalCap = maxS * 1.04;
+      if (totalSpd > totalCap) {
+        const sc = totalCap / totalSpd;
+        for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+          this.Body.setVelocity(b, { x: b.velocity.x * sc, y: b.velocity.y * sc });
         }
       }
     }
@@ -420,11 +450,12 @@ export class VehiclePhysicsController {
     }
 
     // Track concave bowls/walls with strong centripetal adhesion (Map 4 loops, Map 5 canyon, Map 7 oval, Map 8 bowls),
-    // while releasing downward suction on fast kicker crests so steeps/ramps launch into fun air-rolls!
+    // while releasing downward suction on fast kicker crests & open wing ramp lips so reverse ramps launch into air time!
     const onSteepWallOrLoop = ground.normal.y > -0.78;
     const crestingHillLip = !onSteepWallOrLoop && vAlong > 5.3 && uphillFactor > 0.34 && tailGrounded && !noseGrounded;
-    const concaveOrWall = onSteepWallOrLoop || (ground.normal.y > -0.90 && uphillFactor > 0.12 && ground.groundedCount === 2);
-    if (!crestingHillLip && concaveOrWall && vAlong > 0.7) {
+    const onOpenRampLip = ground.groundedCount === 1 && uphillFactor > 0.55 && ground.normal.y < 0.20;
+    const concaveOrWall = !ground.isBackside && (onSteepWallOrLoop || (ground.normal.y > -0.90 && uphillFactor > 0.12 && ground.groundedCount === 2));
+    if (!crestingHillLip && !onOpenRampLip && concaveOrWall && vAlong > 0.7) {
       const speedNorm = clamp(Math.abs(vAlong) / maxSpeed, 0.24, 1.0);
       const wallFactor = clamp((ground.normal.y + 0.88) * 1.25, 0.30, 1.35);
       const stick = VEHICLE_PHYSICS.CURVE_ADHESION_FORCE * Math.pow(speedNorm, 1.2) * wallFactor;
@@ -435,7 +466,9 @@ export class VehiclePhysicsController {
     }
 
     if (isReverse) {
-      this._applyPitchStability(car, ground.groundAngle, -VEHICLE_PHYSICS.REVERSE_PITCH_BIAS, true);
+      // Keep wheels flush on steep reverse-ramp climbs so cars launch cleanly along the ramp rather than pitching away
+      const revPitch = -VEHICLE_PHYSICS.REVERSE_PITCH_BIAS * (1 - clamp(uphillFactor * 1.4, 0, 1));
+      this._applyPitchStability(car, ground.groundAngle, revPitch, true);
     } else if (crestingHillLip) {
       this._applyPitchStability(car, ground.groundAngle, VEHICLE_PHYSICS.FORWARD_PITCH_MAX_OFFSET, true);
     } else {

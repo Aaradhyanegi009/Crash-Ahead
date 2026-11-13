@@ -185,7 +185,7 @@ export function drawRoadster(ctx, carState, isRedPlayer) {
     drawHelmet(ctx, head, facing, isRedPlayer, false);
   }
 
-  // 3. Chassis Roadster Body (81 x 23.4 = 10% smaller), Tailpipe, Stripe, Windshield & Wheel Wells
+  // 3. Sleek Aero Roadster Body (-7% overall size, low wedge nose, raked windscreen & tail lip)
   ctx.save();
   ctx.translate(chassis.position.x, chassis.position.y);
   ctx.rotate(chassis.angle);
@@ -200,38 +200,39 @@ export function drawRoadster(ctx, carState, isRedPlayer) {
   ctx.lineWidth = 3 / CAR_SCALE;
   ctx.beginPath();
   ctx.moveTo(-40, 2);
-  ctx.lineTo(-50, -3);
-  ctx.lineTo(-49, 4);
+  ctx.lineTo(-50, -3.5);
+  ctx.lineTo(-49, 3.5);
   ctx.lineTo(-39, 7);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // Windshield Post
+  // Raked Aerodynamic Windshield Post
   ctx.fillStyle = PALETTE.white;
   ctx.strokeStyle = PALETTE.ink;
   ctx.lineWidth = 3 / CAR_SCALE;
   ctx.beginPath();
-  ctx.moveTo(15, -10);
-  ctx.lineTo(12, -21);
-  ctx.lineTo(17, -21);
-  ctx.lineTo(20, -10);
+  ctx.moveTo(13, -7.5);
+  ctx.lineTo(6.5, -18);
+  ctx.lineTo(11.5, -18);
+  ctx.lineTo(18.5, -7.5);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // Roadster Silhouette
+  // Sleek Wedge Roadster Silhouette
   ctx.beginPath();
-  ctx.moveTo(-38, 12);
-  ctx.lineTo(38, 12);
-  ctx.quadraticCurveTo(46, 12, 46, 2);
-  ctx.quadraticCurveTo(46, -10, 32, -11);
-  ctx.lineTo(17, -11);
-  ctx.quadraticCurveTo(10, -2, 0, -2);
-  ctx.quadraticCurveTo(-10, -2, -16, -12);
-  ctx.lineTo(-34, -12);
-  ctx.quadraticCurveTo(-45, -11, -45, 2);
-  ctx.quadraticCurveTo(-45, 12, -38, 12);
+  ctx.moveTo(-39, 11);
+  ctx.lineTo(40, 11);
+  ctx.quadraticCurveTo(47.5, 11, 47.5, 3);
+  ctx.quadraticCurveTo(46, -5.5, 31, -7.5);
+  ctx.lineTo(16.5, -8.5);
+  ctx.quadraticCurveTo(9, -1, 0, -1);
+  ctx.quadraticCurveTo(-9, -1, -15.5, -9.5);
+  ctx.lineTo(-36.5, -10.5);
+  ctx.lineTo(-46.5, -13);
+  ctx.quadraticCurveTo(-45.5, -2, -45, 3.5);
+  ctx.quadraticCurveTo(-45, 11, -39, 11);
   ctx.closePath();
 
   ctx.fillStyle = colors.body;
@@ -240,20 +241,20 @@ export function drawRoadster(ctx, carState, isRedPlayer) {
   ctx.save();
   ctx.clip();
   ctx.fillStyle = colors.lip;
-  ctx.fillRect(-48, 6, 96, 8);
+  ctx.fillRect(-48, 5.5, 97, 7);
   ctx.fillStyle = PALETTE.stripeGold;
-  ctx.fillRect(-46, -1, 92, 5.5);
+  ctx.fillRect(-47, 0.2, 95, 4.0);
   ctx.restore();
 
   ctx.strokeStyle = PALETTE.ink;
   ctx.lineWidth = 3.5 / CAR_SCALE;
   ctx.stroke();
 
-  // Wheel-Well Arches
+  // Sleek Wheel-Well Arches
   for (const wx of [-27, 27]) {
     ctx.fillStyle = PALETTE.ink;
     ctx.beginPath();
-    ctx.arc(wx, 13, 18, Math.PI, 0);
+    ctx.arc(wx, 12.2, 17.5, Math.PI, 0);
     ctx.closePath();
     ctx.fill();
   }
