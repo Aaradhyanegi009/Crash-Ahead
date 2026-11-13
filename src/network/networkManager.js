@@ -17,15 +17,96 @@ const BC_ROOM_PREFIX = 'unfair-crash-ahead-room-';
 const RELAY_TOPIC_ROOT = 'unfair-crash-ahead/v2/';
 const PEER_SILENCE_TIMEOUT_MS = 15000;
 const JOIN_TIMEOUT_MS = 18000;
+const WIRE_PHASES = ['MENU', 'COUNTDOWN', 'FIGHT', 'ROUND_OVER', 'GAME_OVER'];
+
+const phaseToWire = (ph) => {
+  const i = WIRE_PHASES.indexOf(ph);
+  return i >= 0 ? i : (ph || 0);
+};
+const wireToPhase = (v) => (typeof v === 'number' ? (WIRE_PHASES[v] || 'MENU') : (v || 'MENU'));
+
+function encodeWireMsg(msg) {
+  if (!msg || typeof msg !== 'object') return msg;
+  if (msg.t === 'input') {
+    const m = (msg.l ? 1 : 0) | (msg.r ? 2 : 0) | (msg.j ? 4 : 0) |
+      (msg.pl ? 8 : 0) | (msg.pr ? 16 : 0) | (msg.pj ? 32 : 0);
+    return ['I', msg.ep || 1, msg.seq || 0, m, msg.jc || 0, msg.holdMs || 0];
+  }
+  if (msg.t === 'snap') {
+    const i1 = msg.i1 || [0, 0, 0, 0];
+    const i1m = (i1[0] ? 1 : 0) | (i1[1] ? 2 : 0) | (i1[3] ? 4 : 0);
+    const flags = (msg.d1 ? 1 : 0) | (msg.d2 ? 2 : 0) | (msg.dr1 ? 4 : 0) | (msg.dr2 ? 8 : 0);
+    const sw = Array.isArray(msg.sw) ? msg.sw : [];
+    const arr = [
+      'S', msg.ep || 1, msg.sq || 0, msg.ak || 0, msg.ai || 0,
+      msg.m1 || 0, msg.m2 || 0,
+      msg.sc ? msg.sc[0] : 0, msg.sc ? msg.sc[1] : 0,
+      msg.rn || 1, phaseToWire(msg.ph), msg.bt || '',
+      msg.rt || 0, msg.wy || 0,
+      i1m, i1[2] || 0, flags,
+      msg.hm1 || 0, msg.hm2 || 0, msg.ad1 || 0, msg.ad2 || 0,
+      msg.lj1 ?? -99999, msg.lj2 ?? -99999,
+      sw.length
+    ];
+    for (let i = 0; i < sw.length; i++) {
+      arr.push(sw[i][0], sw[i][1]);
+    }
+    for (let i = 0; i < BODY_KEYS.length; i++) {
+      const b = msg[BODY_KEYS[i][2]];
+      if (b) arr.push(b[0], b[1], b[2], b[3], b[4], b[5]);
+      else arr.push(0, 0, 0, 0, 0, 0);
+    }
+    return arr;
+  }
+  return msg;
+}
+
+function decodeWireMsg(raw) {
+  if (!Array.isArray(raw)) return raw;
+  const tag = raw[0];
+  if (tag === 'I') {
+    const m = raw[3] || 0;
+    return {
+      t: 'input', ep: raw[1], seq: raw[2],
+      l: !!(m & 1), r: !!(m & 2), j: !!(m & 4),
+      pl: !!(m & 8), pr: !!(m & 16), pj: !!(m & 32),
+      jc: raw[4] || 0, holdMs: raw[5] || 0
+    };
+  }
+  if (tag === 'S') {
+    const i1m = raw[14] || 0;
+    const flags = raw[16] || 0;
+    const swLen = raw[23] || 0;
+    let idx = 24;
+    const sw = [];
+    for (let i = 0; i < swLen; i++) {
+      sw.push([raw[idx++], raw[idx++]]);
+    }
+    const snap = {
+      t: 'snap', ep: raw[1], sq: raw[2], ak: raw[3], ai: raw[4],
+      m1: raw[5], m2: raw[6], sc: [raw[7], raw[8]], rn: raw[9],
+      ph: wireToPhase(raw[10]), bt: raw[11], rt: raw[12], wy: raw[13],
+      i1: [i1m & 1, (i1m >> 1) & 1, raw[15], (i1m >> 2) & 1],
+      d1: flags & 1, d2: (flags >> 1) & 1, dr1: (flags >> 2) & 1, dr2: (flags >> 3) & 1,
+      hm1: raw[17], hm2: raw[18], ad1: raw[19], ad2: raw[20],
+      lj1: raw[21], lj2: raw[22], sw
+    };
+    for (let i = 0; i < BODY_KEYS.length; i++) {
+      snap[BODY_KEYS[i][2]] = [
+        raw[idx++], raw[idx++], raw[idx++], raw[idx++], raw[idx++], raw[idx++]
+      ];
+    }
+    return snap;
+  }
+  return raw;
+}
 
 // Public STUN servers (Google + Cloudflare + Twilio) for direct WebRTC hole punching.
 // When a direct path is impossible (symmetric NAT / CGNAT / mobile data / firewalls),
 // the game automatically falls back to the secure WebSocket internet relay (mqttRelay.js).
 const ICE_SERVERS = [
-  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-  { urls: ['stun:stun2.l.google.com:19302', 'stun:stun3.l.google.com:19302'] },
-  { urls: 'stun:stun.cloudflare.com:3478' },
-  { urls: 'stun:global.stun.twilio.com:3478' }
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
+  { urls: ['stun:global.stun.twilio.com:3478', 'stun:stun2.l.google.com:19302'] }
 ];
 
 function randomHex(nBytes) {
@@ -80,6 +161,14 @@ export class NetworkManager {
     this.localPeerReady = false;
     this.connectedFired = false;
 
+    // Native WebRTC DataChannels signaled directly over MQTT relay (eliminates slow PeerJS wait)
+    this.nativePc = null;
+    this.nativeCtrlDc = null;
+    this.nativeFastDc = null;
+    this.nativeIceQueue = [];
+    this.nativeRemoteDescSet = false;
+    this.nativeOfferTimer = null;
+
     // Internet relay fallback (works across any two networks)
     this.relayId = randomHex(6);
     this.relayLinks = [];
@@ -103,9 +192,21 @@ export class NetworkManager {
     this.inputSendTick = 0;
     this.releaseBurstLeft = 0;
     this.lastInputSent = { l: false, r: false, j: false };
+    this.jumpPressCount = 0;
+    this.prevClientJ = false;
+    this.lastRemoteJumpCount = 0;
+    this.pendingRemoteJumpTicks = 0;
+    this._latestRemoteJ = false;
     this.pendingInputs = [];
     this.pendingSnapshot = null;
     this.lastSeq = 0;
+    this.lastSnapPhase = '';
+    this.lastSnapDeadMask = -1;
+    this.rxSnapLastSq = 0;
+    this.rxSnapExpected = 0;
+    this.rxSnapRecv = 0;
+    this.pktLossPct = 0;
+    this._lastRelayFailoverAt = 0;
 
     this.nextEvtId = 0;
     this.pendingReliable = new Map();
@@ -129,13 +230,20 @@ export class NetworkManager {
     }
   }
 
+  _hasP2P() {
+    return !!(
+      (this.nativeCtrlDc && this.nativeCtrlDc.readyState === 'open') ||
+      (this.conn && this.conn.open)
+    );
+  }
+
   isConnected() {
-    return !!(this.localPeerReady || (this.conn && this.conn.open) || this.relayPeerReady);
+    return !!(this.localPeerReady || this._hasP2P() || this.relayPeerReady);
   }
 
   transportName() {
     if (this.localPeerReady) return 'local';
-    if (this.conn && this.conn.open) return 'p2p';
+    if (this._hasP2P()) return 'p2p';
     if (this.relayPeerReady) return 'relay';
     return 'none';
   }
@@ -149,6 +257,23 @@ export class NetworkManager {
       try {
         this.localChan.postMessage({ _from: this.role, payload: msg });
         return true;
+      } catch (_) {}
+    }
+    const wire = encodeWireMsg(msg);
+    if (fast && this.nativeFastDc && this.nativeFastDc.readyState === 'open') {
+      try {
+        if (this.nativeFastDc.bufferedAmount < 12288) {
+          this.nativeFastDc.send(JSON.stringify(wire));
+          return true;
+        }
+      } catch (_) {}
+    }
+    if (this.nativeCtrlDc && this.nativeCtrlDc.readyState === 'open') {
+      try {
+        if (!fast || this.nativeCtrlDc.bufferedAmount < 24576) {
+          this.nativeCtrlDc.send(JSON.stringify(wire));
+          return true;
+        }
       } catch (_) {}
     }
     if (fast && this.fastConn && this.fastConn.open) {
@@ -167,7 +292,7 @@ export class NetworkManager {
       } catch (_) {}
     }
     if (this.relayPeerReady && this.relayLink && !this.relayLink.closed) {
-      return this.relayLink.publish(this._relayPeerTopic(), { f: this.relayId, k: 'd', p: msg });
+      return this.relayLink.publish(this._relayPeerTopic(), { f: this.relayId, k: 'd', p: wire });
     }
     return false;
   }
@@ -194,6 +319,7 @@ export class NetworkManager {
         onMessage: (topic, msg, l) => this._onRelayMessage(msg, l),
         onClose: (l) => this._onRelayClosed(l)
       });
+      link._measuredRtt = 0;
       this.relayLinks.push(link);
       link.connect([myTopic]);
     }
@@ -201,10 +327,15 @@ export class NetworkManager {
       if (this.relayHelloTimer) clearInterval(this.relayHelloTimer);
       this.relayHelloTimer = setInterval(() => {
         if (this.relayPeerReady) { clearInterval(this.relayHelloTimer); this.relayHelloTimer = null; return; }
+        const now = Math.round(performance.now());
         for (const l of this.relayLinks) {
-          if (l.ready) l.publish(`${this._relayBase()}/h`, { f: this.relayId, k: 'hello' });
+          if (l.ready) {
+            l.publish(`${this._relayBase()}/h`, {
+              f: this.relayId, k: 'hello', cts: now, rtt: l._measuredRtt || 0
+            });
+          }
         }
-      }, 480);
+      }, 240);
     }
   }
 
@@ -230,7 +361,9 @@ export class NetworkManager {
         this.cb.onStatus(`Hosting ${this.roomCode} — waiting for player`, 'neutral', false);
       }
     } else if (!this.relayPeerReady) {
-      link.publish(`${this._relayBase()}/h`, { f: this.relayId, k: 'hello' });
+      link.publish(`${this._relayBase()}/h`, {
+        f: this.relayId, k: 'hello', cts: Math.round(performance.now()), rtt: 0
+      });
     }
   }
 
@@ -240,6 +373,31 @@ export class NetworkManager {
       if (l !== link) { l.onClose = null; l.close(); }
     }
     this.relayLinks = [link];
+  }
+
+  _commitRelayHostPick() {
+    this.relayPickTimer = null;
+    const cands = this.relayCandidates.filter((c) => !c.link.closed);
+    this.relayCandidates = [];
+    const peer = this.relayPendingPeer;
+    this.relayPendingPeer = null;
+    if (!cands.length || this.relayPeerReady || this.role !== 'host') return;
+    if (this.isConnected() && peer !== this.p2pPeerRid) return;
+    cands.sort((a, b) => {
+      const ar = a.rtt > 0 ? a.rtt : 9999;
+      const br = b.rtt > 0 ? b.rtt : 9999;
+      if (Math.abs(ar - br) > 20) return ar - br;
+      const dt = a.arrivedAt - b.arrivedAt;
+      if (Math.abs(dt) > 35) return dt;
+      return RELAY_BROKERS.indexOf(a.link.url) - RELAY_BROKERS.indexOf(b.link.url);
+    });
+    const best = cands[0].link;
+    this.relayPeerId = peer;
+    this._lockRelayLink(best);
+    this.relayPeerReady = true;
+    best.publish(this._relayPeerTopic(), { f: this.relayId, k: 'welcome' });
+    this._markConnected();
+    this._startNativeP2PHost();
   }
 
   _onRelayMessage(msg, link) {
@@ -259,36 +417,37 @@ export class NetworkManager {
           link.publish(`${this._relayBase()}/c/${msg.f}`, { f: this.relayId, k: 'busy' });
           return;
         }
-        // Collect arriving hellos for a brief 260ms race window, preferring lowest-latency arrival
+        // Echo probe timestamp so Client measures true 4-hop RTT on each broker
+        if (typeof msg.cts === 'number' && !msg.rtt) {
+          link.publish(`${this._relayBase()}/c/${msg.f}`, { f: this.relayId, k: 'hprobe', cts: msg.cts });
+        }
         if (this.relayPendingPeer && this.relayPendingPeer !== msg.f) return;
         this.relayPendingPeer = msg.f;
-        if (!this.relayCandidates.some((c) => c.link === link)) {
-          this.relayCandidates.push({ link, arrivedAt: performance.now() });
+        let cand = this.relayCandidates.find((c) => c.link === link);
+        if (!cand) {
+          cand = { link, arrivedAt: performance.now(), rtt: msg.rtt > 0 ? msg.rtt : 0 };
+          this.relayCandidates.push(cand);
+        } else if (msg.rtt > 0) {
+          cand.rtt = msg.rtt;
         }
-        if (!this.relayPickTimer) {
-          this.relayPickTimer = setTimeout(() => {
-            this.relayPickTimer = null;
-            const cands = this.relayCandidates.filter((c) => !c.link.closed);
-            this.relayCandidates = [];
-            const peer = this.relayPendingPeer;
-            this.relayPendingPeer = null;
-            if (!cands.length || this.relayPeerReady || this.role !== 'host') return;
-            if (this.isConnected() && peer !== this.p2pPeerRid) return;
-            cands.sort((a, b) => {
-              const dt = a.arrivedAt - b.arrivedAt;
-              if (Math.abs(dt) > 40) return dt;
-              return RELAY_BROKERS.indexOf(a.link.url) - RELAY_BROKERS.indexOf(b.link.url);
-            });
-            const best = cands[0].link;
-            this.relayPeerId = peer;
-            this._lockRelayLink(best);
-            this.relayPeerReady = true;
-            best.publish(this._relayPeerTopic(), { f: this.relayId, k: 'welcome' });
-            this._markConnected();
-          }, 260);
+        // Fast shortcut if a sub-125ms broker completed its RTT probe; otherwise wait up to 420ms
+        if (cand.rtt > 0 && cand.rtt <= 125 && this.relayPickTimer) {
+          clearTimeout(this.relayPickTimer);
+          this.relayPickTimer = setTimeout(() => this._commitRelayHostPick(), 65);
+        } else if (!this.relayPickTimer) {
+          this.relayPickTimer = setTimeout(() => this._commitRelayHostPick(), 420);
         }
         return;
       }
+    } else if (msg.k === 'hprobe') {
+      if (!this.relayPeerReady && link.ready && typeof msg.cts === 'number') {
+        const rtt = Math.max(1, Math.round(performance.now() - msg.cts));
+        link._measuredRtt = link._measuredRtt ? Math.round(link._measuredRtt * 0.4 + rtt * 0.6) : rtt;
+        link.publish(`${this._relayBase()}/h`, {
+          f: this.relayId, k: 'hello', cts: Math.round(performance.now()), rtt: link._measuredRtt
+        });
+      }
+      return;
     } else if (msg.k === 'welcome') {
       if (this.relayPeerReady) return;
       this.relayPeerId = msg.f;
@@ -309,6 +468,8 @@ export class NetworkManager {
     if (!this.relayPeerReady || msg.f !== this.relayPeerId) return;
     if (msg.k === 'd') {
       this._handleMessage(msg.p);
+    } else if (msg.k === 'sig') {
+      this._handleNativeSig(msg);
     } else if (msg.k === 'bye') {
       this.relayPeerReady = false;
       if (!this.isConnected()) {
@@ -316,6 +477,174 @@ export class NetworkManager {
         this.cb.onDisconnected('Opponent disconnected.');
       }
     }
+  }
+
+  _sendSig(s, data) {
+    if (!this.relayPeerReady || !this.relayLink || this.relayLink.closed) return;
+    this.relayLink.publish(this._relayPeerTopic(), { f: this.relayId, k: 'sig', s, ...data });
+  }
+
+  _closeNativeP2P() {
+    if (this.nativeOfferTimer) { clearTimeout(this.nativeOfferTimer); this.nativeOfferTimer = null; }
+    const oldFast = this.nativeFastDc;
+    const oldCtrl = this.nativeCtrlDc;
+    const oldPc = this.nativePc;
+    this.nativeFastDc = null;
+    this.nativeCtrlDc = null;
+    this.nativePc = null;
+    this.nativeIceQueue = [];
+    this.nativeRemoteDescSet = false;
+    if (oldFast) { try { oldFast.close(); } catch (_) {} }
+    if (oldCtrl) { try { oldCtrl.close(); } catch (_) {} }
+    if (oldPc) { try { oldPc.close(); } catch (_) {} }
+  }
+
+  _closePeerJsFallback() {
+    const oldFast = this.fastConn;
+    const oldConn = this.conn;
+    this.fastConn = null;
+    this.conn = null;
+    if (oldFast) { try { oldFast.close(); } catch (_) {} }
+    if (oldConn) { try { oldConn.close(); } catch (_) {} }
+    if (this.peer) {
+      const p = this.peer;
+      this.peer = null;
+      try { p.destroy(); } catch (_) {}
+    }
+  }
+
+  _bindNativeDc(pc, dc, isFast) {
+    if (isFast) this.nativeFastDc = dc;
+    else this.nativeCtrlDc = dc;
+
+    dc.onopen = () => {
+      if (this.nativePc !== pc) return;
+      if (isFast ? this.nativeFastDc !== dc : this.nativeCtrlDc !== dc) return;
+      if (this.localPeerReady) { try { dc.close(); } catch (_) {} return; }
+      if (this.nativeOfferTimer) { clearTimeout(this.nativeOfferTimer); this.nativeOfferTimer = null; }
+      if (!isFast) {
+        if (this.connectedFired && this.relayPeerReady) {
+          this.cb.onStatus('Connected! (direct P2P)', 'connected', false);
+        }
+        this._markConnected();
+        this._closePeerJsFallback();
+      }
+      this._resetPingAndProbe();
+    };
+    dc.onmessage = (ev) => {
+      if (this.nativePc !== pc || this.localPeerReady) return;
+      if (isFast ? this.nativeFastDc !== dc : this.nativeCtrlDc !== dc) return;
+      try {
+        const msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+        this._handleMessage(msg);
+      } catch (_) {}
+    };
+    dc.onclose = () => {
+      if (isFast && this.nativeFastDc === dc) this.nativeFastDc = null;
+      if (!isFast && this.nativeCtrlDc === dc) {
+        this.nativeCtrlDc = null;
+        if (!this.isConnected() && this.connectedFired) {
+          this.destroy();
+          this.cb.onDisconnected('Opponent disconnected.');
+        }
+      }
+    };
+    dc.onerror = () => {
+      if (isFast && this.nativeFastDc === dc) this.nativeFastDc = null;
+      if (!isFast && this.nativeCtrlDc === dc) this.nativeCtrlDc = null;
+    };
+  }
+
+  _createNativePc() {
+    if (typeof RTCPeerConnection === 'undefined') return null;
+    this._closeNativeP2P();
+    try {
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, iceCandidatePoolSize: 2 });
+      this.nativePc = pc;
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate && this.nativePc === pc && this.relayPeerReady && this.relayLink) {
+          this._sendSig('ice', { c: ev.candidate.toJSON ? ev.candidate.toJSON() : ev.candidate });
+        }
+      };
+      pc.oniceconnectionstatechange = () => {
+        if (this.nativePc !== pc) return;
+        const st = pc.iceConnectionState;
+        if ((st === 'failed' || st === 'closed') && !this._hasP2P()) {
+          this._closeNativeP2P();
+        }
+      };
+      return pc;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async _startNativeP2PHost() {
+    if (this.role !== 'host' || this.localPeerReady || this._hasP2P() || this.nativePc) return;
+    const pc = this._createNativePc();
+    if (!pc) return;
+    try {
+      const ctrlDc = pc.createDataChannel('ctrl', { ordered: true });
+      const fastDc = pc.createDataChannel('fast', { ordered: false, maxRetransmits: 0 });
+      this._bindNativeDc(pc, ctrlDc, false);
+      this._bindNativeDc(pc, fastDc, true);
+      const offer = await pc.createOffer();
+      if (this.nativePc !== pc) return;
+      await pc.setLocalDescription(offer);
+      if (this.nativePc !== pc) return;
+      this._sendSig('offer', { sdp: pc.localDescription.sdp });
+      this.nativeOfferTimer = setTimeout(() => {
+        this.nativeOfferTimer = null;
+        if (this.nativePc === pc && !this.nativeRemoteDescSet && pc.localDescription) {
+          this._sendSig('offer', { sdp: pc.localDescription.sdp });
+        }
+      }, 550);
+    } catch (_) {
+      if (this.nativePc === pc) this._closeNativeP2P();
+    }
+  }
+
+  async _handleNativeSig(msg) {
+    if (this.localPeerReady || this._hasP2P()) return;
+    try {
+      if (msg.s === 'offer' && this.role === 'client') {
+        if (this.nativePc && this.nativeRemoteDescSet) return;
+        const pc = this._createNativePc();
+        if (!pc) return;
+        pc.ondatachannel = (ev) => {
+          if (this.nativePc !== pc) return;
+          const dc = ev.channel;
+          this._bindNativeDc(pc, dc, dc.label === 'fast');
+        };
+        await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+        if (this.nativePc !== pc) return;
+        this.nativeRemoteDescSet = true;
+        for (const c of this.nativeIceQueue.splice(0)) {
+          await pc.addIceCandidate(c).catch(() => {});
+        }
+        const ans = await pc.createAnswer();
+        if (this.nativePc !== pc) return;
+        await pc.setLocalDescription(ans);
+        if (this.nativePc !== pc) return;
+        this._sendSig('ans', { sdp: pc.localDescription.sdp });
+      } else if (msg.s === 'ans' && this.role === 'host') {
+        const pc = this.nativePc;
+        if (!pc || this.nativeRemoteDescSet) return;
+        await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+        if (this.nativePc !== pc) return;
+        this.nativeRemoteDescSet = true;
+        for (const c of this.nativeIceQueue.splice(0)) {
+          await pc.addIceCandidate(c).catch(() => {});
+        }
+      } else if (msg.s === 'ice' && msg.c) {
+        const pc = this.nativePc;
+        if (!pc || !this.nativeRemoteDescSet) {
+          this.nativeIceQueue.push(msg.c);
+          return;
+        }
+        await pc.addIceCandidate(msg.c).catch(() => {});
+      }
+    } catch (_) {}
   }
 
   _onRelayClosed(link) {
@@ -338,6 +667,9 @@ export class NetworkManager {
     this.hostInputPredictTicks = 0;
     this.releaseBurstLeft = 0;
     this.lastInputSent = { l: false, r: false, j: false };
+    this.prevClientJ = false;
+    this.pendingRemoteJumpTicks = 0;
+    this._latestRemoteJ = false;
     this.pendingInputs = [];
   }
 
@@ -351,20 +683,45 @@ export class NetworkManager {
     this.inputSendTick = 0;
     this.releaseBurstLeft = 0;
     this.lastInputSent = { l: false, r: false, j: false };
+    this.jumpPressCount = 0;
+    this.prevClientJ = false;
+    this.lastRemoteJumpCount = 0;
+    this.pendingRemoteJumpTicks = 0;
+    this._latestRemoteJ = false;
     this.pendingInputs = [];
     this.pendingSnapshot = null;
     this.lastSeq = 0;
+    this.lastSnapPhase = '';
+    this.lastSnapDeadMask = -1;
+    this.rxSnapLastSq = 0;
+    this.rxSnapExpected = 0;
+    this.rxSnapRecv = 0;
+    this.pktLossPct = 0;
   }
 
   tickHostWatchdog() {
+    const isRelay = this.transportName() === 'relay';
+    const staleLimit = (isRelay || this.pingMs > 120)
+      ? clamp((this.pingMs || 180) * 2.5, 520, 1400)
+      : 460;
     if ((this.remoteInput.l || this.remoteInput.r || this.remoteInput.j) && this.remoteInputAt > 0) {
-      if (performance.now() - this.remoteInputAt > 420) {
+      if (performance.now() - this.remoteInputAt > staleLimit) {
         this.remoteInput.l = false;
         this.remoteInput.r = false;
         this.remoteInput.j = false;
         this.remoteInput.jump = false;
         this.remoteInput.holdMs = 0;
+        this._latestRemoteJ = false;
+        this.pendingRemoteJumpTicks = 0;
       }
+    }
+    if (this.pendingRemoteJumpTicks > 0) {
+      this.remoteInput.j = true;
+      this.remoteInput.jump = true;
+      this.pendingRemoteJumpTicks -= 1;
+    } else if (!this._latestRemoteJ && (this.remoteInput.j || this.remoteInput.jump)) {
+      this.remoteInput.j = false;
+      this.remoteInput.jump = false;
     }
   }
 
@@ -388,14 +745,9 @@ export class NetworkManager {
     if (this.reliableTimer) { clearInterval(this.reliableTimer); this.reliableTimer = null; }
     if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
     this._closeLocalRoom();
+    this._closeNativeP2P();
     this._stopRelay(true);
-    const oldFast = this.fastConn;
-    this.fastConn = null;
-    if (oldFast) { try { oldFast.close(); } catch (_) {} }
-    const oldConn = this.conn;
-    this.conn = null;
-    if (oldConn) { try { oldConn.close(); } catch (_) {} }
-    if (this.peer) { try { this.peer.destroy(); } catch (_) {} this.peer = null; }
+    this._closePeerJsFallback();
     this.role = null;
     this.connectedFired = false;
     this.p2pPeerRid = null;
@@ -598,7 +950,7 @@ export class NetworkManager {
     if (this.role === 'host' && conn.metadata && conn.metadata.rid) this.p2pPeerRid = conn.metadata.rid;
     conn.on('open', () => {
       if (this.conn !== conn) return;
-      if (this.localPeerReady) {
+      if (this.localPeerReady || (this.nativeCtrlDc && this.nativeCtrlDc.readyState === 'open')) {
         try { conn.close(); } catch (_) {}
         return;
       }
@@ -606,6 +958,7 @@ export class NetworkManager {
         this.cb.onStatus('Connected! (upgraded to direct P2P)', 'connected', false);
       }
       this._markConnected();
+      this._resetPingAndProbe();
     });
     conn.on('iceStateChanged', (state) => {
       if (this.conn !== conn) return;
@@ -633,8 +986,20 @@ export class NetworkManager {
     });
   }
 
+  _sendPing() {
+    if (!this.isConnected()) return;
+    const tr = this.localPeerReady ? 3 : (this._hasP2P() ? 2 : 1);
+    this._sendRaw({ t: 'ping', ts: performance.now(), v: tr }, true);
+  }
+
+  _resetPingAndProbe() {
+    this.pingMs = 0;
+    this._sendPing();
+  }
+
   _startTimers() {
     if (this.pingTimer) clearInterval(this.pingTimer);
+    this._sendPing();
     this.pingTimer = setInterval(() => {
       if (!this.isConnected()) return;
       if (!this.localPeerReady && performance.now() - this.lastRemoteAt > PEER_SILENCE_TIMEOUT_MS) {
@@ -642,25 +1007,26 @@ export class NetworkManager {
         this.cb.onDisconnected('Opponent connection lost.');
         return;
       }
-      this._sendRaw({ t: 'ping', ts: performance.now() });
-    }, 1500);
+      this._sendPing();
+    }, 1000);
 
     if (this.reliableTimer) clearInterval(this.reliableTimer);
     this.reliableTimer = setInterval(() => {
       if (!this.isConnected() || this.pendingReliable.size === 0) return;
       const now = performance.now();
+      const retryMs = Math.max(150, (this.pingMs || 80) + 70);
       for (const [eid, entry] of this.pendingReliable.entries()) {
         if (entry.attempts >= 30) {
           this.pendingReliable.delete(eid);
           continue;
         }
-        if (now - entry.lastSent >= 110) {
+        if (now - entry.lastSent >= retryMs) {
           entry.lastSent = now;
           entry.attempts += 1;
           this._sendRaw(entry.msg);
         }
       }
-    }, 120);
+    }, 100);
   }
 
   sendReliable(type, payload = {}) {
@@ -671,7 +1037,8 @@ export class NetworkManager {
     this._sendRaw(msg);
   }
 
-  _handleMessage(msg) {
+  _handleMessage(raw) {
+    const msg = decodeWireMsg(raw);
     if (!msg || typeof msg !== 'object') return;
     this.lastRemoteAt = performance.now();
     if (typeof msg._eid === 'number') {
@@ -689,18 +1056,29 @@ export class NetworkManager {
         this.pendingReliable.delete(msg.eid);
         break;
       case 'ping':
-        if (this.isConnected()) this._sendRaw({ t: 'pong', ts: msg.ts }, true);
+        if (this.isConnected()) this._sendRaw({ t: 'pong', ts: msg.ts, v: msg.v || 0 }, true);
         break;
-      case 'pong':
-        this.pingMs = Math.max(1, Math.round(performance.now() - msg.ts));
+      case 'pong': {
+        const curTr = this.localPeerReady ? 3 : (this._hasP2P() ? 2 : 1);
+        if (msg.v && msg.v !== curTr) break;
+        const rtt = Math.max(1, Math.round(performance.now() - msg.ts));
+        if (rtt > 5000) break;
+        this.pingMs = this.pingMs > 0 ? Math.round(this.pingMs * 0.35 + rtt * 0.65) : rtt;
         this.cb.onPing(this.pingMs);
         break;
+      }
       case 'input': {
         if (typeof msg.ep === 'number' && msg.ep !== this.matchEpoch) return;
         const seq = msg.seq || 0;
+        const jc = msg.jc || 0;
+        if (jc > this.lastRemoteJumpCount) {
+          this.lastRemoteJumpCount = jc;
+          this.pendingRemoteJumpTicks = Math.max(this.pendingRemoteJumpTicks, 1);
+        }
         if (seq >= this.remoteInput.seq || seq === 0) {
-          const j = !!msg.j;
-          this.remoteInput = { seq, l: !!msg.l, r: !!msg.r, j, jump: j, holdMs: msg.holdMs || 0 };
+          this._latestRemoteJ = !!msg.j;
+          const effJ = this._latestRemoteJ || this.pendingRemoteJumpTicks > 0;
+          this.remoteInput = { seq, l: !!msg.l, r: !!msg.r, j: effJ, jump: effJ, holdMs: msg.holdMs || 0 };
           this.remoteInputAt = performance.now();
         }
         break;
@@ -722,6 +1100,16 @@ export class NetworkManager {
           }
         }
         if (msg.sq <= this.lastSeq) return;
+        if (this.rxSnapLastSq > 0 && msg.sq > this.rxSnapLastSq) {
+          this.rxSnapExpected += (msg.sq - this.rxSnapLastSq);
+          this.rxSnapRecv += 1;
+          if (this.rxSnapExpected >= 25) {
+            this.pktLossPct = Math.max(0, Math.round(((this.rxSnapExpected - this.rxSnapRecv) / this.rxSnapExpected) * 100));
+            this.rxSnapExpected *= 0.5;
+            this.rxSnapRecv *= 0.5;
+          }
+        }
+        this.rxSnapLastSq = msg.sq;
         this.lastSeq = msg.sq;
         this.pendingSnapshot = msg;
         if (this.cb.onSnapshotPacket) this.cb.onSnapshotPacket(msg);
@@ -743,9 +1131,15 @@ export class NetworkManager {
     if (!this.isConnected()) return;
     if (this.lastInputSent.l || this.lastInputSent.r || this.lastInputSent.j) {
       const seq = ++this.inputSeq;
+      const pl = this.lastInputSent.l, pr = this.lastInputSent.r, pj = this.lastInputSent.j;
       this.lastInputSent = { l: false, r: false, j: false };
-      this.releaseBurstLeft = 2;
-      this._sendRaw({ t: 'input', ep: this.matchEpoch, seq, l: false, r: false, j: false, holdMs: 0 }, true);
+      this.prevClientJ = false;
+      this.releaseBurstLeft = 3;
+      this._sendRaw({
+        t: 'input', ep: this.matchEpoch, seq,
+        l: false, r: false, j: false, pl, pr, pj,
+        jc: this.jumpPressCount, holdMs: 0
+      }, true);
     }
   }
 
@@ -755,22 +1149,31 @@ export class NetworkManager {
     const r = !!(inp && inp.r);
     const j = !!(inp && inp.jump);
     const holdMs = (inp && inp.holdMs) || 0;
+    const risingJump = j && !this.prevClientJ;
+    if (risingJump) this.jumpPressCount++;
+    this.prevClientJ = j;
+
     const cmd = { seq, l, r, j, jump: j, holdMs };
     this.pendingInputs.push(cmd);
-    if (this.pendingInputs.length > 60) this.pendingInputs.shift();
+    if (this.pendingInputs.length > 75) this.pendingInputs.shift();
 
     if (this.isConnected()) {
       this.inputSendTick++;
       const changed = l !== this.lastInputSent.l || r !== this.lastInputSent.r || j !== this.lastInputSent.j;
-      if (changed && !l && !r && !j) this.releaseBurstLeft = 2;
+      if (changed && !l && !r && !j) this.releaseBurstLeft = 3;
       const relayOnly = this.transportName() === 'relay';
       const heldSend = (l || r || j) && (this.inputSendTick % (relayOnly ? 3 : 2) === 0);
       const releaseEcho = !l && !r && !j && this.releaseBurstLeft > 0;
       const idleHeartbeat = this.inputSendTick % (relayOnly ? 8 : 4) === 0;
-      if (changed || heldSend || releaseEcho || idleHeartbeat) {
+      if (changed || risingJump || heldSend || releaseEcho || idleHeartbeat) {
         if (releaseEcho) this.releaseBurstLeft--;
+        const pl = this.lastInputSent.l, pr = this.lastInputSent.r, pj = this.lastInputSent.j;
         this.lastInputSent = { l, r, j };
-        this._sendRaw({ t: 'input', ep: this.matchEpoch, seq, l, r, j, holdMs }, true);
+        this._sendRaw({
+          t: 'input', ep: this.matchEpoch, seq,
+          l, r, j, pl, pr, pj,
+          jc: this.jumpPressCount, holdMs
+        }, true);
       }
     }
     return cmd;
@@ -861,17 +1264,28 @@ export class NetworkManager {
   sendHostSnapshot(sim, meta) {
     if (!this.isConnected()) return;
     const via = this.transportName();
+    const deadMask = (sim.p1Car?.dead ? 1 : 0) | (sim.p2Car?.dead ? 2 : 0);
+    const important = meta.phase !== this.lastSnapPhase || deadMask !== this.lastSnapDeadMask;
     if (via === 'p2p') {
-      const ch = (this.fastConn && this.fastConn.open) ? this.fastConn : this.conn;
-      const dc = ch ? (ch.dataChannel || ch._dc) : null;
-      if (dc && dc.bufferedAmount > 24576) return;
+      const dc = (this.nativeFastDc && this.nativeFastDc.readyState === 'open')
+        ? this.nativeFastDc
+        : (this.nativeCtrlDc && this.nativeCtrlDc.readyState === 'open')
+          ? this.nativeCtrlDc
+          : (() => {
+            const ch = (this.fastConn && this.fastConn.open) ? this.fastConn : this.conn;
+            return ch ? (ch.dataChannel || ch._dc) : null;
+          })();
+      if (dc && dc.bufferedAmount > 20480) return;
     } else if (via === 'relay') {
-      // ~31Hz compact snapshots over internet relay
+      // ~21Hz compact wire snapshots during fight, ~10Hz in static phases unless state changes
       const now = performance.now();
-      if (now - this.lastRelaySnapAt < 32) return;
-      if (this.relayLink && this.relayLink.bufferedAmount() > 32768) return;
+      const interval = meta.phase === 'FIGHT' ? 48 : 95;
+      if (!important && now - this.lastRelaySnapAt < interval) return;
+      if (this.relayLink && this.relayLink.bufferedAmount() > 24576) return;
       this.lastRelaySnapAt = now;
     }
+    this.lastSnapPhase = meta.phase;
+    this.lastSnapDeadMask = deadMask;
     this._sendRaw(this.buildHostSnapshot(sim, meta), true);
   }
 
@@ -899,40 +1313,36 @@ export class NetworkManager {
     // Step 1: Snap rigid bodies + water height to authoritative host snapshot
     sim.applyNetState(snap);
 
-    // Step 2: Rewind/replay unacknowledged local client inputs without over-predicting P1 or re-firing jump audio
+    // Step 2: Rewind/replay unacknowledged local client inputs scaled dynamically to actual RTT
+    const estRttTicks = this.pingMs > 0 ? clamp(Math.round(this.pingMs / 16.7), 2, 28) : 4;
+    const oneWayTicks = clamp(Math.round(estRttTicks * 0.5), 1, 14);
     if (snap.ph === 'FIGHT' && this.pendingInputs.length > 0) {
       const hasActiveInput = this.pendingInputs.some((c) => c.l || c.r || c.j);
-      const oneWayEst = this.pingMs > 0 ? clamp(Math.round((this.pingMs * 0.5) / 16.7), 2, 6) : 4;
-      const replayCap = hasActiveInput ? 12 : oneWayEst;
+      const replayCap = hasActiveInput ? clamp(estRttTicks + 4, 12, 30) : clamp(oneWayTicks + 2, 3, 14);
       const maxReplay = Math.min(this.pendingInputs.length, replayCap);
       const startIdx = this.pendingInputs.length - maxReplay;
+      const p1HoldLimit = (!sim.p1Car?.dead && !sim.p2Car?.dead) ? clamp(Math.round(oneWayTicks * 0.75), 2, 7) : 3;
       const coast = { l: false, r: false, jump: false, holdMs: 0 };
       const savedOnJump = sim.onJump;
       sim.onJump = null;
       for (let i = startIdx; i < this.pendingInputs.length; i++) {
-        const p1Step = (i - startIdx) < 3 ? this.lastHostP1Input : coast;
+        const p1Step = (i - startIdx) < p1HoldLimit ? this.lastHostP1Input : coast;
         sim.step(p1Step, this.pendingInputs[i], true, false);
       }
       sim.onJump = savedOnJump;
     }
 
-    // Step 3: Progressive error convergence to avoid cycling teleports
-    if (beforeP2 && sim.p2Car) {
-      const dx = sim.p2Car.chassis.position.x - beforeP2.c.x;
-      const dy = sim.p2Car.chassis.position.y - beforeP2.c.y;
-      const errDist = Math.hypot(dx, dy);
-      if (errDist > 0.05 && errDist < 68) {
-        sim.blendCarPose(sim.p2Car, beforeP2, errDist < 22 ? 0.56 : 0.74);
+    // Step 3: Progressive error convergence scaled to jitter without cycling teleports
+    const smoothErr = (car, beforePose) => {
+      if (!beforePose || !car || snap.ph !== 'FIGHT') return;
+      const err = Math.hypot(car.chassis.position.x - beforePose.c.x, car.chassis.position.y - beforePose.c.y);
+      if (err > 0.05 && err < 115) {
+        const alpha = err < 6 ? 0.25 : err < 26 ? 0.42 : 0.65;
+        sim.blendCarPose(car, beforePose, alpha);
       }
-    }
-    if (beforeP1 && sim.p1Car) {
-      const dx1 = sim.p1Car.chassis.position.x - beforeP1.c.x;
-      const dy1 = sim.p1Car.chassis.position.y - beforeP1.c.y;
-      const err1 = Math.hypot(dx1, dy1);
-      if (err1 > 0.05 && err1 < 68) {
-        sim.blendCarPose(sim.p1Car, beforeP1, err1 < 22 ? 0.56 : 0.76);
-      }
-    }
+    };
+    smoothErr(sim.p2Car, beforeP2);
+    smoothErr(sim.p1Car, beforeP1);
     return true;
   }
 }

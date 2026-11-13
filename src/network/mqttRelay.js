@@ -6,10 +6,14 @@
 // Ordered by preference (measured latency / delivery reliability). The host
 // picks the most preferred broker on which the joining player's hello arrived.
 export const RELAY_BROKERS = Object.freeze([
+  'wss://broker.freemqtt.com:8084/mqtt',
   'wss://test.mosquitto.org:8081/mqtt',
-  'wss://broker.hivemq.com:8884/mqtt',
-  'wss://broker.emqx.io:8084/mqtt'
+  'wss://broker.hivemq.com:8884/mqtt'
 ]);
+
+const RELAY_BROKER_CREDS = Object.freeze({
+  'wss://broker.freemqtt.com:8084/mqtt': { u: 'freemqtt', p: 'public' }
+});
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -64,13 +68,17 @@ export class MqttRelayLink {
     }
     this.ws.binaryType = 'arraybuffer';
     this.ws.onopen = () => {
+      const creds = RELAY_BROKER_CREDS[this.url] || null;
+      const flags = 0x02 | (creds?.u ? 0x80 : 0) | (creds?.p ? 0x40 : 0);
       const body = [
         ...utf8Field('MQTT'),
         0x04,             // protocol level 3.1.1
-        0x02,             // clean session
+        flags,            // clean session (+ optional auth)
         0x00, 0x1e,       // keep-alive 30s
         ...utf8Field(this.clientId)
       ];
+      if (creds?.u) body.push(...utf8Field(creds.u));
+      if (creds?.p) body.push(...utf8Field(creds.p));
       this._write(packet(0x10, body));
     };
     this.ws.onmessage = (ev) => this._onData(new Uint8Array(ev.data));

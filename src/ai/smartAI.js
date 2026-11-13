@@ -90,6 +90,73 @@ export class SmartAI {
     this._pickPattern(null, 640);
   }
 
+  _isOpenWaterArena(arena) {
+    return !!(arena && arena.caves.length === 0 && arena.openRocks.length === 0);
+  }
+
+  _hasEnclosedOrArchWalls(arena) {
+    return !!(arena && (arena.caves.length > 0 || arena.openRocks.length > 0));
+  }
+
+  _getOpenEdgeBounds(arena) {
+    if (arena.islands && arena.islands.length > 0) {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      for (const isl of arena.islands) {
+        for (const p of isl.top) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+        }
+      }
+      if (Number.isFinite(minX) && Number.isFinite(maxX)) {
+        return { minX, maxX };
+      }
+    }
+    if (arena.id === 13 && arena.halfPipes && arena.halfPipes.length > 0) {
+      const p = arena.halfPipes[0];
+      return { minX: p.cx - p.r * 0.96, maxX: p.cx + p.r * 0.96 };
+    }
+    return { minX: 165, maxX: 1115 };
+  }
+
+  _hasOverheadClearanceIssue(arena, mx, my, mvx) {
+    if (!arena) return false;
+    const predMid = mx + clamp(mvx * 8, -75, 75);
+    const predApex = mx + clamp(mvx * 18, -165, 165);
+    const checkBox = (cx, halfW, bottomY, clearance) => {
+      if (my <= bottomY - 4 || (my - bottomY) >= clearance) return false;
+      return (
+        Math.abs(mx - cx) <= halfW ||
+        Math.abs(predMid - cx) <= halfW ||
+        Math.abs(predApex - cx) <= halfW
+      );
+    };
+
+    if (arena.blocks) {
+      for (const blk of arena.blocks) {
+        if (blk.hiddenVisual) continue;
+        if (checkBox(blk.x, blk.w * 0.5 + 32, blk.y + blk.h * 0.5, 230)) return true;
+      }
+    }
+    if (arena.halfPipes) {
+      for (const p of arena.halfPipes) {
+        const aMid = (p.aStart + p.aEnd) * 0.5;
+        if (Math.sin(aMid) < -0.25) {
+          const halfSpan = Math.abs(Math.cos(p.aStart)) * p.r + 24;
+          const approxBottom = p.cy - Math.sin(p.aStart) * p.r + (p.thickness || 24) * 0.5;
+          if (checkBox(p.cx, halfSpan, approxBottom, 185)) return true;
+        }
+      }
+    }
+    if (arena.seesaws) {
+      for (const sw of arena.seesaws) {
+        if (!sw.isBridge && checkBox(sw.x, sw.w * 0.48 + 16, sw.y + 14, 150)) return true;
+      }
+    }
+    if (arena.caves && arena.caves.length > 0 && my < 305) return true;
+    return false;
+  }
+
   _pickPattern(arena, mx) {
     const profile = this.getProfile();
     if (profile.aggression < 3.0) {
@@ -97,14 +164,13 @@ export class SmartAI {
       this.patternTicks = 120;
       return;
     }
-    const arenaId = arena ? arena.id : 0;
     const pool = [];
-    // Weight randomized winning patterns suited to current arena
+    // Weight randomized winning patterns suited to current arena geometry
     pool.push('headhunter', 'feint_counter', 'wheelie_scoop');
-    if (arenaId === 0 || (arenaId >= 3 && arenaId <= 8)) {
+    if (!arena || this._hasEnclosedOrArchWalls(arena) || arena.id === 8 || (arena.seesaws && arena.seesaws.some((s) => !s.isBridge))) {
       pool.push('highground', 'highground');
     }
-    if (arenaId === 0 || arenaId === 1 || arenaId === 2 || arenaId === 9) {
+    if (!arena || (this._isOpenWaterArena(arena) && arena.id !== 8)) {
       pool.push('ringout', 'ringout');
     }
     // Prefer a different pattern on re-roll so bot constantly shifts rhythm
@@ -152,6 +218,9 @@ export class SmartAI {
 
     const canJump = this._canJump(sim, me, profile, gx);
     const chaseDir = ox < mx ? -1 : 1;
+    const isOpenWater = this._isOpenWaterArena(arena);
+    const hasCurvedWalls = this._hasEnclosedOrArchWalls(arena);
+    const blockedOverhead = this._hasOverheadClearanceIssue(arena, mx, my, mvx);
 
     // Extreme & Death dynamically shift winning patterns rather than running one fixed script
     if (profile.aggression >= 3.0) {
@@ -160,7 +229,7 @@ export class SmartAI {
       if (this.patternTicks <= 0) {
         this._pickPattern(arena, mx);
       }
-      if (sim.waterRising && (arena.id === 1 || arena.id === 2 || arena.id === 9) && this._rand() < 0.08) {
+      if (sim.waterRising && isOpenWater && arena.id !== 8 && this._rand() < 0.08) {
         this.pattern = 'ringout';
       }
     }
@@ -181,17 +250,19 @@ export class SmartAI {
       ? (sim.grounded.p1R || sim.grounded.p1F)
       : (sim.grounded.p2R || sim.grounded.p2F);
 
-    // Tactical winning jump evaluation (purposeful head-dunk, vault dodge, chasm/bridge leap, or self-save)
+    // Tactical winning jump evaluation (purposeful head-dunk, vault dodge, bridge leap, or self-save)
+    // Never jumps upward underneath overhead blocks (e.g. Map 8 center deck), arches, seesaws, or low cave ceilings!
     const evaluateJump = () => {
-      if (!canJump) return false;
+      if (!canJump || blockedOverhead) return false;
       const dxAbs = Math.abs(ox - mx);
       const closingToMe = ovx * (mx > ox ? 1 : -1);
       const upright = Math.abs(angle) < 0.44 && Math.abs(me.chassis.angularVelocity) < 0.09;
 
       // Cliff/chasm safety guard: never jump blindly off open sea edges or into Map 8 sea hole
-      const unsafeOpenCliff =
-        (arena.id === 1 || arena.id === 2 || arena.id === 9) &&
-        ((mx < 240 && mvx < -0.5) || (mx > 1040 && mvx > 0.5));
+      const bounds = isOpenWater ? this._getOpenEdgeBounds(arena) : null;
+      const unsafeOpenCliff = isOpenWater && arena.id !== 8 && (
+        (mx < bounds.minX + 68 && mvx < -0.5) || (mx > bounds.maxX - 68 && mvx > 0.5)
+      );
       const unsafeGapRim =
         arena.id === 8 && (
           ((mx < 640 && mx > 535 && ox < 640 && mvx > 0.2)) ||
@@ -199,22 +270,23 @@ export class SmartAI {
         );
       const safeAttack = !unsafeOpenCliff && !unsafeGapRim;
 
-      // Never jump into Map 8's overhead stone deck (x ~ 515..765, bottom y ~ 357)
-      const underMap8Deck = arena.id === 8 && mx > 490 && mx < 790 && my > 355 && my < 465;
-
-      // 1) Flip recovery & rising-water self-save always allowed when grounded
+      // 1) Flip recovery & rising-water self-save always allowed when grounded and clear overhead
       if (gx && Math.abs(angle) > 1.15) return true;
-      if (gx && my > sim.waterCrestY - 76 && !underMap8Deck) return true;
+      if (gx && my > sim.waterCrestY - 76) return true;
 
-      // 2) Chasm / bridge intentional gap leap (skip extra boost if ramp already launched vy upward into deck)
-      if (arena.id === 8 && me.chassis.velocity.y > -2.6 && ((mx > 555 && mx < 584 && ox >= 640 && mvx > 2.8) || (mx < 725 && mx > 696 && ox < 640 && mvx < -2.8))) {
-        return true;
-      }
-      if (arena.id === 9 && ((mx > 440 && mx < 504 && ox > mx && mvx > 2.0) || (mx < 840 && mx > 776 && ox < mx && mvx < -2.0))) {
-        return true;
+      // 2) Intentional seesaw-bridge gap leap (Maps 9 & 10)
+      if (arena.seesaws && arena.seesaws.some((s) => s.isBridge)) {
+        for (const br of arena.seesaws) {
+          if (!br.isBridge) continue;
+          const hw = br.w * 0.5;
+          if ((mx > br.x - hw - 42 && mx < br.x - hw + 20 && ox > mx && mvx > 2.0) ||
+              (mx < br.x + hw + 42 && mx > br.x + hw - 20 && ox < mx && mvx < -2.0)) {
+            return true;
+          }
+        }
       }
 
-      if (!gx || !safeAttack || underMap8Deck) return false;
+      if (!gx || !safeAttack) return false;
 
       // Overhead clearance guard: NEVER jump straight up into an enemy bumper/tire positioned right above/overlapping us!
       const myHeadY = me.head ? me.head.position.y : my;
@@ -269,7 +341,7 @@ export class SmartAI {
         if (!landedTop) {
           this.commitTicks--;
           if (this.commitTicks === 0) this.commitMode = null;
-          const apexJump = canJump && my < 320 && Math.abs(ox - mx) < 320 && (ox - mx) * mvx > 0;
+          const apexJump = canJump && !blockedOverhead && my < 320 && Math.abs(ox - mx) < 320 && (ox - mx) * mvx > 0;
           return emit(this.commitDir < 0 ? this._moveLeft(apexJump) : this._moveRight(apexJump));
         }
         this.commitTicks = 0;
@@ -322,27 +394,31 @@ export class SmartAI {
       }
     }
 
-    // Map 9 (Twin Islands Bridge): Charge across middle balance bridge (482..798) or jump across!
-    if (arena.id === 9 && sim.seesaws && sim.seesaws.length > 0) {
-      const sw = sim.seesaws[0].body;
-      const swTilt = Math.abs(normalizeAngle(sw.angle));
-      const approachingGapFromLeft = mx > 425 && mx < 495 && ox > mx;
-      const approachingGapFromRight = mx < 855 && mx > 785 && ox < mx;
-      if (approachingGapFromLeft || approachingGapFromRight) {
-        if (canJump && swTilt > 0.30) {
-          return emit(approachingGapFromLeft ? this._moveRight(true) : this._moveLeft(true));
-        }
-        if (swTilt > 0.42 && !profile.smartPathing) {
-          return emit(approachingGapFromLeft ? this._moveLeft() : this._moveRight());
+    // Seesaw balance-bridge crossing (Maps 9 & 10): charge across bridges or vault if steeply tilted away!
+    if (arena.seesaws && sim.seesaws && sim.seesaws.some((s) => s.isBridge)) {
+      for (const sw of sim.seesaws) {
+        if (!sw.isBridge) continue;
+        const swTilt = Math.abs(normalizeAngle(sw.body.angle));
+        const hw = sw.w * 0.5;
+        const approachingGapFromLeft = mx > sw.x - hw - 58 && mx < sw.x - hw + 12 && ox > mx;
+        const approachingGapFromRight = mx < sw.x + hw + 58 && mx > sw.x + hw - 12 && ox < mx;
+        if (approachingGapFromLeft || approachingGapFromRight) {
+          if (canJump && !blockedOverhead && swTilt > 0.30) {
+            return emit(approachingGapFromLeft ? this._moveRight(true) : this._moveLeft(true));
+          }
+          if (swTilt > 0.42 && !profile.smartPathing) {
+            return emit(approachingGapFromLeft ? this._moveLeft() : this._moveRight());
+          }
         }
       }
     }
 
-    // Open-water island cliff guards (never trigger on enclosed curved-wall arenas 3..7 where sides are C-ramps)
+    // Open-water island/half-pipe cliff guards (never trigger on enclosed curved-wall arenas)
     const edgeMargin = profile.aggression >= 2.0 ? 22 : 65;
-    if (arena.id === 1 || arena.id === 2 || arena.id === 9) {
-      if (mx < 165 + edgeMargin && mvx < -1.1) return emit(this._moveRight(canJump && my > sim.waterCrestY - 90));
-      if (mx > 1115 - edgeMargin && mvx > 1.1) return emit(this._moveLeft(canJump && my > sim.waterCrestY - 90));
+    if (isOpenWater && arena.id !== 8) {
+      const b = this._getOpenEdgeBounds(arena);
+      if (mx < b.minX + edgeMargin && mvx < -1.1) return emit(this._moveRight(canJump && !blockedOverhead && my > sim.waterCrestY - 90));
+      if (mx > b.maxX - edgeMargin && mvx > 1.1) return emit(this._moveLeft(canJump && !blockedOverhead && my > sim.waterCrestY - 90));
     }
 
     // Active curved-wall climb commit toward player elevated on balancing rods / upper platforms
@@ -356,19 +432,20 @@ export class SmartAI {
       oy < my - 84
     );
 
+    const canClimbHigh = hasCurvedWalls || arena.id === 8 || arena.id === 13;
     const highGroundWanted =
       this.pattern === 'highground' &&
-      arena.id >= 3 &&
-      arena.id <= 8 &&
+      canClimbHigh &&
       my >= oy - 35 &&
       Math.abs(ox - mx) > 165 &&
       this.commitTicks <= 0;
 
-    if (profile.smartPathing && arena.id >= 3 && arena.id <= 8) {
+    if (profile.smartPathing && canClimbHigh) {
       if (this.commitTicks > 0 && this.commitMode === 'climb') {
         const reachedTopTarget = my <= oy + 26 && Math.abs(mx - ox) < 275 && (ox - mx) * mvx >= -0.3;
-        const maxClimbAng = oppElevated ? 1.82 : 1.18;
-        const tooSteepOrAir = Math.abs(angle) > maxClimbAng || (!gx && my < 330 && Math.abs(angle) > 1.1);
+        const maxClimbAng = arena.id === 13 ? 1.12 : (oppElevated ? 1.82 : 1.18);
+        const rimAbort = arena.id === 13 && (mx < 285 || mx > 995);
+        const tooSteepOrAir = Math.abs(angle) > maxClimbAng || (!gx && my < 330 && Math.abs(angle) > 1.1) || rimAbort;
         const oppDroppedToFloor = oy > 465 && my > 440 && this.pattern !== 'highground';
         if (reachedTopTarget || oppDroppedToFloor || tooSteepOrAir) {
           this.commitTicks = 0;
@@ -380,7 +457,7 @@ export class SmartAI {
             this.commitMode = null;
             if (this.pattern === 'highground') this.pattern = 'headhunter';
           }
-          const launchJump = canJump && Math.abs(angle) < 0.65 && my < oy + 28 && (ox - mx) * mvx > 0.8 && Math.abs(ox - mx) < 240;
+          const launchJump = canJump && !blockedOverhead && Math.abs(angle) < 0.65 && my < oy + 28 && (ox - mx) * mvx > 0.8 && Math.abs(ox - mx) < 240;
           return emit(this.commitDir < 0 ? this._moveLeft(launchJump) : this._moveRight(launchJump));
         }
       }
@@ -432,15 +509,15 @@ export class SmartAI {
 
     // Inverted/turtled recovery on ground
     if (Math.abs(angle) > 1.32) {
-      return emit(angle > 0 ? this._moveRight(canJump) : this._moveLeft(canJump));
+      return emit(angle > 0 ? this._moveRight(canJump && !blockedOverhead) : this._moveLeft(canJump && !blockedOverhead));
     }
 
     // Never park directly underneath an elevated/descending opponent: sidestep toward safe ground, then counter-strike
     const myHeadYNow = me.head ? me.head.position.y : my;
     if (profile.aggression >= 3.0 && gx && oppHeadY < myHeadYNow - 24 && Math.abs(ox - mx) < 88 && arena.id !== 8) {
       const awayDir = ox <= mx ? 1 : -1;
-      const openWaterArena = arena.id === 1 || arena.id === 2 || arena.id === 9;
-      const cliffBlocked = openWaterArena && ((awayDir < 0 && mx < 245) || (awayDir > 0 && mx > 1035));
+      const b = isOpenWater ? this._getOpenEdgeBounds(arena) : null;
+      const cliffBlocked = isOpenWater && ((awayDir < 0 && mx < b.minX + 75) || (awayDir > 0 && mx > b.maxX - 75));
       if (!cliffBlocked) {
         return emit(awayDir < 0 ? this._moveLeft(false) : this._moveRight(false));
       }
@@ -452,8 +529,9 @@ export class SmartAI {
     const lookaheadFrames = dxClose < 115
       ? (profile.aggression >= 3.2 ? 7 : 5)
       : (profile.aggression >= 4.0 ? 16 : (profile.aggression >= 3.2 ? 14 : (profile.smartPathing ? 11 : 4)));
-    let minTargetX = 200;
-    let maxTargetX = 1080;
+    const edgePadBounds = isOpenWater && arena.id !== 8 ? this._getOpenEdgeBounds(arena) : null;
+    let minTargetX = edgePadBounds ? edgePadBounds.minX + 32 : 200;
+    let maxTargetX = edgePadBounds ? edgePadBounds.maxX - 32 : 1080;
     if (arena.id === 8 && (mx < 640) === (ox < 640)) {
       if (mx < 640) maxTargetX = 470;
       else minTargetX = 810;

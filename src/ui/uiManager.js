@@ -131,12 +131,13 @@ export class UIManager {
   }
 
   updateMapPicker(selectedArenaIdx) {
+    const total = ARENAS.length;
     if (selectedArenaIdx < 0) {
-      this.dom.mapTitle.textContent = 'RANDOM MAPS (ALL 9)';
-      this.dom.mapSub.textContent = 'Random map & random cars each round • Tap < > to lock Map 1–9';
+      this.dom.mapTitle.textContent = `RANDOM MAPS (ALL ${total})`;
+      this.dom.mapSub.textContent = `Random map & random cars each round • Tap < > to lock Map 1–${total}`;
     } else {
       const a = ARENAS[selectedArenaIdx];
-      this.dom.mapTitle.textContent = `MAP ${a.id}/9: ${a.name} (RANDOM CARS)`;
+      this.dom.mapTitle.textContent = `MAP ${a.id}/${total}: ${a.name} (RANDOM CARS)`;
       this.dom.mapSub.textContent = a.desc;
     }
   }

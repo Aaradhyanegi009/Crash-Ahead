@@ -186,6 +186,85 @@ function makeCanyonWallPair(floorFn, lipXLeft = 325, lipXRight = 955) {
   return { surface, visualPoly };
 }
 
+function makeWingEdgeIsland(isLeft, edgeX = 412, wingX = 235, yDeck = 452, rWing = 104) {
+  if (isLeft) {
+    const wing = sampleArcPoints(wingX, yDeck - rWing, rWing, Math.PI * 1.04, Math.PI * 0.5, 14);
+    const flat = sampleCurveX(wingX, edgeX, 12, (x) => {
+      const t = (x - wingX) / (edgeX - wingX);
+      return yDeck - 4 * Math.sin(t * Math.PI);
+    });
+    const top = [...wing, ...flat.slice(1)];
+    const tip = wing[0];
+    const belly = chaikinSmooth([
+      { x: edgeX, y: yDeck + 6 },
+      { x: edgeX - 8, y: 508 },
+      { x: edgeX - 60, y: 566 },
+      { x: lerp(wingX, edgeX, 0.4), y: 582 },
+      { x: wingX - rWing + 6, y: yDeck + 56 },
+      { x: wingX - rWing - 24, y: yDeck - rWing * 0.25 },
+      { x: tip.x - 27, y: tip.y + 38 },
+      { x: tip.x - 22, y: tip.y + 14 },
+      { x: tip.x - 11, y: tip.y - 1 },
+      { x: tip.x, y: tip.y }
+    ], false, 2);
+    return { top, belly, poly: [...top, ...belly.slice(1, -1)] };
+  }
+  const flat = sampleCurveX(edgeX, wingX, 12, (x) => {
+    const t = (x - edgeX) / (wingX - edgeX);
+    return yDeck - 4 * Math.sin(t * Math.PI);
+  });
+  const wing = sampleArcPoints(wingX, yDeck - rWing, rWing, Math.PI * 0.5, -Math.PI * 0.04, 14);
+  const top = [...flat, ...wing.slice(1)];
+  const tip = wing[wing.length - 1];
+  const belly = chaikinSmooth([
+    { x: tip.x, y: tip.y },
+    { x: tip.x + 11, y: tip.y - 1 },
+    { x: tip.x + 22, y: tip.y + 14 },
+    { x: tip.x + 27, y: tip.y + 38 },
+    { x: wingX + rWing + 24, y: yDeck - rWing * 0.25 },
+    { x: wingX + rWing - 6, y: yDeck + 56 },
+    { x: lerp(edgeX, wingX, 0.6), y: 582 },
+    { x: edgeX + 60, y: 566 },
+    { x: edgeX + 8, y: 508 },
+    { x: edgeX, y: yDeck + 6 }
+  ], false, 2);
+  return { top, belly, poly: [...top, ...belly.slice(1, -1)] };
+}
+
+function makeCenterMoundIsland(xLeft = 560, xRight = 720, yEdge = 452, lift = 18) {
+  const top = sampleCurveX(xLeft, xRight, 14, (x) => {
+    const t = (x - xLeft) / (xRight - xLeft);
+    return yEdge - lift * Math.sin(t * Math.PI);
+  });
+  const belly = chaikinSmooth([
+    { x: xRight, y: yEdge },
+    { x: xRight - 4, y: 502 },
+    { x: xRight - 28, y: 548 },
+    { x: 640, y: 564 },
+    { x: xLeft + 28, y: 548 },
+    { x: xLeft + 4, y: 502 },
+    { x: xLeft, y: yEdge }
+  ], false, 2);
+  return { top, belly, poly: [...top, ...belly.slice(1, -1)] };
+}
+
+function makeSkydomeLoop() {
+  const floorFn = (x) => {
+    const u = clamp((x - 640) / 395, -1, 1);
+    return 546 - 26 * Math.exp(-Math.pow(u * 2.1, 2)) + 16 * (1 - Math.cos(u * Math.PI * 2)) * 0.5;
+  };
+  const roofFn = (x) => {
+    const u = clamp((x - 640) / 375, -1, 1);
+    return 220 - 68 * Math.pow(Math.cos(u * Math.PI * 0.5), 1.25);
+  };
+  const pts = [];
+  pts.push(...sampleCurveX(245, 1035, 28, floorFn));
+  pts.push(...sampleEllipseArc(1015, 383, 135, 163, Math.PI * 0.46, -Math.PI * 0.5, 16).slice(1));
+  pts.push(...sampleCurveX(1015, 265, 26, roofFn).slice(1, -1));
+  pts.push(...sampleEllipseArc(265, 383, 135, 163, -Math.PI * 0.5, -Math.PI * 1.46, 16).slice(0, -1));
+  return chaikinSmooth(pts, true, 2);
+}
+
 export const ARENAS = Object.freeze([
   // 1. Double-Valley Island with Curved Quarter-Pipe Climbing Walls
   (() => {
@@ -414,6 +493,140 @@ export const ARENAS = Object.freeze([
       pills: STATIC_ROCK_PILLS,
       p1Spawn: { x: 295, y: 410 },
       p2Spawn: { x: 985, y: 410 }
+    });
+  })(),
+
+  // 10. Three Floating Islands Linked by Twin Spring-Centered Seesaw Bridges
+  (() => Object.freeze({
+    id: 10,
+    name: 'TWIN BRIDGE TRIO',
+    desc: '3 floating curved islands linked by twin seesaw bridges',
+    islands: [
+      makeWingEdgeIsland(true, 412, 235, 452, 104),
+      makeCenterMoundIsland(560, 720, 452, 18),
+      makeWingEdgeIsland(false, 868, 1045, 452, 104)
+    ],
+    caves: [],
+    openRocks: [],
+    halfPipes: [],
+    blocks: [],
+    seesaws: [
+      { x: 486, y: 465, w: 132, isBridge: true, maxAngle: 0.42, springRate: 0.0036 },
+      { x: 794, y: 465, w: 132, isBridge: true, maxAngle: 0.42, springRate: 0.0036 }
+    ],
+    pills: STATIC_ROCK_PILLS,
+    p1Spawn: { x: 280, y: 410 },
+    p2Spawn: { x: 1000, y: 410 }
+  }))(),
+
+  // 11. Tall Enclosed Skydome Cave with Twin Elevated Seesaw Sky-Ramps
+  (() => Object.freeze({
+    id: 11,
+    name: 'SKYDOME SPINE',
+    desc: 'Spacious enclosed dome with curved camel floor & twin sky seesaws',
+    islands: [],
+    caves: [makeSkydomeLoop()],
+    openRocks: [],
+    halfPipes: [],
+    blocks: [],
+    seesaws: [
+      { x: 455, y: 360, w: 205, angle: 0.10 },
+      { x: 825, y: 360, w: 205, angle: -0.10 }
+    ],
+    pills: STATIC_ROCK_PILLS,
+    p1Spawn: { x: 310, y: 512 },
+    p2Spawn: { x: 970, y: 512 }
+  }))(),
+
+  // 12. Open Overhanging Bowl with Giant Center Seesaw Teeter
+  (() => {
+    const teeterFloor = (x) => {
+      const d = Math.abs(x - 640);
+      return 552 + 18 * Math.sin((clamp(d, 0, 450) / 450) * Math.PI * 1.5);
+    };
+    const wall = makeCanyonWallPair(teeterFloor, 305, 975);
+    return Object.freeze({
+      id: 12,
+      name: 'GIANT BOWL TEETER',
+      desc: 'Overhanging curved cliffs + massive 380px center seesaw',
+      islands: [],
+      caves: [],
+      openRocks: [wall],
+      halfPipes: [],
+      blocks: [],
+      seesaws: [{ x: 640, y: 382, w: 380 }],
+      pills: STATIC_ROCK_PILLS,
+      p1Spawn: { x: 320, y: 520 },
+      p2Spawn: { x: 960, y: 520 }
+    });
+  })(),
+
+  // 13. Giant Continuous Semicircular Skate Half-Pipe Cradle + Sky Seesaw Perch
+  Object.freeze({
+    id: 13,
+    name: 'ORBIT HALF-PIPE',
+    desc: 'Giant semicircular skate cradle + suspended sky seesaw',
+    islands: [],
+    caves: [],
+    openRocks: [],
+    halfPipes: [
+      { cx: 640, cy: 175, r: 405, aStart: 0.09 * Math.PI, aEnd: 0.91 * Math.PI, thickness: 30 }
+    ],
+    blocks: [],
+    seesaws: [{ x: 640, y: 332, w: 280 }],
+    pills: STATIC_ROCK_PILLS,
+    p1Spawn: { x: 495, y: 500 },
+    p2Spawn: { x: 785, y: 500 }
+  }),
+
+  // 14. Floating 5-Wave Ocean Swell Island with Curved Quarter-Pipe Wings
+  (() => {
+    const waveDuneY = (x) => {
+      const u = clamp((x - 230) / 820, 0, 1);
+      return 476 - 30 * Math.sin(u * Math.PI) * Math.sin(u * Math.PI * 5);
+    };
+    const isl = makeWingedFloatingIsland(230, 1050, 476, 112, waveDuneY, 600);
+    return Object.freeze({
+      id: 14,
+      name: 'WAVE DUNE ISLAND',
+      desc: 'Roller-coaster ocean swells + quarter-pipe air wings',
+      islands: [isl],
+      caves: [],
+      openRocks: [],
+      halfPipes: [],
+      blocks: [{ x: 640, y: 562, w: 720, h: 74, chamfer: 22, hiddenVisual: true }],
+      seesaws: [],
+      pills: STATIC_ROCK_PILLS,
+      p1Spawn: { x: 288, y: 432 },
+      p2Spawn: { x: 992, y: 432 }
+    });
+  })(),
+
+  // 15. Amphitheater Arch with Convex Rock Sky-Bridge Overpass & Twin Seesaws
+  (() => {
+    const ampFloor = (x) => {
+      const u = clamp((x - 640) / 485, -1, 1);
+      return 552 + 22 * Math.cos(u * Math.PI * 2);
+    };
+    const arch = makeCavernArchOpenWalls(ampFloor, 395, 885);
+    return Object.freeze({
+      id: 15,
+      name: 'SKY ARCH OVERPASS',
+      desc: 'Convex arched stone overpass + twin approach seesaws',
+      islands: [],
+      caves: [],
+      openRocks: [arch],
+      halfPipes: [
+        { cx: 640, cy: 525, r: 160, aStart: 1.30 * Math.PI, aEnd: 1.70 * Math.PI, thickness: 24 }
+      ],
+      blocks: [],
+      seesaws: [
+        { x: 435, y: 402, w: 170, angle: -0.10 },
+        { x: 845, y: 402, w: 170, angle: 0.10 }
+      ],
+      pills: STATIC_ROCK_PILLS,
+      p1Spawn: { x: 325, y: 500 },
+      p2Spawn: { x: 955, y: 500 }
     });
   })()
 ]);
