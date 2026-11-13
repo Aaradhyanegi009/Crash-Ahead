@@ -127,11 +127,11 @@ export class UIManager {
 
   updateMapPicker(selectedArenaIdx) {
     if (selectedArenaIdx < 0) {
-      this.dom.mapTitle.textContent = 'ALL 9 MAPS (IN ORDER)';
-      this.dom.mapSub.textContent = 'Plays Maps 1–9 in exact order • Tap < > to pick Map 1–9';
+      this.dom.mapTitle.textContent = 'RANDOM MAPS (ALL 9)';
+      this.dom.mapSub.textContent = 'Random map & random cars each round • Tap < > to lock Map 1–9';
     } else {
       const a = ARENAS[selectedArenaIdx];
-      this.dom.mapTitle.textContent = `MAP ${a.id}/9: ${a.name}`;
+      this.dom.mapTitle.textContent = `MAP ${a.id}/9: ${a.name} (RANDOM CARS)`;
       this.dom.mapSub.textContent = a.desc;
     }
   }

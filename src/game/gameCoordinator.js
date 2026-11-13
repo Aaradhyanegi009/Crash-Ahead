@@ -2,10 +2,12 @@ import {
   FIXED_DT,
   WIN_SCORE,
   ROUND_COUNTDOWN_MS,
+  JUMP_COOLDOWN_MS,
   KO_FREEZE_MS,
   KO_SLOWMO_SCALE,
   DOUBLE_KO_WINDOW_MS,
   VEHICLE_PHYSICS,
+  CAR_MODEL_IDS,
   PALETTE
 } from '../config/constants.js';
 import { clamp } from '../utils/math.js';
@@ -34,7 +36,7 @@ export class CrashAheadGame {
     this.scores = [0, 0];
     this.roundNumber = 1;
     this.bannerText = '';
-    this.selectedArenaIdx = -1; // -1 = ALL 9 MAPS IN ORDER, 0..8 = locked specific map
+    this.selectedArenaIdx = -1; // -1 = RANDOM MAPS (ALL 9), 0..8 = locked specific map
     this.attractMapTicks = 0;
 
     this.countdownMs = 0;
@@ -72,8 +74,16 @@ export class CrashAheadGame {
 
   _pickArenaIndex(previousIndex = -1) {
     if (this.selectedArenaIdx >= 0) return clamp(this.selectedArenaIdx, 0, ARENAS.length - 1);
-    if (previousIndex < 0) return 0;
-    return (previousIndex + 1) % ARENAS.length;
+    if (previousIndex >= 0 && previousIndex < ARENAS.length && ARENAS.length > 1) {
+      const offset = 1 + Math.floor(Math.random() * (ARENAS.length - 1));
+      return (previousIndex + offset) % ARENAS.length;
+    }
+    return Math.floor(Math.random() * ARENAS.length);
+  }
+
+  _pickRandomCarPair() {
+    const pick = () => CAR_MODEL_IDS[Math.floor(Math.random() * CAR_MODEL_IDS.length)] || CAR_MODEL_IDS[0];
+    return [pick(), pick()];
   }
 
   _bindSimCallbacks() {
@@ -143,12 +153,19 @@ export class CrashAheadGame {
   _initNetwork() {
     const applySnapshotMeta = (snap) => {
       if (this.mode !== 'online_client') return;
-      if (snap.rn !== this.roundNumber || snap.ai !== this.sim.arenaIndex) {
+      const snapM1 = typeof snap.m1 === 'number' ? (CAR_MODEL_IDS[snap.m1] || 'roadster') : this.sim.p1Model;
+      const snapM2 = typeof snap.m2 === 'number' ? (CAR_MODEL_IDS[snap.m2] || 'roadster') : this.sim.p2Model;
+      if (
+        snap.rn !== this.roundNumber ||
+        snap.ai !== this.sim.arenaIndex ||
+        snapM1 !== this.sim.p1Model ||
+        snapM2 !== this.sim.p2Model
+      ) {
         this.roundNumber = snap.rn;
         this.koPendingRound = 0;
         this._countdownElapsedMs = 0;
         this.net.pendingInputs = [];
-        this.sim.resetArena(snap.ai || 0);
+        this.sim.resetArena(snap.ai || 0, snapM1, snapM2);
         this.renderer.clearEffects();
       }
       if (snap.sc[0] !== this.scores[0] || snap.sc[1] !== this.scores[1]) {
@@ -195,12 +212,16 @@ export class CrashAheadGame {
       },
       onStartRequested: () => this._triggerHostOnlineStart(),
       onPing: (ms) => this.ui.setPing(ms),
-      onMatchStart: (arenaIdx) => {
-        if (this.mode !== 'online_client') this.startMatch('online_client', arenaIdx);
+      onMatchStart: (arenaIdx, m1, m2) => {
+        if (this.mode !== 'online_client') {
+          this.startMatch('online_client', arenaIdx, [m1 || 'roadster', m2 || 'roadster']);
+        }
       },
       onSnapshotPacket: (snap) => {
         if (this.net.role === 'client' && this.mode !== 'online_client') {
-          this.startMatch('online_client', snap.ai || 0);
+          const m1 = typeof snap.m1 === 'number' ? (CAR_MODEL_IDS[snap.m1] || 'roadster') : 'roadster';
+          const m2 = typeof snap.m2 === 'number' ? (CAR_MODEL_IDS[snap.m2] || 'roadster') : 'roadster';
+          this.startMatch('online_client', snap.ai || 0, [m1, m2]);
         }
       },
       onSnapshotState: applySnapshotMeta,
@@ -236,7 +257,9 @@ export class CrashAheadGame {
           this.ui.updateScores(this.scores);
           this._showVictory();
         } else if (msg.kind === 'rematch_start') {
-          this.startMatch('online_client', msg.ai || 0);
+          const m1 = typeof msg.m1 === 'number' ? (CAR_MODEL_IDS[msg.m1] || 'roadster') : 'roadster';
+          const m2 = typeof msg.m2 === 'number' ? (CAR_MODEL_IDS[msg.m2] || 'roadster') : 'roadster';
+          this.startMatch('online_client', msg.ai || 0, [m1, m2]);
         }
       },
       onRematchSignal: () => {
@@ -264,8 +287,9 @@ export class CrashAheadGame {
     if (this.mode === 'online_host' && this.phase !== 'MENU') return;
     if (this._autoStartTimer) { clearTimeout(this._autoStartTimer); this._autoStartTimer = null; }
     const arenaIdx = this._pickArenaIndex(-1);
-    this.net.sendMatchStart(arenaIdx);
-    this.startMatch('online_host', arenaIdx);
+    const models = this._pickRandomCarPair();
+    this.net.sendMatchStart(arenaIdx, models[0], models[1]);
+    this.startMatch('online_host', arenaIdx, models);
   }
 
   _bindUI() {
@@ -304,8 +328,9 @@ export class CrashAheadGame {
         this.selectedArenaIdx = next - 1;
         this.ui.updateMapPicker(this.selectedArenaIdx);
         if (this.mode === 'attract') {
-          const previewIdx = this.selectedArenaIdx >= 0 ? this.selectedArenaIdx : 0;
-          this.sim.resetArena(previewIdx);
+          const previewIdx = this.selectedArenaIdx >= 0 ? this.selectedArenaIdx : this._pickArenaIndex(-1);
+          const [m1, m2] = this._pickRandomCarPair();
+          this.sim.resetArena(previewIdx, m1, m2);
           this.renderer.clearEffects();
         }
       },
@@ -427,12 +452,13 @@ export class CrashAheadGame {
 
     this.sim.isHostSide = true;
     this.sim.engine.timing.timeScale = 1.0;
-    const previewIdx = this.selectedArenaIdx >= 0 ? this.selectedArenaIdx : 0;
-    this.sim.resetArena(previewIdx);
+    const previewIdx = this._pickArenaIndex(-1);
+    const [p1Model, p2Model] = this._pickRandomCarPair();
+    this.sim.resetArena(previewIdx, p1Model, p2Model);
     this.renderer.clearEffects();
   }
 
-  startMatch(mode, explicitArenaIdx = null) {
+  startMatch(mode, explicitArenaIdx = null, explicitModels = null) {
     this.mode = mode;
     this.scores = [0, 0];
     this.roundNumber = 1;
@@ -445,14 +471,17 @@ export class CrashAheadGame {
     this.input.setMode(mode);
     this.ui.updateScores(this.scores);
 
-    const startIdx = explicitArenaIdx !== null ? explicitArenaIdx : this._pickArenaIndex(-1);
-    this._resetRound(startIdx);
+    const startIdx = explicitArenaIdx !== null
+      ? explicitArenaIdx
+      : this._pickArenaIndex(this.sim ? this.sim.arenaIndex : -1);
+    this._resetRound(startIdx, explicitModels);
   }
 
   _triggerOnlineRematch() {
     const arenaIdx = this._pickArenaIndex(this.sim.arenaIndex);
-    this.net.sendRematchStart(arenaIdx);
-    this.startMatch('online_host', arenaIdx);
+    const models = this._pickRandomCarPair();
+    this.net.sendRematchStart(arenaIdx, models[0], models[1]);
+    this.startMatch('online_host', arenaIdx, models);
   }
 
   setBotDifficulty(diff) {
@@ -467,14 +496,16 @@ export class CrashAheadGame {
     if (this.sim.p1Car) {
       this.sim.p1Car.speedScale = 1.0;
       this.sim.p1Car.accelScale = 1.0;
+      this.sim.p1Car.jumpCooldownMs = JUMP_COOLDOWN_MS;
     }
     if (this.sim.p2Car) {
       this.sim.p2Car.speedScale = prof ? prof.speedScale : 1.0;
       this.sim.p2Car.accelScale = prof ? prof.accelScale : 1.0;
+      this.sim.p2Car.jumpCooldownMs = (prof && prof.jumpCooldownMs) ? prof.jumpCooldownMs : JUMP_COOLDOWN_MS;
     }
   }
 
-  _resetRound(explicitArenaIdx = null) {
+  _resetRound(explicitArenaIdx = null, explicitModels = null) {
     this.phase = 'COUNTDOWN';
     this.countdownMs = ROUND_COUNTDOWN_MS;
     this._countdownElapsedMs = 0;
@@ -497,7 +528,8 @@ export class CrashAheadGame {
     }
 
     const nextIdx = explicitArenaIdx !== null ? explicitArenaIdx : this._pickArenaIndex(this.sim.arenaIndex);
-    this.sim.resetArena(nextIdx);
+    const [p1Model, p2Model] = explicitModels || this._pickRandomCarPair();
+    this.sim.resetArena(nextIdx, p1Model, p2Model);
     this.sim.stepHoverCountdown(0);
     this.sim.engine.timing.timeScale = 1.0;
     this._applyDifficultySpeeds();
@@ -519,17 +551,17 @@ export class CrashAheadGame {
       this.koTimerMs -= FIXED_DT;
       if (this.koTimerMs <= 0) {
         this.koPending = false;
-        const nextIdx = this.selectedArenaIdx >= 0
-          ? this.selectedArenaIdx
-          : (this.sim.arenaIndex + 1) % ARENAS.length;
-        this.sim.resetArena(nextIdx);
+        const nextIdx = this._pickArenaIndex(this.sim.arenaIndex);
+        const [m1, m2] = this._pickRandomCarPair();
+        this.sim.resetArena(nextIdx, m1, m2);
         this.renderer.clearEffects();
       }
     } else {
       this.attractMapTicks++;
       if (this.attractMapTicks > 540 && this.selectedArenaIdx < 0) {
         this.attractMapTicks = 0;
-        this.sim.resetArena((this.sim.arenaIndex + 1) % ARENAS.length);
+        const [m1, m2] = this._pickRandomCarPair();
+        this.sim.resetArena(this._pickArenaIndex(this.sim.arenaIndex), m1, m2);
         this.renderer.clearEffects();
       }
       this.sim.step(this.ai.decide(this.sim, true), this.ai.decide(this.sim, false), true, false);

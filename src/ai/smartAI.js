@@ -1,4 +1,4 @@
-import { JUMP_COOLDOWN_MS } from '../config/constants.js';
+import { EXTREME_JUMP_COOLDOWN_MS, JUMP_COOLDOWN_MS } from '../config/constants.js';
 import { ARENAS } from '../maps/arenas.js';
 import { clamp, normalizeAngle } from '../utils/math.js';
 
@@ -26,10 +26,10 @@ export const BOT_DIFFICULTIES = Object.freeze({
   extreme: Object.freeze({
     id: 'extreme',
     label: 'EXTREME',
-    speedScale: 1.15,
-    accelScale: 1.32,
-    aggression: 2.8,
-    jumpCooldownMs: JUMP_COOLDOWN_MS,
+    speedScale: 1.25,
+    accelScale: 1.48,
+    aggression: 3.5,
+    jumpCooldownMs: EXTREME_JUMP_COOLDOWN_MS,
     smartPathing: true,
     reactionCadence: 1
   })
@@ -59,10 +59,12 @@ export class SmartAI {
   _moveRight(jump = false) { return { l: false, r: true, jump }; }
 
   _canJump(sim, me, profile, gx) {
-    if (!profile.jumpCooldownMs || !me || me.dead) return false;
+    const cdMs = profile.jumpCooldownMs ? (me.jumpCooldownMs || profile.jumpCooldownMs) : 0;
+    if (!cdMs || !me || me.dead) return false;
     if (!gx && me.airTicks > 5) return false;
-    if (sim.roundElapsedMs < 650) return false;
-    return (sim.roundElapsedMs - me.lastJumpAtMs) >= profile.jumpCooldownMs;
+    const minStartMs = profile.aggression >= 3.2 ? 380 : 650;
+    if (sim.roundElapsedMs < minStartMs) return false;
+    return (sim.roundElapsedMs - me.lastJumpAtMs) >= cdMs;
   }
 
   decide(sim, aiIsP1 = false) {
@@ -97,17 +99,18 @@ export class SmartAI {
       return this._lastCmd;
     };
 
-    // Extreme jump triggers (5s cooldown)
+    // Extreme jump triggers (2s cooldown)
     const evaluateJump = () => {
       if (!canJump) return false;
       const dxAbs = Math.abs(ox - mx);
-      const pounceDist = profile.aggression >= 2.5 ? 215 : 185;
+      const pounceDist = profile.aggression >= 3.2 ? 250 : (profile.aggression >= 2.5 ? 215 : 185);
       // 1) Aggressive pounce / overhead helmet slam / close grapple breakaway
-      if (dxAbs < pounceDist && oy <= my + 56 && mvx * chaseDir > 0.75) return true;
+      if (dxAbs < pounceDist && oy <= my + 72 && mvx * chaseDir > 0.45) return true;
+      if (profile.aggression >= 3.2 && dxAbs < 165 && opp.head && (opp.head.position.y <= my + 48 || Math.abs(oy - my) < 76) && sim.roundElapsedMs > 420) return true;
       if (profile.aggression >= 2.5 && dxAbs < 85 && Math.abs(mvx) < 1.3 && sim.roundElapsedMs > 800) return true;
       if (profile.aggression >= 2.0 && dxAbs < 120 && Math.abs(oy - my) < 62 && sim.roundElapsedMs > 1200) return true;
-      // 2) Chasm / bridge leap
-      if (arena.id === 8 && ((mx > 540 && mx < 582 && ox >= 640 && mvx > 2.2) || (mx < 740 && mx > 698 && ox < 640 && mvx < -2.2))) {
+      // 2) Chasm / bridge leap (near actual lip when carrying crossing momentum)
+      if (arena.id === 8 && ((mx > 562 && mx < 588 && ox >= 640 && mvx > 2.8) || (mx < 718 && mx > 692 && ox < 640 && mvx < -2.8))) {
         return true;
       }
       if (arena.id === 9 && ((mx > 442 && mx < 502 && ox > mx && mvx > 2.0) || (mx < 838 && mx > 778 && ox < mx && mvx < -2.0))) {
@@ -156,6 +159,8 @@ export class SmartAI {
       // Inverted mid-air stabilization across Map 8 chasm: right reduces clockwise tilt, left increases
       if (!gx && mx > 565 && mx < 715) {
         if (Math.abs(angle) > 0.24) return emit(angle > 0 ? this._moveRight() : this._moveLeft());
+        if (meLeftBowl === oppLeftBowl && mx < 592) return emit(this._moveLeft());
+        if (meLeftBowl === oppLeftBowl && mx > 688) return emit(this._moveRight());
         if (mx < 605 || (mx < 640 && mvx > 0.25)) return emit(this._moveRight());
         if (mx > 675 || (mx >= 640 && mvx < -0.25)) return emit(this._moveLeft());
         return emit({ l: false, r: false, jump: false });
@@ -163,18 +168,24 @@ export class SmartAI {
 
       if (this.runupTicks > 0) {
         this.runupTicks--;
-        if (meLeftBowl && mx > 315) return emit(this._moveLeft());
-        if (!meLeftBowl && mx < 965) return emit(this._moveRight());
+        if (meLeftBowl && mx > 305) return emit(this._moveLeft());
+        if (!meLeftBowl && mx < 975) return emit(this._moveRight());
         this.runupTicks = 0;
       }
 
-      if (meLeftBowl && mx > 520 && mvx > 0.1 && speed < 4.3 && (gx || mx < 595)) {
-        this.runupTicks = 26;
+      if (meLeftBowl && mx > 515 && mvx > 0.1 && (speed < 4.7 || oppLeftBowl) && (gx || mx < 592)) {
+        this.runupTicks = oppLeftBowl ? 20 : 28;
         return emit(this._moveLeft());
       }
-      if (!meLeftBowl && mx < 760 && mvx < -0.1 && speed < 4.3 && (gx || mx > 685)) {
-        this.runupTicks = 26;
+      if (!meLeftBowl && mx < 765 && mvx < -0.1 && (speed < 4.7 || !oppLeftBowl) && (gx || mx > 688)) {
+        this.runupTicks = !oppLeftBowl ? 20 : 28;
         return emit(this._moveRight());
+      }
+
+      // Same-bowl chasm-lip brake guard: never drive/push into the sea gap when opponent is in our bowl
+      if (meLeftBowl === oppLeftBowl) {
+        if (meLeftBowl && mx > (mvx > 2.2 ? 440 : 475)) return emit(this._moveLeft(false));
+        if (!meLeftBowl && mx < (mvx < -2.2 ? 840 : 805)) return emit(this._moveRight(false));
       }
 
       if (meLeftBowl !== oppLeftBowl) {
@@ -249,6 +260,9 @@ export class SmartAI {
     // Inverted mid-air pitch recovery & opportunistic flip/slam dive
     if (!gx && my < 495) {
       if (this.decisionTick % 20 === 0) this.flipBias = ((this.decisionTick / 20) % 3) * 0.35;
+      if (profile.aggression >= 3.2 && opp.head && oy > my + 16 && Math.abs(ox - mx) < 230) {
+        return emit(opp.head.position.x < mx ? this._moveLeft() : this._moveRight());
+      }
       if (profile.aggression >= 2.5 && oy > my + 24 && Math.abs(ox - mx) < 195) {
         return emit(ox < mx ? this._moveLeft() : this._moveRight());
       }
@@ -268,9 +282,15 @@ export class SmartAI {
     }
 
     // Extreme & Hard enhanced curved-track / bridge / overhead path tracking
-    const deadzone = profile.aggression >= 2.5 ? 6 : (profile.aggression >= 2.0 ? 10 : 48);
-    const lookaheadFrames = profile.aggression >= 2.5 ? 15 : (profile.smartPathing ? 12 : 4);
-    const targetX = clamp(ox + ovx * lookaheadFrames, 200, 1080);
+    const deadzone = profile.aggression >= 3.2 ? 3 : (profile.aggression >= 2.5 ? 6 : (profile.aggression >= 2.0 ? 10 : 48));
+    const lookaheadFrames = profile.aggression >= 3.2 ? 18 : (profile.aggression >= 2.5 ? 15 : (profile.smartPathing ? 12 : 4));
+    let minTargetX = 200;
+    let maxTargetX = 1080;
+    if (arena.id === 8 && (mx < 640) === (ox < 640)) {
+      if (mx < 640) maxTargetX = 470;
+      else minTargetX = 810;
+    }
+    const targetX = clamp(ox + ovx * lookaheadFrames, minTargetX, maxTargetX);
 
     const doJump = evaluateJump();
     if (targetX < mx - deadzone) return emit(this._moveLeft(doJump));

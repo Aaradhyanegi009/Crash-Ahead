@@ -10,7 +10,8 @@ import {
   CENTER_OF_MASS_OFFSET,
   SUSPENSION_DAMPING,
   VEHICLE_PHYSICS,
-  CAR_SPEC
+  CAR_SPEC,
+  CAR_MODELS
 } from '../config/constants.js';
 import { ARENAS } from '../maps/arenas.js';
 import { clamp, lerp, lerpAngle, sampleArcPoints } from '../utils/math.js';
@@ -38,6 +39,8 @@ export class PhysicsSimulation {
     this.vehicleController = new VehiclePhysicsController(this.Body, this.Query, this.engine);
 
     this.arenaIndex = 0;
+    this.p1Model = 'roadster';
+    this.p2Model = 'roadster';
     this.p1Car = null;
     this.p2Car = null;
     this.seesaws = [];
@@ -79,9 +82,28 @@ export class PhysicsSimulation {
         if (otherIsBack && wc.hasFront) return;
         const n = pair.collision && pair.collision.normal;
         if (!n) return;
-        const sign = pair.bodyA === wheelBody ? -1 : 1;
-        const nx = n.x * sign;
-        const ny = n.y * sign;
+        let nx = n.x;
+        let ny = n.y;
+        const supp = pair.collision.supports && pair.collision.supports[0];
+        if (supp) {
+          const toWheelX = wheelBody.position.x - supp.x;
+          const toWheelY = wheelBody.position.y - supp.y;
+          const suppDot = nx * toWheelX + ny * toWheelY;
+          if (Math.abs(suppDot) > 0.05) {
+            if (suppDot < 0) {
+              nx = -nx;
+              ny = -ny;
+            }
+          } else {
+            const sign = pair.bodyA === wheelBody ? 1 : -1;
+            nx *= sign;
+            ny *= sign;
+          }
+        } else {
+          const sign = pair.bodyA === wheelBody ? 1 : -1;
+          nx *= sign;
+          ny *= sign;
+        }
         const len = Math.hypot(nx, ny);
         if (len < 0.001) return;
         const unx = nx / len;
@@ -343,8 +365,10 @@ export class PhysicsSimulation {
     this.driveSurfaces.push(plank);
   }
 
-  resetArena(arenaIndex = this.arenaIndex) {
+  resetArena(arenaIndex = this.arenaIndex, p1Model = this.p1Model, p2Model = this.p2Model) {
     this.arenaIndex = ((arenaIndex % ARENAS.length) + ARENAS.length) % ARENAS.length;
+    this.p1Model = CAR_MODELS[p1Model] ? p1Model : 'roadster';
+    this.p2Model = CAR_MODELS[p2Model] ? p2Model : 'roadster';
     const arena = ARENAS[this.arenaIndex];
 
     this.Composite.clear(this.engine.world, false);
@@ -415,20 +439,25 @@ export class PhysicsSimulation {
       s.spawnAngle = s.body.angle;
     }
 
-    this.p1Car = this._buildRoadster(1, arena.p1Spawn.x, arena.p1Spawn.y);
-    this.p2Car = this._buildRoadster(2, arena.p2Spawn.x, arena.p2Spawn.y);
+    this.p1Car = this._buildVehicle(1, arena.p1Spawn.x, arena.p1Spawn.y, this.p1Model);
+    this.p2Car = this._buildVehicle(2, arena.p2Spawn.x, arena.p2Spawn.y, this.p2Model);
   }
 
   _buildRoadster(playerIndex, x, y) {
+    return this._buildVehicle(playerIndex, x, y, 'roadster');
+  }
+
+  _buildVehicle(playerIndex, x, y, modelId = 'roadster') {
+    const spec = CAR_MODELS[modelId] || CAR_SPEC;
     const facing = playerIndex === 1 ? 1 : -1;
     const pTag = playerIndex === 1 ? 'p1' : 'p2';
     const group = this.Body.nextGroup(true);
 
-    const chassis = this.Bodies.rectangle(x, y, CAR_SPEC.width, CAR_SPEC.height, {
-      chamfer: { radius: 8.5 * CAR_SCALE },
-      density: CAR_SPEC.density,
-      restitution: CAR_SPEC.restitution,
-      friction: CAR_SPEC.friction,
+    const chassis = this.Bodies.rectangle(x, y, spec.width, spec.height, {
+      chamfer: { radius: spec.chamfer ?? 8.5 * CAR_SCALE },
+      density: spec.density,
+      restitution: spec.restitution,
+      friction: spec.friction,
       frictionStatic: 0.04,
       frictionAir: 0.0045,
       slop: 0.015,
@@ -437,74 +466,83 @@ export class PhysicsSimulation {
     });
     this.Body.setCentre(chassis, { x: 0, y: CENTER_OF_MASS_OFFSET }, true);
 
-    const wheelR = this.Bodies.circle(x - CAR_SPEC.wheelOffsetX, y + CAR_SPEC.wheelOffsetY, CAR_SPEC.wheelRadius, {
-      density: CAR_SPEC.wheelDensity,
-      friction: CAR_SPEC.wheelFriction,
+    // wheelR is screen-left (P1 rear tail, P2 front nose); wheelF is screen-right (P1 front nose, P2 rear tail)
+    const yOffLeft = facing > 0 ? spec.wheelOffsetY : (spec.wheelOffsetYF ?? spec.wheelOffsetY);
+    const yOffRight = facing > 0 ? (spec.wheelOffsetYF ?? spec.wheelOffsetY) : spec.wheelOffsetY;
+    const radLeft = facing > 0 ? (spec.wheelRadiusR ?? spec.wheelRadius) : (spec.wheelRadiusF ?? spec.wheelRadius);
+    const radRight = facing > 0 ? (spec.wheelRadiusF ?? spec.wheelRadius) : (spec.wheelRadiusR ?? spec.wheelRadius);
+
+    const wheelR = this.Bodies.circle(x - spec.wheelOffsetX, y + yOffLeft, radLeft, {
+      density: spec.wheelDensity,
+      friction: spec.wheelFriction,
       frictionStatic: 0.22,
-      restitution: CAR_SPEC.wheelRestitution,
+      restitution: spec.wheelRestitution,
       frictionAir: 0.004,
       slop: 0.008,
       collisionFilter: { group },
       label: `wheel_${pTag}_r`
     });
 
-    const wheelF = this.Bodies.circle(x + CAR_SPEC.wheelOffsetX, y + CAR_SPEC.wheelOffsetY, CAR_SPEC.wheelRadius, {
-      density: CAR_SPEC.wheelDensity,
-      friction: CAR_SPEC.wheelFriction,
+    const wheelF = this.Bodies.circle(x + spec.wheelOffsetX, y + yOffRight, radRight, {
+      density: spec.wheelDensity,
+      friction: spec.wheelFriction,
       frictionStatic: 0.22,
-      restitution: CAR_SPEC.wheelRestitution,
+      restitution: spec.wheelRestitution,
       frictionAir: 0.004,
       slop: 0.008,
       collisionFilter: { group },
       label: `wheel_${pTag}_f`
     });
 
-    const head = this.Bodies.circle(x, y + CAR_SPEC.headOffsetY, CAR_SPEC.headRadius, {
-      density: CAR_SPEC.headDensity,
-      restitution: CAR_SPEC.headRestitution,
+    const headOffX = (spec.headOffsetX || 0) * facing;
+    const head = this.Bodies.circle(x + headOffX, y + spec.headOffsetY, spec.headRadius, {
+      density: spec.headDensity,
+      restitution: spec.headRestitution,
       friction: 0.3,
       frictionAir: 0.008,
       collisionFilter: { group },
       label: `head_${pTag}`
     });
 
-    const suspY = CAR_SPEC.wheelOffsetY - CENTER_OF_MASS_OFFSET;
+    const suspYL = yOffLeft - CENTER_OF_MASS_OFFSET;
+    const suspYR = yOffRight - CENTER_OF_MASS_OFFSET;
     const suspRVert = this.Constraint.create({
-      bodyA: chassis, pointA: { x: -CAR_SPEC.wheelOffsetX, y: suspY },
+      bodyA: chassis, pointA: { x: -spec.wheelOffsetX, y: suspYL },
       bodyB: wheelR, pointB: { x: 0, y: 0 },
       length: 0, stiffness: VEHICLE_PHYSICS.SUSPENSION_STIFFNESS, damping: SUSPENSION_DAMPING
     });
     const suspRArm = this.Constraint.create({
-      bodyA: chassis, pointA: { x: 0, y: suspY },
+      bodyA: chassis, pointA: { x: 0, y: suspYL },
       bodyB: wheelR, pointB: { x: 0, y: 0 },
-      length: CAR_SPEC.wheelOffsetX, stiffness: VEHICLE_PHYSICS.AXLE_ARM_STIFFNESS, damping: VEHICLE_PHYSICS.AXLE_ARM_DAMPING
+      length: spec.wheelOffsetX, stiffness: VEHICLE_PHYSICS.AXLE_ARM_STIFFNESS, damping: VEHICLE_PHYSICS.AXLE_ARM_DAMPING
     });
 
     const suspFVert = this.Constraint.create({
-      bodyA: chassis, pointA: { x: CAR_SPEC.wheelOffsetX, y: suspY },
+      bodyA: chassis, pointA: { x: spec.wheelOffsetX, y: suspYR },
       bodyB: wheelF, pointB: { x: 0, y: 0 },
       length: 0, stiffness: VEHICLE_PHYSICS.SUSPENSION_STIFFNESS, damping: SUSPENSION_DAMPING
     });
     const suspFArm = this.Constraint.create({
-      bodyA: chassis, pointA: { x: 0, y: suspY },
+      bodyA: chassis, pointA: { x: 0, y: suspYR },
       bodyB: wheelF, pointB: { x: 0, y: 0 },
-      length: CAR_SPEC.wheelOffsetX, stiffness: VEHICLE_PHYSICS.AXLE_ARM_STIFFNESS, damping: VEHICLE_PHYSICS.AXLE_ARM_DAMPING
+      length: spec.wheelOffsetX, stiffness: VEHICLE_PHYSICS.AXLE_ARM_STIFFNESS, damping: VEHICLE_PHYSICS.AXLE_ARM_DAMPING
     });
 
-    const collarY = (-2 * CAR_SCALE) - CENTER_OF_MASS_OFFSET;
+    const collarX = (spec.collarX || 0) * facing;
+    const collarY = (spec.collarY ?? (-4 * CAR_SCALE)) - CENTER_OF_MASS_OFFSET;
     const neckSpanX = 16 * CAR_SCALE;
     const neckSpine = this.Constraint.create({
-      bodyA: chassis, pointA: { x: 0, y: collarY },
+      bodyA: chassis, pointA: { x: collarX, y: collarY },
       bodyB: head, pointB: { x: 0, y: 0 },
       stiffness: 0.90, damping: 0.15
     });
     const neckL = this.Constraint.create({
-      bodyA: chassis, pointA: { x: -neckSpanX, y: collarY },
+      bodyA: chassis, pointA: { x: collarX - neckSpanX, y: collarY },
       bodyB: head, pointB: { x: 0, y: 0 },
       stiffness: 0.74, damping: 0.14
     });
     const neckR = this.Constraint.create({
-      bodyA: chassis, pointA: { x: neckSpanX, y: collarY },
+      bodyA: chassis, pointA: { x: collarX + neckSpanX, y: collarY },
       bodyB: head, pointB: { x: 0, y: 0 },
       stiffness: 0.74, damping: 0.14
     });
@@ -519,6 +557,10 @@ export class PhysicsSimulation {
       playerIndex,
       isRedPlayer: playerIndex === 1,
       facing,
+      model: spec.id,
+      spec,
+      wheelRadiusR: radLeft,
+      wheelRadiusF: radRight,
       collisionGroup: group,
       chassis,
       wheelR,
@@ -534,10 +576,13 @@ export class PhysicsSimulation {
       accelHoldMs: 0,
       accelDir: 0,
       groundAngle: 0,
+      curveRate: 0,
+      lastGroundAngle: 0,
       groundNormal: { x: 0, y: -1 },
       driving: false,
       speedScale: 1.0,
       accelScale: 1.0,
+      jumpCooldownMs: JUMP_COOLDOWN_MS,
       lastJumpAtMs: -99999,
       driverState: {
         lean: 0,
@@ -555,14 +600,16 @@ export class PhysicsSimulation {
   getJumpCooldownRemaining(playerIndex) {
     const car = playerIndex === 1 ? this.p1Car : this.p2Car;
     if (!car) return 0;
+    const cooldownMs = car.jumpCooldownMs || JUMP_COOLDOWN_MS;
     const elapsedSince = this.roundElapsedMs - car.lastJumpAtMs;
-    if (elapsedSince >= JUMP_COOLDOWN_MS) return 0;
-    return Math.max(0, JUMP_COOLDOWN_MS - elapsedSince);
+    if (elapsedSince >= cooldownMs) return 0;
+    return Math.max(0, cooldownMs - elapsedSince);
   }
 
   triggerJump(car, chaseDir = 0) {
     if (!car || car.dead) return false;
-    if (this.roundElapsedMs - car.lastJumpAtMs < JUMP_COOLDOWN_MS) return false;
+    const cooldownMs = car.jumpCooldownMs || JUMP_COOLDOWN_MS;
+    if (this.roundElapsedMs - car.lastJumpAtMs < cooldownMs) return false;
     if (car.isAirborne && car.airTicks > 8) return false;
 
     const dxBoost = chaseDir * VEHICLE_PHYSICS.JUMP_FWD_BOOST;
@@ -579,6 +626,7 @@ export class PhysicsSimulation {
       });
     }
     car.lastJumpAtMs = this.roundElapsedMs;
+    car.isAirborne = true;
     car.airTicks = Math.max(car.airTicks, 2);
     if (car.driverState) {
       car.driverState.armLVel -= 0.35;
@@ -586,9 +634,10 @@ export class PhysicsSimulation {
       car.driverState.leanVel -= car.facing * 0.22;
     }
     if (this.onJump) {
+      const wy = car.spec ? car.spec.wheelOffsetY : CAR_SPEC.wheelOffsetY;
       this.onJump(car.playerIndex, {
         x: car.chassis.position.x,
-        y: car.chassis.position.y + CAR_SPEC.wheelOffsetY + 6
+        y: car.chassis.position.y + wy + 6
       });
     }
     return true;

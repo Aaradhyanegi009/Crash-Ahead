@@ -8,7 +8,7 @@ import {
 } from '../config/constants.js';
 import { ARENAS } from '../maps/arenas.js';
 import { lerp } from '../utils/math.js';
-import { drawRoadster, drawRagdoll } from './roadsterRenderer.js';
+import { drawVehicle, drawRagdoll } from './roadsterRenderer.js';
 
 const SKYLINE_BUILDINGS = [
   { x: -10, w: 120, h: 255, back: true, cols: 3, rows: 7 },
@@ -72,16 +72,18 @@ export class CanvasRenderer {
     const a = carState.chassis.angle;
     const cos = Math.cos(a);
     const sin = Math.sin(a);
-    const lx = -49 * CAR_SCALE * carState.facing;
-    const ly = (-1 * CAR_SCALE) - CENTER_OF_MASS_OFFSET;
+    const ex = carState.spec && carState.spec.exhaustLocal ? carState.spec.exhaustLocal : { x: -49 * CAR_SCALE, y: -1 * CAR_SCALE };
+    const lx = ex.x * carState.facing;
+    const ly = ex.y - CENTER_OF_MASS_OFFSET;
     const px = carState.chassis.position.x + lx * cos - ly * sin;
     const py = carState.chassis.position.y + lx * sin + ly * cos;
+    const isUprightStack = carState.model === 'jcb';
     const spread = ((this.tickCount % 5) - 2) * 0.08;
     this.smoke.push({
       x: px,
       y: py,
-      vx: -carState.facing * 1.25 + spread,
-      vy: -0.95 - (this.tickCount % 3) * 0.2,
+      vx: (isUprightStack ? 0.25 * carState.facing : -carState.facing * 1.25) + spread,
+      vy: (isUprightStack ? -1.45 : -0.95) - (this.tickCount % 3) * 0.2,
       r: 3.6,
       life: 1.0
     });
@@ -397,8 +399,8 @@ export class CanvasRenderer {
 
     this._drawSkyAndCity(ctx);
     this._drawArenaTerrain(ctx, sim);
-    if (sim.p1Car) drawRoadster(ctx, sim.p1Car, true);
-    if (sim.p2Car) drawRoadster(ctx, sim.p2Car, false);
+    if (sim.p1Car) drawVehicle(ctx, sim.p1Car, true);
+    if (sim.p2Car) drawVehicle(ctx, sim.p2Car, false);
     if (sim.ragdolls) {
       for (const rag of sim.ragdolls) drawRagdoll(ctx, rag);
     }

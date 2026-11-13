@@ -1,7 +1,16 @@
-import { PEER_PREFIX } from '../config/constants.js';
+import { CAR_MODEL_IDS, PEER_PREFIX } from '../config/constants.js';
 import { BODY_KEYS } from '../physics/vehicleController.js';
 import { clamp } from '../utils/math.js';
 import { MqttRelayLink, RELAY_BROKERS } from './mqttRelay.js';
+
+const modelToIdx = (id) => {
+  const i = CAR_MODEL_IDS.indexOf(id);
+  return i >= 0 ? i : 0;
+};
+const idxToModel = (idx) => {
+  if (typeof idx !== 'number' || !Number.isFinite(idx)) return CAR_MODEL_IDS[0];
+  return CAR_MODEL_IDS[clamp(Math.floor(idx), 0, CAR_MODEL_IDS.length - 1)] || CAR_MODEL_IDS[0];
+};
 
 const BC_LOBBY_CHANNEL = 'unfair-crash-ahead-lobby';
 const BC_ROOM_PREFIX = 'unfair-crash-ahead-room-';
@@ -459,34 +468,45 @@ export class NetworkManager {
     // and a later direct P2P DataChannel automatically takes over sending.
     this._startRelay();
 
-    const PeerCtor = window.Peer;
-    if (typeof PeerCtor === 'undefined') return; // relay-only mode
-
-    const opts = {
-      debug: 0,
-      config: { iceServers: ICE_SERVERS }
+    const startPeer = (PeerCtor) => {
+      if (this.peer || this.localPeerReady || this.role !== prevRole || this.roomCode !== prevCode) return;
+      const opts = {
+        debug: 0,
+        config: { iceServers: ICE_SERVERS }
+      };
+      this.peer = peerId ? new PeerCtor(peerId, opts) : new PeerCtor(opts);
+      this.peer.on('open', (id) => onReady(id));
+      this.peer.on('disconnected', () => {
+        if (this.peer && !this.peer.destroyed && !this.isConnected()) {
+          try { this.peer.reconnect(); } catch (_) {}
+        }
+      });
+      this.peer.on('error', (err) => {
+        if (this.localPeerReady || this.isConnected()) return;
+        if (err && err.type === 'unavailable-id' && this.role === 'host') {
+          this.hostRoom();
+          return;
+        }
+        // Direct P2P unavailable (signaling blocked / host unreachable): keep waiting on the relay
+        if (this._relayAlive()) return;
+        if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
+        const msg = (err && err.type === 'peer-unavailable')
+          ? 'Room not found or Host disconnected.'
+          : `Connection error: ${(err && (err.type || err.message)) || 'unknown'}`;
+        this.cb.onStatus(msg, 'error', true);
+      });
     };
-    this.peer = peerId ? new PeerCtor(peerId, opts) : new PeerCtor(opts);
-    this.peer.on('open', (id) => onReady(id));
-    this.peer.on('disconnected', () => {
-      if (this.peer && !this.peer.destroyed && !this.isConnected()) {
-        try { this.peer.reconnect(); } catch (_) {}
+
+    if (typeof window.Peer !== 'undefined') {
+      startPeer(window.Peer);
+    } else if (typeof document !== 'undefined') {
+      const peerTag = document.querySelector('script[src*="peerjs"]');
+      if (peerTag) {
+        peerTag.addEventListener('load', () => {
+          if (typeof window.Peer !== 'undefined') startPeer(window.Peer);
+        }, { once: true });
       }
-    });
-    this.peer.on('error', (err) => {
-      if (this.localPeerReady || this.isConnected()) return;
-      if (err && err.type === 'unavailable-id' && this.role === 'host') {
-        this.hostRoom();
-        return;
-      }
-      // Direct P2P unavailable (signaling blocked / host unreachable): keep waiting on the relay
-      if (this._relayAlive()) return;
-      if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
-      const msg = (err && err.type === 'peer-unavailable')
-        ? 'Room not found or Host disconnected.'
-        : `Connection error: ${(err && (err.type || err.message)) || 'unknown'}`;
-      this.cb.onStatus(msg, 'error', true);
-    });
+    }
   }
 
   hostRoom() {
@@ -687,7 +707,7 @@ export class NetworkManager {
       }
       case 'match_start':
         this.resetPredictionState(typeof msg.ep === 'number' ? msg.ep : this.matchEpoch);
-        this.cb.onMatchStart(msg.ai || 0);
+        this.cb.onMatchStart(msg.ai || 0, idxToModel(msg.m1), idxToModel(msg.m2));
         break;
       case 'request_start':
         if (this.role === 'host' && this.cb.onStartRequested) this.cb.onStartRequested();
@@ -754,16 +774,27 @@ export class NetworkManager {
     return cmd;
   }
 
-  sendMatchStart(arenaIndex) {
+  sendMatchStart(arenaIndex, p1Model = 'roadster', p2Model = 'roadster') {
     const nextEp = this.matchEpoch + 1;
     this.resetPredictionState(nextEp);
-    this.sendReliable('match_start', { ai: arenaIndex, ep: nextEp });
+    this.sendReliable('match_start', {
+      ai: arenaIndex,
+      ep: nextEp,
+      m1: modelToIdx(p1Model),
+      m2: modelToIdx(p2Model)
+    });
   }
 
-  sendRematchStart(arenaIndex) {
+  sendRematchStart(arenaIndex, p1Model = 'roadster', p2Model = 'roadster') {
     const nextEp = this.matchEpoch + 1;
     this.resetPredictionState(nextEp);
-    this.sendReliable('evt', { kind: 'rematch_start', ai: arenaIndex, ep: nextEp });
+    this.sendReliable('evt', {
+      kind: 'rematch_start',
+      ai: arenaIndex,
+      ep: nextEp,
+      m1: modelToIdx(p1Model),
+      m2: modelToIdx(p2Model)
+    });
   }
 
   sendRequestStart() {
@@ -795,6 +826,8 @@ export class NetworkManager {
       sq: this.lastSeq,
       ak: this.remoteInput.seq,
       ai: sim.arenaIndex,
+      m1: modelToIdx(sim.p1Model),
+      m2: modelToIdx(sim.p2Model),
       sc: [meta.scores[0], meta.scores[1]],
       rn: meta.roundNumber,
       ph: meta.phase,
