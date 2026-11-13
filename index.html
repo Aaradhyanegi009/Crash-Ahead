@@ -48,6 +48,7 @@
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
+      -webkit-touch-callout: none;
       overscroll-behavior: none;
     }
 
@@ -144,7 +145,9 @@
       position: fixed;
       inset: 0;
       pointer-events: none;
-      z-index: 15;
+      z-index: 25;
+      touch-action: none;
+      -webkit-touch-callout: none;
     }
 
     .btn-pair {
@@ -152,13 +155,14 @@
       bottom: max(18px, env(safe-area-inset-bottom, 0px));
       display: flex;
       gap: 18px;
-      pointer-events: auto;
+      pointer-events: none;
     }
 
     .left-pair { left: max(26px, env(safe-area-inset-left, 0px)); }
     .right-pair { right: max(26px, env(safe-area-inset-right, 0px)); }
 
     .circle-pad {
+      position: relative;
       width: 78px;
       height: 78px;
       border-radius: 50%;
@@ -167,7 +171,9 @@
       align-items: center;
       justify-content: center;
       cursor: pointer;
+      pointer-events: auto;
       touch-action: none;
+      -webkit-touch-callout: none;
       outline: none;
       box-shadow: inset 0 -7px 0 rgba(0, 0, 0, 0.22);
       transition: transform 0.06s ease;
@@ -185,6 +191,28 @@
       stroke-linecap: round;
       stroke-linejoin: round;
       pointer-events: none;
+    }
+
+    .pad-tag {
+      position: absolute;
+      bottom: -10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--white);
+      color: var(--ink);
+      border: 2.5px solid var(--ink);
+      border-radius: 999px;
+      padding: 1px 7px;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.6px;
+      line-height: 1.15;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #touch-controls.mode-2p .pad-tag {
+      display: none;
     }
 
     .circle-pad.pressed {
@@ -660,31 +688,35 @@
     <!-- Bottom-Center White EXIT Half-Pill -->
     <button id="btn-exit" class="hud-pill bottom-pill hidden" type="button">EXIT</button>
 
-    <!-- Multi-Touch Circular Cartoon Controls -->
+    <!-- Unified Touch & Pointer Circular Cartoon Controls -->
     <div id="touch-controls">
       <div id="group-p1" class="btn-pair left-pair">
-        <button id="pad-p1-l" class="circle-pad pad-red" type="button" aria-label="Red Left">
+        <button id="pad-p1-l" class="circle-pad pad-red" type="button" aria-label="Red Reverse or Left">
           <svg viewBox="0 0 40 40" aria-hidden="true">
             <path d="M24 10 L13 20 L24 30" />
           </svg>
+          <span class="pad-tag">REV</span>
         </button>
-        <button id="pad-p1-r" class="circle-pad pad-red" type="button" aria-label="Red Right">
+        <button id="pad-p1-r" class="circle-pad pad-red" type="button" aria-label="Red Gas or Right">
           <svg viewBox="0 0 40 40" aria-hidden="true">
             <path d="M16 10 L27 20 L16 30" />
           </svg>
+          <span class="pad-tag">GAS</span>
         </button>
       </div>
 
       <div id="group-p2" class="btn-pair right-pair">
-        <button id="pad-p2-l" class="circle-pad pad-blue" type="button" aria-label="Blue Left">
+        <button id="pad-p2-l" class="circle-pad pad-blue" type="button" aria-label="Blue Gas or Left">
           <svg viewBox="0 0 40 40" aria-hidden="true">
             <path d="M24 10 L13 20 L24 30" />
           </svg>
+          <span class="pad-tag">GAS</span>
         </button>
-        <button id="pad-p2-r" class="circle-pad pad-blue" type="button" aria-label="Blue Right">
+        <button id="pad-p2-r" class="circle-pad pad-blue" type="button" aria-label="Blue Reverse or Right">
           <svg viewBox="0 0 40 40" aria-hidden="true">
             <path d="M16 10 L27 20 L16 30" />
           </svg>
+          <span class="pad-tag">REV</span>
         </button>
       </div>
     </div>
@@ -767,6 +799,7 @@
           <span id="online-lobby-ping"></span>
         </div>
 
+        <button id="btn-online-retry" class="cartoon-btn btn-sm btn-yellow hidden" type="button" style="margin-bottom:8px;">RETRY CONNECTION</button>
         <button id="btn-online-start" class="cartoon-btn btn-red" type="button" disabled>WAITING FOR OPPONENT...</button>
       </div>
     </div>
@@ -823,41 +856,55 @@
         blue: { body: '#00B4FF', lip: '#0082B8', rim: '#00B4FF', helmet: '#00B4FF' }
       };
 
-      // Tunable Vehicle Physics Constants (Grounded Stability, Forward & Reverse Hill Climbing)
-      const FORWARD_TORQUE = 0.0125;          // Low-end forward climbing force scalar
+      // Tunable Vehicle Physics Constants (Grounded Stability, 25% Reduced Max Speed, Progressive Accel, Loop CoG)
+      const BASE_MAX_FORWARD_SPEED = 8.8;
+      const BASE_MAX_REVERSE_SPEED = 6.8;
+      const SPEED_REDUCTION_FACTOR = 0.75;    // Exact 25% speed reduction across forward & reverse
+      const FORWARD_TORQUE = 0.0125;          // Full forward climbing force reached at end of accel ramp
       const REVERSE_TORQUE = 0.0112;          // Dedicated reverse climbing force for steep backward climbs
-      const MAX_FORWARD_SPEED = 8.8;          // Top tangential flat/climb speed cap (px/tick @ 60Hz)
-      const MAX_REVERSE_SPEED = 6.8;          // Controlled reverse top speed cap (px/tick @ 60Hz)
-      const SLOPE_GRIP_MULTIPLIER = 1.85;     // Longitudinal traction & force multiplier on upward slopes
-      const CENTER_OF_MASS_OFFSET = 5.5;      // Pixels below chassis midpoint to stop erratic tipping
+      const MAX_FORWARD_SPEED = Number((BASE_MAX_FORWARD_SPEED * SPEED_REDUCTION_FACTOR).toFixed(4)); // 6.6 px/tick
+      const MAX_REVERSE_SPEED = Number((BASE_MAX_REVERSE_SPEED * SPEED_REDUCTION_FACTOR).toFixed(4)); // 5.1 px/tick
+      const SLOPE_GRIP_MULTIPLIER = 1.95;     // Longitudinal traction & force multiplier on upward slopes
+      const CENTER_OF_MASS_OFFSET = 8.5;      // Lowered CoG below chassis midpoint for hills & loop-de-loops
       const SUSPENSION_DAMPING = 0.28;        // Critically tuned suspension damper (absorbs hits without bounce/jitter)
 
       const VEHICLE_PHYSICS = Object.freeze({
+        BASE_MAX_FORWARD_SPEED,
+        BASE_MAX_REVERSE_SPEED,
+        SPEED_REDUCTION_FACTOR,
         FORWARD_TORQUE,
         REVERSE_TORQUE,
         MAX_FORWARD_SPEED,
         MAX_REVERSE_SPEED,
+        MAX_WORLD_SPEED: 9.5,
         SLOPE_GRIP_MULTIPLIER,
         CENTER_OF_MASS_OFFSET,
         SUSPENSION_DAMPING,
         SUSPENSION_STIFFNESS: 0.48,
         AXLE_ARM_STIFFNESS: 0.85,
         AXLE_ARM_DAMPING: 0.30,
+        ACCEL_RAMP_MS: 620,
+        ACCEL_MIN_GAIN: 0.24,
+        ACCEL_RELEASE_DECAY: 2.4,
+        COAST_DRAG_COEFF: 0.0024,
+        CURVE_ADHESION_FORCE: 0.0022,
         BRAKE_DECEL_FORCE: 0.028,
-        BRAKE_ZERO_THRESHOLD: 0.32,
-        MAX_ANGULAR_VELOCITY: 0.135,
+        BRAKE_ZERO_THRESHOLD: 0.28,
+        MAX_ANGULAR_VELOCITY: 0.130,
         GROUND_ANGULAR_DAMPING: 0.84,
-        AIR_ANGULAR_DAMPING: 0.88,
-        AIR_CONTROL_SPIN: 0.105,
-        FORWARD_PITCH_MAX_OFFSET: 0.12,
+        AIR_PITCH_TORQUE: 0.58,
+        MAX_AIR_TORQUE: 0.65,
+        AIR_MAX_SPIN: 0.068,
+        AIR_ANGULAR_DAMPING: 0.89,
+        FORWARD_PITCH_MAX_OFFSET: 0.11,
         REVERSE_PITCH_BIAS: 0.04,
         PITCH_KP: 0.016,
         PITCH_KD: 0.20,
         PITCH_TORQUE_LIMIT: 0.022,
         WHEEL_BASE_FRICTION: 0.96,
-        WHEEL_MAX_SPIN: 0.66,
-        WHEEL_REVERSE_MAX_SPIN: 0.51,
-        GRAVITY_COMP_SCALE: 0.72
+        WHEEL_MAX_SPIN: 0.465,         // 6.6 / 14.5 = 0.455 rad/tick + slight grip headroom
+        WHEEL_REVERSE_MAX_SPIN: 0.360, // 5.1 / 14.5 = 0.352 rad/tick + slight grip headroom
+        GRAVITY_COMP_SCALE: 0.78
       });
 
       const CAR_SPEC = {
@@ -869,7 +916,7 @@
         wheelOffsetX: 27,
         wheelOffsetY: 13,
         wheelRadius: 14.5,
-        wheelDensity: 0.0088,
+        wheelDensity: 0.0094,
         wheelFriction: VEHICLE_PHYSICS.WHEEL_BASE_FRICTION,
         wheelRestitution: 0.08,
         headRadius: 11.5,
@@ -1464,6 +1511,11 @@
       // =========================================================================
       // 4. VEHICLE PHYSICS CONTROLLER & MATTER.JS SIMULATION
       // =========================================================================
+      const BODY_KEYS = Object.freeze([
+        ['p1Car', 'chassis', 'c1'], ['p1Car', 'wheelR', 'w1r'], ['p1Car', 'wheelF', 'w1f'], ['p1Car', 'head', 'h1'],
+        ['p2Car', 'chassis', 'c2'], ['p2Car', 'wheelR', 'w2r'], ['p2Car', 'wheelF', 'w2f'], ['p2Car', 'head', 'h2']
+      ]);
+
       class VehiclePhysicsController {
         constructor(BodyApi, QueryApi, engine) {
           this.Body = BodyApi;
@@ -1576,6 +1628,7 @@
             car.groundAngle = Math.atan2(car.groundNormal.x, -car.groundNormal.y);
           }
 
+          car.isAirborne = !grounded;
           return {
             grounded,
             groundedCount,
@@ -1599,31 +1652,90 @@
           this.Body.setAngularVelocity(car.chassis, nextAv);
         }
 
-        updateVehicle(car, inputL, inputR, wheelContacts, driveBodies) {
+        clampAirborneAndMaxSpeed(car) {
+          if (!car) return;
+          if (car.isAirborne) {
+            const clampedAv = clamp(
+              car.chassis.angularVelocity,
+              -VEHICLE_PHYSICS.AIR_MAX_SPIN,
+              VEHICLE_PHYSICS.AIR_MAX_SPIN
+            );
+            if (clampedAv !== car.chassis.angularVelocity) {
+              this.Body.setAngularVelocity(car.chassis, clampedAv);
+            }
+          } else if (car.accelDir !== 0 && !car.dead) {
+            // Strict post-solver max speed threshold prevents downhill/wheel rocket overshoot
+            const isRev = (car.accelDir * car.facing) < 0;
+            const maxS = isRev ? VEHICLE_PHYSICS.MAX_REVERSE_SPEED : VEHICLE_PHYSICS.MAX_FORWARD_SPEED;
+            const tx = -car.groundNormal.y;
+            const ty = car.groundNormal.x;
+            const vT = car.chassis.velocity.x * tx + car.chassis.velocity.y * ty;
+            const vAlong = car.accelDir * vT;
+            if (vAlong > maxS) {
+              const trim = vAlong - maxS;
+              const dx = car.accelDir * tx * trim;
+              const dy = car.accelDir * ty * trim;
+              for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+                this.Body.setVelocity(b, { x: b.velocity.x - dx, y: b.velocity.y - dy });
+              }
+            }
+          }
+          // Strict hard speed ceiling prevents rocket launches across rigid-body collisions
+          for (const body of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+            const spd = Math.hypot(body.velocity.x, body.velocity.y);
+            if (spd > VEHICLE_PHYSICS.MAX_WORLD_SPEED) {
+              const scale = VEHICLE_PHYSICS.MAX_WORLD_SPEED / spd;
+              this.Body.setVelocity(body, { x: body.velocity.x * scale, y: body.velocity.y * scale });
+            }
+          }
+        }
+
+        updateVehicle(car, inputCmd, wheelContacts, driveBodies) {
           if (!car || car.dead) {
-            if (car) car.driving = false;
+            if (car) {
+              car.driving = false;
+              car.accelHoldMs = 0;
+              car.accelDir = 0;
+            }
             return { grounded: false, rearGrounded: false, frontGrounded: false };
           }
 
+          const inputL = !!(inputCmd && inputCmd.l);
+          const inputR = !!(inputCmd && inputCmd.r);
           const ground = this.detectGroundState(car, wheelContacts, driveBodies);
           const worldDir = (inputR ? 1 : 0) - (inputL ? 1 : 0);
           car.driving = worldDir !== 0;
 
           if (!ground.grounded) {
-            // Strictly airborne: ZERO wheel or horizontal drive forces applied
+            // Strictly airborne: ZERO horizontal drive forces; apply clamped mid-air pitch rotation torque
             car.wheelR.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
             car.wheelF.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
+            if (worldDir === 0) {
+              car.accelHoldMs = Math.max(0, car.accelHoldMs - FIXED_DT * 0.6);
+            }
 
-            if (worldDir !== 0) {
-              const targetSpin = worldDir * VEHICLE_PHYSICS.AIR_CONTROL_SPIN;
-              const nextAv = clamp(
-                lerp(car.chassis.angularVelocity, targetSpin, 0.16),
-                -VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY,
-                VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY
+            // Explicit forward (dip front wheel down) vs reverse (lift front wheel up) pitch torque
+            const forwardPressed = car.facing > 0 ? inputR : inputL;
+            const reversePressed = car.facing > 0 ? inputL : inputR;
+            const pitchCmd = (forwardPressed ? 1 : 0) - (reversePressed ? 1 : 0);
+            const torqueDir = pitchCmd * car.facing;
+
+            if (torqueDir !== 0) {
+              const clampedTorque = clamp(
+                torqueDir * VEHICLE_PHYSICS.AIR_PITCH_TORQUE,
+                -VEHICLE_PHYSICS.MAX_AIR_TORQUE,
+                VEHICLE_PHYSICS.MAX_AIR_TORQUE
               );
-              this.Body.setAngularVelocity(car.chassis, nextAv);
+              car.chassis.torque += clampedTorque;
             } else {
-              this.Body.setAngularVelocity(car.chassis, car.chassis.angularVelocity * VEHICLE_PHYSICS.AIR_ANGULAR_DAMPING);
+              this.Body.setAngularVelocity(
+                car.chassis,
+                clamp(
+                  car.chassis.angularVelocity * VEHICLE_PHYSICS.AIR_ANGULAR_DAMPING,
+                  -VEHICLE_PHYSICS.AIR_MAX_SPIN,
+                  VEHICLE_PHYSICS.AIR_MAX_SPIN
+                )
+              );
             }
             return ground;
           }
@@ -1634,11 +1746,22 @@
           const vT = car.chassis.velocity.x * tx + car.chassis.velocity.y * ty;
 
           if (worldDir === 0) {
-            // Grounded coasting: keep tires gripped and damp pitch bounce smoothly
+            // Smooth ease-out when throttle is released: decay hold duration + gentle rolling drag
+            car.accelDir = 0;
+            car.accelHoldMs = Math.max(0, car.accelHoldMs - FIXED_DT * VEHICLE_PHYSICS.ACCEL_RELEASE_DECAY);
             car.wheelR.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
             car.wheelF.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
-            this.Body.setAngularVelocity(car.wheelR, car.wheelR.angularVelocity * 0.96);
-            this.Body.setAngularVelocity(car.wheelF, car.wheelF.angularVelocity * 0.96);
+
+            this.Body.setAngularVelocity(car.wheelR, car.wheelR.angularVelocity * 0.955);
+            this.Body.setAngularVelocity(car.wheelF, car.wheelF.angularVelocity * 0.955);
+            if (Math.abs(vT) > 0.05) {
+              const dragMag = clamp(Math.abs(vT) * VEHICLE_PHYSICS.COAST_DRAG_COEFF, 0.0004, 0.014);
+              const dragSign = vT > 0 ? -1 : 1;
+              this.Body.applyForce(car.chassis, car.chassis.position, {
+                x: tx * dragSign * dragMag,
+                y: ty * dragSign * dragMag
+              });
+            }
             this.Body.setAngularVelocity(
               car.chassis,
               clamp(car.chassis.angularVelocity * VEHICLE_PHYSICS.GROUND_ANGULAR_DAMPING, -VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY, VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY)
@@ -1656,9 +1779,11 @@
           car.wheelR.friction = activeFriction;
           car.wheelF.friction = activeFriction;
 
-          // Smooth Brake-to-Reverse (and oppose-motion braking) until velocity crosses zero
+          // Smooth Brake-to-Reverse until tangential velocity crosses zero
           if (vAlong < -VEHICLE_PHYSICS.BRAKE_ZERO_THRESHOLD) {
-            const brakeScale = clamp((-vAlong) / 2.4, 0.35, 1.0);
+            car.accelHoldMs = 0;
+            car.accelDir = worldDir;
+            const brakeScale = clamp((-vAlong) / 2.2, 0.35, 1.0);
             const brakeMag = VEHICLE_PHYSICS.BRAKE_DECEL_FORCE * brakeScale;
 
             this.Body.setAngularVelocity(car.wheelR, car.wheelR.angularVelocity * 0.60);
@@ -1685,31 +1810,52 @@
             return ground;
           }
 
-          // Dedicated Forward & Reverse Hill-Climbing Torque Curve
+          // Progressive input-duration acceleration curve (eliminates rocket snap)
+          if (car.accelDir !== worldDir) {
+            car.accelDir = worldDir;
+            const rawHold = inputCmd && typeof inputCmd.holdMs === 'number' ? inputCmd.holdMs : 0;
+            car.accelHoldMs = clamp(rawHold, FIXED_DT, VEHICLE_PHYSICS.ACCEL_RAMP_MS);
+          } else {
+            car.accelHoldMs = clamp(car.accelHoldMs + FIXED_DT, 0, VEHICLE_PHYSICS.ACCEL_RAMP_MS);
+          }
+
+          const rampU = clamp(car.accelHoldMs / VEHICLE_PHYSICS.ACCEL_RAMP_MS, 0, 1);
+          const smoothStep = rampU * rampU * (3 - 2 * rampU);
+          const progressiveGain = VEHICLE_PHYSICS.ACCEL_MIN_GAIN + (1 - VEHICLE_PHYSICS.ACCEL_MIN_GAIN) * smoothStep;
+
+          // 25% reduced speed ceilings + curved torque falloff
           const maxSpeed = isReverse ? VEHICLE_PHYSICS.MAX_REVERSE_SPEED : VEHICLE_PHYSICS.MAX_FORWARD_SPEED;
           const baseTorque = isReverse ? VEHICLE_PHYSICS.REVERSE_TORQUE : VEHICLE_PHYSICS.FORWARD_TORQUE;
           const maxWheelSpin = isReverse ? VEHICLE_PHYSICS.WHEEL_REVERSE_MAX_SPIN : VEHICLE_PHYSICS.WHEEL_MAX_SPIN;
 
           const speedRatio = clamp(vAlong / maxSpeed, 0, 1.25);
-          const lowEndMultiplier = 1.0 - 0.64 * clamp(speedRatio, 0, 1);
+          const lowEndMultiplier = 1.0 - 0.56 * clamp(speedRatio, 0, 1);
           const slopeClimbBoost = 1.0 + uphillFactor * (VEHICLE_PHYSICS.SLOPE_GRIP_MULTIPLIER - 1.0);
-          const contactScale = ground.groundedCount === 2 ? 1.0 : 0.72;
+          const contactScale = ground.groundedCount === 2 ? 1.0 : 0.75;
 
           const totalMass = car.chassis.mass + car.wheelR.mass + car.wheelF.mass + car.head.mass;
-          const gravityComp = totalMass * this.engine.gravity.y * 0.001 * uphillFactor * VEHICLE_PHYSICS.GRAVITY_COMP_SCALE;
+          const gravityComp = totalMass * this.engine.gravity.y * 0.001 * uphillFactor * VEHICLE_PHYSICS.GRAVITY_COMP_SCALE * (0.45 + 0.55 * progressiveGain);
 
           let tangentForce = 0;
-          if (vAlong <= maxSpeed) {
-            tangentForce = (baseTorque * lowEndMultiplier * slopeClimbBoost + gravityComp) * contactScale;
+          if (vAlong < maxSpeed) {
+            tangentForce = (baseTorque * progressiveGain * lowEndMultiplier * slopeClimbBoost + gravityComp) * contactScale;
           } else {
-            // Smooth drivetrain governor caps flat & crest speed cleanly
-            const overspeed = vAlong - maxSpeed;
-            tangentForce = -clamp(overspeed * 0.007, 0, 0.015);
+            // Strict max-speed threshold clamp prevents overspeed on crests & slopes
+            const excess = vAlong - maxSpeed;
+            const trim = Math.min(excess, excess * 0.65 + 0.15);
+            if (trim > 0.001) {
+              this.Body.setVelocity(car.chassis, {
+                x: car.chassis.velocity.x - driveT.x * trim,
+                y: car.chassis.velocity.y - driveT.y * trim
+              });
+            }
           }
 
-          const targetWheelSpin = worldDir * clamp((maxSpeed / CAR_SPEC.wheelRadius) * 1.12, 0.1, maxWheelSpin);
-          this.Body.setAngularVelocity(car.wheelR, lerp(car.wheelR.angularVelocity, targetWheelSpin, 0.36));
-          this.Body.setAngularVelocity(car.wheelF, lerp(car.wheelF.angularVelocity, targetWheelSpin, 0.36));
+          // Wheel spin tracks progressive throttle ramp cleanly without instant tire burnout
+          const targetWheelSpeed = Math.min(maxSpeed, Math.max(vAlong + 0.9, maxSpeed * progressiveGain));
+          const targetWheelSpin = worldDir * clamp((targetWheelSpeed / CAR_SPEC.wheelRadius) * 1.06, 0.08, maxWheelSpin);
+          this.Body.setAngularVelocity(car.wheelR, lerp(car.wheelR.angularVelocity, targetWheelSpin, 0.30));
+          this.Body.setAngularVelocity(car.wheelF, lerp(car.wheelF.angularVelocity, targetWheelSpin, 0.30));
 
           // Distribute longitudinal climbing force smoothly across chassis + nose/tail wheels
           const noseWheel = car.facing > 0 ? car.wheelF : car.wheelR;
@@ -1728,28 +1874,39 @@
             tailFrac = 0;
           }
 
-          this.Body.applyForce(car.chassis, car.chassis.position, {
-            x: driveT.x * tangentForce * chassisFrac,
-            y: driveT.y * tangentForce * chassisFrac
-          });
-          if (tailFrac > 0) {
-            this.Body.applyForce(tailWheel, tailWheel.position, {
-              x: driveT.x * tangentForce * tailFrac,
-              y: driveT.y * tangentForce * tailFrac
+          if (tangentForce > 0) {
+            this.Body.applyForce(car.chassis, car.chassis.position, {
+              x: driveT.x * tangentForce * chassisFrac,
+              y: driveT.y * tangentForce * chassisFrac
             });
+            if (tailFrac > 0) {
+              this.Body.applyForce(tailWheel, tailWheel.position, {
+                x: driveT.x * tangentForce * tailFrac,
+                y: driveT.y * tangentForce * tailFrac
+              });
+            }
+            if (noseFrac > 0) {
+              this.Body.applyForce(noseWheel, noseWheel.position, {
+                x: driveT.x * tangentForce * noseFrac,
+                y: driveT.y * tangentForce * noseFrac
+              });
+            }
           }
-          if (noseFrac > 0) {
-            this.Body.applyForce(noseWheel, noseWheel.position, {
-              x: driveT.x * tangentForce * noseFrac,
-              y: driveT.y * tangentForce * noseFrac
+
+          // Gentle surface-normal tire adhesion on curved slopes & loop walls
+          if (uphillFactor > 0.10 || ground.normal.y > -0.92) {
+            const stick = VEHICLE_PHYSICS.CURVE_ADHESION_FORCE * clamp(Math.abs(vAlong) / maxSpeed, 0.25, 1.0);
+            this.Body.applyForce(car.chassis, car.chassis.position, {
+              x: -ground.normal.x * stick,
+              y: -ground.normal.y * stick
             });
           }
 
-          // Pitch Stability: subtle climbing attitude forward, firmly planted nose on reverse
+          // Pitch Stability: planted on slopes and reverse climbs
           if (isReverse) {
             this._applyPitchStability(car, ground.groundAngle, -VEHICLE_PHYSICS.REVERSE_PITCH_BIAS, true);
           } else {
-            const forwardTargetLift = clamp(0.03 + uphillFactor * 0.08, 0, VEHICLE_PHYSICS.FORWARD_PITCH_MAX_OFFSET);
+            const forwardTargetLift = clamp(0.02 + uphillFactor * 0.07, 0, VEHICLE_PHYSICS.FORWARD_PITCH_MAX_OFFSET);
             this._applyPitchStability(car, ground.groundAngle, forwardTargetLift, false);
           }
 
@@ -2152,10 +2309,77 @@
             headSevered: false,
             dead: false,
             airTicks: 0,
+            isAirborne: false,
+            accelHoldMs: 0,
+            accelDir: 0,
             groundAngle: 0,
             groundNormal: { x: 0, y: -1 },
             driving: false
           };
+        }
+
+        captureCarPose(car) {
+          if (!car) return null;
+          const pack = (b) => ({ x: b.position.x, y: b.position.y, a: b.angle });
+          return {
+            c: pack(car.chassis),
+            wr: pack(car.wheelR),
+            wf: pack(car.wheelF),
+            h: pack(car.head)
+          };
+        }
+
+        blendCarPose(car, prevPose, alpha) {
+          if (!car || !prevPose) return;
+          const blend = (b, prev) => {
+            this.Body.setPosition(b, {
+              x: lerp(prev.x, b.position.x, alpha),
+              y: lerp(prev.y, b.position.y, alpha)
+            });
+            this.Body.setAngle(b, lerpAngle(prev.a, b.angle, alpha));
+          };
+          blend(car.chassis, prevPose.c);
+          blend(car.wheelR, prevPose.wr);
+          blend(car.wheelF, prevPose.wf);
+          blend(car.head, prevPose.h);
+        }
+
+        applyNetState(snap) {
+          if (!snap) return;
+          const applyBody = (body, st) => {
+            if (!body || !st) return;
+            this.Body.setPosition(body, { x: st.x, y: st.y });
+            this.Body.setAngle(body, st.a);
+            if (typeof st.vx === 'number' && typeof st.vy === 'number') {
+              this.Body.setVelocity(body, { x: st.vx, y: st.vy });
+            }
+            if (typeof st.av === 'number') {
+              this.Body.setAngularVelocity(body, st.av);
+            }
+          };
+
+          for (const [carKey, bodyKey, shortKey] of BODY_KEYS) {
+            const car = this[carKey];
+            if (car && snap[shortKey]) applyBody(car[bodyKey], snap[shortKey]);
+          }
+          if (this.p1Car) {
+            this.p1Car.driving = !!snap.dr1;
+            if (typeof snap.hm1 === 'number') this.p1Car.accelHoldMs = snap.hm1;
+            if (typeof snap.ad1 === 'number') this.p1Car.accelDir = snap.ad1;
+          }
+          if (this.p2Car) {
+            this.p2Car.driving = !!snap.dr2;
+            if (typeof snap.hm2 === 'number') this.p2Car.accelHoldMs = snap.hm2;
+            if (typeof snap.ad2 === 'number') this.p2Car.accelDir = snap.ad2;
+          }
+          if (snap.sw && this.seesaws.length === snap.sw.length) {
+            for (let i = 0; i < this.seesaws.length; i++) {
+              this.Body.setAngle(this.seesaws[i].body, snap.sw[i].a);
+              if (typeof snap.sw[i].av === 'number') {
+                this.Body.setAngularVelocity(this.seesaws[i].body, snap.sw[i].av);
+              }
+            }
+          }
         }
 
         popHelmet(playerIndex, impactPt) {
@@ -2181,11 +2405,12 @@
         }
 
         step(p1Input, p2Input, canControl) {
-          const activeP1 = canControl ? p1Input : { l: false, r: false };
-          const activeP2 = canControl ? p2Input : { l: false, r: false };
+          const empty = { l: false, r: false, holdMs: 0 };
+          const activeP1 = canControl ? (p1Input || empty) : empty;
+          const activeP2 = canControl ? (p2Input || empty) : empty;
 
-          const g1 = this.vehicleController.updateVehicle(this.p1Car, activeP1.l, activeP1.r, this.wheelContacts.p1, this.driveSurfaces);
-          const g2 = this.vehicleController.updateVehicle(this.p2Car, activeP2.l, activeP2.r, this.wheelContacts.p2, this.driveSurfaces);
+          const g1 = this.vehicleController.updateVehicle(this.p1Car, activeP1, this.wheelContacts.p1, this.driveSurfaces);
+          const g2 = this.vehicleController.updateVehicle(this.p2Car, activeP2, this.wheelContacts.p2, this.driveSurfaces);
 
           this.grounded.p1R = g1.rearGrounded;
           this.grounded.p1F = g1.frontGrounded;
@@ -2193,6 +2418,9 @@
           this.grounded.p2F = g2.frontGrounded;
 
           this.Engine.update(this.engine, FIXED_DT);
+
+          this.vehicleController.clampAirborneAndMaxSpeed(this.p1Car);
+          this.vehicleController.clampAirborneAndMaxSpeed(this.p2Car);
 
           for (const sw of this.seesaws) {
             this.Body.setAngularVelocity(sw.body, sw.body.angularVelocity * 0.985);
@@ -2789,13 +3017,15 @@
       }
 
       // =========================================================================
-      // 7. MULTI-TOUCH & KEYBOARD INPUT MANAGER
+      // 7. UNIFIED CROSS-PLATFORM INPUT CONTROLLER (KEYBOARD + ANDROID POINTERS)
       // =========================================================================
       class InputManager {
         constructor(sound) {
           this.sound = sound;
           this.state = { p1_l: false, p1_r: false, p2_l: false, p2_r: false };
-          this.touches = new Map();
+          this.pressTimes = { p1_l: 0, p1_r: 0, p2_l: 0, p2_r: 0 };
+          this.heldCodes = new Map(); // code -> { key, startTime }
+          this.activePointers = new Map(); // pointerId -> { key, startTime }
           this.singleLayout = localStorage.getItem('crashahead_1p_layout') || 'split';
           this.mode = 'menu';
 
@@ -2809,96 +3039,171 @@
             p2R: document.getElementById('pad-p2-r')
           };
 
-          this._bindKeyboard();
-          this._bindMultiTouch();
-          this.setMode('menu');
-        }
-
-        _bindKeyboard() {
-          window.addEventListener('keydown', (e) => {
-            if (['ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
-              if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
-              e.preventDefault();
-            }
-            this.sound.unlock();
-            if (e.code === 'KeyA') this.state.p1_l = true;
-            if (e.code === 'KeyD') this.state.p1_r = true;
-            if (e.code === 'ArrowLeft') this.state.p2_l = true;
-            if (e.code === 'ArrowRight') this.state.p2_r = true;
-            this._syncVisuals();
-          });
-
-          window.addEventListener('keyup', (e) => {
-            if (e.code === 'KeyA') this.state.p1_l = false;
-            if (e.code === 'KeyD') this.state.p1_r = false;
-            if (e.code === 'ArrowLeft') this.state.p2_l = false;
-            if (e.code === 'ArrowRight') this.state.p2_r = false;
-            this._syncVisuals();
-          });
-        }
-
-        _bindMultiTouch() {
-          const pads = [
+          this.pads = [
             { el: this.dom.p1L, key: 'p1_l' },
             { el: this.dom.p1R, key: 'p1_r' },
             { el: this.dom.p2L, key: 'p2_l' },
             { el: this.dom.p2R, key: 'p2_r' }
           ];
 
-          const zoneForPoint = (x, y) => {
-            for (const p of pads) {
-              if (p.el.offsetParent === null) continue;
-              const r = p.el.getBoundingClientRect();
-              if (x >= r.left - 8 && x <= r.right + 8 && y >= r.top - 8 && y <= r.bottom + 8) return p.key;
-            }
+          this._bindKeyboard();
+          this._bindUnifiedPointers();
+          this.setMode('menu');
+        }
+
+        _mapKeyCodeToAction(code) {
+          if (this.mode === 'local') {
+            if (code === 'KeyA' || code === 'KeyS') return 'p1_l';
+            if (code === 'KeyD' || code === 'KeyW') return 'p1_r';
+            if (code === 'ArrowLeft' || code === 'ArrowUp') return 'p2_l';
+            if (code === 'ArrowRight' || code === 'ArrowDown') return 'p2_r';
             return null;
+          }
+          if (this.mode === 'online_client') {
+            if (code === 'KeyA' || code === 'ArrowLeft' || code === 'KeyW' || code === 'ArrowUp') return 'p2_l';
+            if (code === 'KeyD' || code === 'ArrowRight' || code === 'KeyS' || code === 'ArrowDown') return 'p2_r';
+            return null;
+          }
+          // Single-player / Online Host (Red facing right)
+          if (code === 'KeyA' || code === 'ArrowLeft' || code === 'KeyS' || code === 'ArrowDown') return 'p1_l';
+          if (code === 'KeyD' || code === 'ArrowRight' || code === 'KeyW' || code === 'ArrowUp') return 'p1_r';
+          return null;
+        }
+
+        _recomputeState() {
+          const next = { p1_l: false, p1_r: false, p2_l: false, p2_r: false };
+          const earliest = { p1_l: 0, p1_r: 0, p2_l: 0, p2_r: 0 };
+
+          const applyEntry = (key, startTime) => {
+            if (!key) return;
+            next[key] = true;
+            if (earliest[key] === 0 || startTime < earliest[key]) earliest[key] = startTime;
           };
 
-          const recomputeFromTouches = () => {
-            const held = { p1_l: false, p1_r: false, p2_l: false, p2_r: false };
-            for (const k of this.touches.values()) if (k) held[k] = true;
-            Object.assign(this.state, held);
-            this._syncVisuals();
-          };
+          for (const entry of this.heldCodes.values()) applyEntry(entry.key, entry.startTime);
+          for (const entry of this.activePointers.values()) applyEntry(entry.key, entry.startTime);
 
-          const onStartOrMove = (e) => {
-            if (this.mode === 'menu') return;
+          Object.assign(this.state, next);
+          Object.assign(this.pressTimes, earliest);
+          this._syncVisuals();
+        }
+
+        _clearAllInputs() {
+          this.heldCodes.clear();
+          this.activePointers.clear();
+          this._recomputeState();
+        }
+
+        _bindKeyboard() {
+          window.addEventListener('keydown', (e) => {
+            if (
+              document.activeElement &&
+              document.activeElement.tagName === 'INPUT' &&
+              !document.activeElement.closest('.hidden')
+            ) return;
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
+              e.preventDefault();
+            }
+            const actionKey = this._mapKeyCodeToAction(e.code);
+            if (!actionKey) return;
             this.sound.unlock();
-            for (let i = 0; i < e.changedTouches.length; i++) {
-              const t = e.changedTouches[i];
-              this.touches.set(t.identifier, zoneForPoint(t.clientX, t.clientY));
+            if (!this.heldCodes.has(e.code)) {
+              this.heldCodes.set(e.code, { key: actionKey, startTime: performance.now() });
+              this._recomputeState();
             }
-            recomputeFromTouches();
-            if (e.cancelable) e.preventDefault();
-          };
+          });
 
-          const onEnd = (e) => {
-            for (let i = 0; i < e.changedTouches.length; i++) {
-              this.touches.delete(e.changedTouches[i].identifier);
+          window.addEventListener('keyup', (e) => {
+            if (this.heldCodes.delete(e.code)) {
+              this._recomputeState();
             }
-            recomputeFromTouches();
-            if (e.cancelable && this.mode !== 'menu') e.preventDefault();
-          };
+          });
 
-          this.dom.root.addEventListener('touchstart', onStartOrMove, { passive: false });
-          this.dom.root.addEventListener('touchmove', onStartOrMove, { passive: false });
-          window.addEventListener('touchend', onEnd, { passive: false });
-          window.addEventListener('touchcancel', onEnd, { passive: false });
+          window.addEventListener('blur', () => this._clearAllInputs());
+          document.addEventListener('visibilitychange', () => {
+            if (document.hidden) this._clearAllInputs();
+          });
+        }
 
-          for (const p of pads) {
-            p.el.addEventListener('mousedown', (e) => {
+        _isPadVisible(el) {
+          if (!el || el.closest('.hidden')) return false;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }
+
+        _padKeyAtPoint(x, y) {
+          for (const p of this.pads) {
+            if (!this._isPadVisible(p.el)) continue;
+            const r = p.el.getBoundingClientRect();
+            if (x >= r.left - 10 && x <= r.right + 10 && y >= r.top - 10 && y <= r.bottom + 10) {
+              return p.key;
+            }
+          }
+          return null;
+        }
+
+        _bindUnifiedPointers() {
+          // Suppress Android Chrome long-press context menu on hold
+          this.dom.root.addEventListener('contextmenu', (e) => e.preventDefault());
+
+          for (const p of this.pads) {
+            p.el.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            p.el.addEventListener('pointerdown', (e) => {
+              if (this.mode === 'menu') return;
+              if (e.button !== undefined && e.button !== 0 && e.pointerType === 'mouse') return;
               e.preventDefault();
               this.sound.unlock();
-              this.state[p.key] = true;
-              this._syncVisuals();
+              try {
+                if (this.mode !== 'local' && p.el.setPointerCapture) {
+                  p.el.setPointerCapture(e.pointerId);
+                }
+              } catch (_) {}
+              this.activePointers.set(e.pointerId, {
+                key: p.key,
+                startTime: performance.now()
+              });
+              this._recomputeState();
             });
-            window.addEventListener('mouseup', () => {
-              if (this.state[p.key]) {
-                this.state[p.key] = false;
-                this._syncVisuals();
+
+            p.el.addEventListener('pointermove', (e) => {
+              const existing = this.activePointers.get(e.pointerId);
+              if (!existing) return;
+              if (this.mode === 'local') {
+                // Allow thumb slide between paired buttons in 2P same-device mode
+                const hoveredKey = this._padKeyAtPoint(e.clientX, e.clientY);
+                if (hoveredKey && hoveredKey !== existing.key) {
+                  this.activePointers.set(e.pointerId, {
+                    key: hoveredKey,
+                    startTime: performance.now()
+                  });
+                  this._recomputeState();
+                }
               }
             });
+
+            const releasePointer = (e) => {
+              if (this.activePointers.delete(e.pointerId)) {
+                this._recomputeState();
+              }
+            };
+            p.el.addEventListener('pointerup', releasePointer);
+            p.el.addEventListener('pointercancel', releasePointer);
+            p.el.addEventListener('lostpointercapture', releasePointer);
           }
+
+          window.addEventListener('pointerup', (e) => {
+            if (this.activePointers.delete(e.pointerId)) {
+              this._recomputeState();
+            }
+          });
+          window.addEventListener('pointercancel', (e) => {
+            if (this.activePointers.delete(e.pointerId)) {
+              this._recomputeState();
+            }
+          });
         }
 
         _syncVisuals() {
@@ -2917,15 +3222,13 @@
 
         setMode(mode) {
           this.mode = mode;
-          this.touches.clear();
-          this.state = { p1_l: false, p1_r: false, p2_l: false, p2_r: false };
-          this._syncVisuals();
+          this._clearAllInputs();
           this._applyLayout();
         }
 
         _applyLayout() {
           const { root, groupP1, groupP2, p1L, p1R, p2L, p2R } = this.dom;
-          root.classList.remove('mode-1p-split');
+          root.classList.remove('mode-1p-split', 'mode-2p');
           p1L.classList.remove('pad-left-btn');
           p1R.classList.remove('pad-right-btn');
           p2L.classList.remove('pad-left-btn');
@@ -2938,6 +3241,7 @@
           root.classList.remove('hidden');
 
           if (this.mode === 'local') {
+            root.classList.add('mode-2p');
             groupP1.classList.remove('hidden');
             groupP2.classList.remove('hidden');
           } else if (this.mode === 'online_client') {
@@ -2959,29 +3263,47 @@
           }
         }
 
+        _getHoldMsFor(key, now) {
+          if (!this.state[key] || !this.pressTimes[key]) return 0;
+          return Math.max(0, Math.round(now - this.pressTimes[key]));
+        }
+
         getP1() {
+          const now = performance.now();
           if (this.mode === 'ai' || this.mode === 'online_host') {
-            return { l: this.state.p1_l || this.state.p2_l, r: this.state.p1_r || this.state.p2_r };
+            const l = this.state.p1_l || this.state.p2_l;
+            const r = this.state.p1_r || this.state.p2_r;
+            const lHoldMs = Math.max(this._getHoldMsFor('p1_l', now), this._getHoldMsFor('p2_l', now));
+            const rHoldMs = Math.max(this._getHoldMsFor('p1_r', now), this._getHoldMsFor('p2_r', now));
+            return { l, r, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
           }
-          return { l: this.state.p1_l, r: this.state.p1_r };
+          const l = this.state.p1_l;
+          const r = this.state.p1_r;
+          const lHoldMs = this._getHoldMsFor('p1_l', now);
+          const rHoldMs = this._getHoldMsFor('p1_r', now);
+          return { l, r, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
         }
 
         getP2() {
+          const now = performance.now();
           if (this.mode === 'online_client') {
-            return { l: this.state.p1_l || this.state.p2_l, r: this.state.p1_r || this.state.p2_r };
+            const l = this.state.p1_l || this.state.p2_l;
+            const r = this.state.p1_r || this.state.p2_r;
+            const lHoldMs = Math.max(this._getHoldMsFor('p1_l', now), this._getHoldMsFor('p2_l', now));
+            const rHoldMs = Math.max(this._getHoldMsFor('p1_r', now), this._getHoldMsFor('p2_r', now));
+            return { l, r, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
           }
-          return { l: this.state.p2_l, r: this.state.p2_r };
+          const l = this.state.p2_l;
+          const r = this.state.p2_r;
+          const lHoldMs = this._getHoldMsFor('p2_l', now);
+          const rHoldMs = this._getHoldMsFor('p2_r', now);
+          return { l, r, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
         }
       }
 
       // =========================================================================
-      // 8. PEERJS P2P NETWORK MANAGER (60Hz AUTHORITATIVE SYNC + INTERPOLATION)
+      // 8. PEERJS P2P NETWORK MANAGER (PREDICTION + RIGID-BODY RECONCILIATION)
       // =========================================================================
-      const BODY_KEYS = [
-        ['p1Car', 'chassis', 'c1'], ['p1Car', 'wheelR', 'w1r'], ['p1Car', 'wheelF', 'w1f'], ['p1Car', 'head', 'h1'],
-        ['p2Car', 'chassis', 'c2'], ['p2Car', 'wheelR', 'w2r'], ['p2Car', 'wheelF', 'w2f'], ['p2Car', 'head', 'h2']
-      ];
-
       function generateRoomCode() {
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
         const bytes = new Uint8Array(4);
@@ -3000,26 +3322,56 @@
           this.roomCode = '';
           this.pingMs = 0;
           this.pingTimer = null;
-          this.remoteInput = { l: false, r: false };
+          this.reliableTimer = null;
+          this.dialTimer = null;
+
+          this.remoteInput = { seq: 0, l: false, r: false, holdMs: 0 };
+          this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
+          this.inputSeq = 0;
+          this.inputSendTick = 0;
           this.lastInputSent = { l: false, r: false };
-          this.snapshotBuffer = [];
-          this.interpDelayMs = 50;
+          this.pendingInputs = [];
+          this.pendingSnapshot = null;
+          this.lastSeq = 0;
+
+          this.nextEvtId = 0;
+          this.pendingReliable = new Map();
+          this.seenEids = new Set();
+        }
+
+        resetPredictionState() {
+          this.remoteInput = { seq: 0, l: false, r: false, holdMs: 0 };
+          this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
+          this.inputSeq = 0;
+          this.inputSendTick = 0;
+          this.lastInputSent = { l: false, r: false };
+          this.pendingInputs = [];
+          this.pendingSnapshot = null;
           this.lastSeq = 0;
         }
 
         destroy() {
           if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
-          if (this.conn) { try { this.conn.close(); } catch (_) {} this.conn = null; }
+          if (this.reliableTimer) { clearInterval(this.reliableTimer); this.reliableTimer = null; }
+          if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
+          const oldConn = this.conn;
+          this.conn = null;
+          if (oldConn) { try { oldConn.close(); } catch (_) {} }
           if (this.peer) { try { this.peer.destroy(); } catch (_) {} this.peer = null; }
           this.role = null;
-          this.snapshotBuffer = [];
-          this.remoteInput = { l: false, r: false };
+          this.pendingReliable.clear();
+          this.seenEids.clear();
+          this.resetPredictionState();
         }
 
         _initPeer(peerId, onReady) {
+          const prevRole = this.role;
+          const prevCode = this.roomCode;
           this.destroy();
+          this.role = prevRole;
+          this.roomCode = prevCode;
           if (typeof Peer === 'undefined') {
-            this.cb.onStatus('PeerJS CDN failed to load.', 'error');
+            this.cb.onStatus('PeerJS CDN failed to load.', 'error', true);
             return;
           }
           const opts = {
@@ -3027,21 +3379,34 @@
             config: {
               iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:openrelay.metered.ca:80' },
+                { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+                { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+                { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
               ]
             }
           };
           this.peer = peerId ? new Peer(peerId, opts) : new Peer(opts);
           this.peer.on('open', (id) => onReady(id));
+          this.peer.on('disconnected', () => {
+            if (this.peer && !this.peer.destroyed && !this.conn) {
+              try { this.peer.reconnect(); } catch (_) {}
+            }
+          });
           this.peer.on('error', (err) => {
             if (err && err.type === 'unavailable-id' && this.role === 'host') {
               this.hostRoom();
               return;
             }
+            if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
             const msg = (err && err.type === 'peer-unavailable')
               ? 'Room not found or Host disconnected.'
               : `Connection error: ${(err && (err.type || err.message)) || 'unknown'}`;
-            this.cb.onStatus(msg, 'error');
+            this.cb.onStatus(msg, 'error', true);
           });
         }
 
@@ -3049,62 +3414,124 @@
           this.role = 'host';
           this.roomCode = generateRoomCode();
           this.cb.onRoomCode(this.roomCode);
-          this.cb.onStatus('Opening room...', 'neutral');
+          this.cb.onStatus('Opening room...', 'neutral', false);
           this._initPeer(PEER_PREFIX + this.roomCode, () => {
             this.role = 'host';
-            this.cb.onStatus(`Hosting ${this.roomCode} — waiting for player`, 'neutral');
+            this.cb.onStatus(`Hosting ${this.roomCode} — waiting for player`, 'neutral', false);
             this.peer.on('connection', (conn) => {
-              if (this.conn) { conn.close(); return; }
+              if (this.conn && this.conn.open) { conn.close(); return; }
               this._attachConnection(conn);
             });
           });
         }
 
         joinRoom(codeInput) {
-          const clean = codeInput.trim().toUpperCase();
+          let raw = (codeInput || '').trim();
+          if (raw.includes('room=')) {
+            try { raw = new URL(raw).searchParams.get('room') || raw; } catch (_) {}
+          }
+          const clean = raw.toUpperCase();
           if (!clean) {
-            this.cb.onStatus('Enter a room code first.', 'error');
+            this.cb.onStatus('Enter a room code first.', 'error', false);
             return;
           }
           const normalized = clean.startsWith('CRSH-') ? clean : `CRSH-${clean}`;
           this.roomCode = normalized;
           this.role = 'client';
-          this.cb.onStatus(`Connecting to ${normalized}...`, 'neutral');
+          this.cb.onStatus(`Connecting to ${normalized}...`, 'neutral', false);
           this._initPeer(null, () => {
             this.role = 'client';
             const conn = this.peer.connect(PEER_PREFIX + normalized, { serialization: 'json', reliable: false });
             this._attachConnection(conn);
+            if (this.dialTimer) clearTimeout(this.dialTimer);
+            this.dialTimer = setTimeout(() => {
+              if (!this.conn || !this.conn.open) {
+                this.cb.onStatus('Connection timed out. Tap Retry or check code.', 'error', true);
+              }
+            }, 12000);
           });
         }
 
         _attachConnection(conn) {
           this.conn = conn;
           conn.on('open', () => {
-            this.cb.onStatus('Connected!', 'connected');
+            if (this.conn !== conn) return;
+            if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
+            this.cb.onStatus('Connected!', 'connected', false);
             this.cb.onConnected(this.role);
-            this._startHeartbeat();
+            this._startTimers();
           });
-          conn.on('data', (msg) => this._handleMessage(msg));
+          conn.on('iceStateChanged', (state) => {
+            if (this.conn !== conn) return;
+            if (state === 'failed' && !conn.open) {
+              if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
+              this.cb.onStatus('WebRTC connection failed. Tap Retry.', 'error', true);
+            }
+          });
+          conn.on('data', (msg) => {
+            if (this.conn !== conn) return;
+            this._handleMessage(msg);
+          });
           conn.on('close', () => {
+            if (this.conn !== conn) return;
             this.destroy();
             this.cb.onDisconnected('Opponent disconnected.');
           });
           conn.on('error', () => {
+            if (this.conn !== conn) return;
             this.destroy();
             this.cb.onDisconnected('Peer connection lost.');
           });
         }
 
-        _startHeartbeat() {
+        _startTimers() {
           if (this.pingTimer) clearInterval(this.pingTimer);
           this.pingTimer = setInterval(() => {
             if (this.conn && this.conn.open) this.conn.send({ t: 'ping', ts: performance.now() });
           }, 1500);
+
+          if (this.reliableTimer) clearInterval(this.reliableTimer);
+          this.reliableTimer = setInterval(() => {
+            if (!this.conn || !this.conn.open || this.pendingReliable.size === 0) return;
+            const now = performance.now();
+            for (const [eid, entry] of this.pendingReliable.entries()) {
+              if (entry.attempts >= 30) {
+                this.pendingReliable.delete(eid);
+                continue;
+              }
+              if (now - entry.lastSent >= 110) {
+                entry.lastSent = now;
+                entry.attempts += 1;
+                this.conn.send(entry.msg);
+              }
+            }
+          }, 120);
+        }
+
+        sendReliable(type, payload = {}) {
+          if (!this.conn || !this.conn.open) return;
+          const eid = ++this.nextEvtId;
+          const msg = { t: type, _eid: eid, ...payload };
+          this.pendingReliable.set(eid, { msg, lastSent: performance.now(), attempts: 1 });
+          this.conn.send(msg);
         }
 
         _handleMessage(msg) {
           if (!msg || typeof msg !== 'object') return;
+          if (typeof msg._eid === 'number') {
+            if (this.conn && this.conn.open) this.conn.send({ t: 'ack', eid: msg._eid });
+            if (this.seenEids.has(msg._eid)) return;
+            this.seenEids.add(msg._eid);
+            if (this.seenEids.size > 64) {
+              const first = this.seenEids.values().next().value;
+              this.seenEids.delete(first);
+            }
+          }
+
           switch (msg.t) {
+            case 'ack':
+              this.pendingReliable.delete(msg.eid);
+              break;
             case 'ping':
               if (this.conn && this.conn.open) this.conn.send({ t: 'pong', ts: msg.ts });
               break;
@@ -3112,23 +3539,24 @@
               this.pingMs = Math.max(1, Math.round(performance.now() - msg.ts));
               this.cb.onPing(this.pingMs);
               break;
-            case 'input':
-              this.remoteInput = { l: !!msg.l, r: !!msg.r };
+            case 'input': {
+              const seq = msg.seq || 0;
+              if (seq >= this.remoteInput.seq || seq === 0) {
+                this.remoteInput = { seq, l: !!msg.l, r: !!msg.r, holdMs: msg.holdMs || 0 };
+              }
               break;
+            }
             case 'match_start':
-              this.snapshotBuffer = [];
-              this.lastSeq = 0;
+              this.resetPredictionState();
               this.cb.onMatchStart(msg.ai || 0);
               break;
             case 'snap':
               if (msg.sq <= this.lastSeq) return;
               this.lastSeq = msg.sq;
-              msg.rx = performance.now();
-              this.snapshotBuffer.push(msg);
-              if (this.snapshotBuffer.length > 24) this.snapshotBuffer.shift();
-              this.cb.onSnapshotState(msg);
+              this.pendingSnapshot = msg;
               break;
             case 'evt':
+              if (msg.kind === 'rematch_start') this.resetPredictionState();
               this.cb.onGameEvent(msg);
               break;
             case 'rematch':
@@ -3137,86 +3565,128 @@
           }
         }
 
-        sendInputIfChanged(inp) {
-          if (!this.conn || !this.conn.open) return;
-          const l = !!inp.l;
-          const r = !!inp.r;
-          if (l !== this.lastInputSent.l || r !== this.lastInputSent.r) {
-            this.lastInputSent = { l, r };
-            this.conn.send({ t: 'input', l, r });
+        queueClientInput(inp) {
+          const seq = ++this.inputSeq;
+          const l = !!(inp && inp.l);
+          const r = !!(inp && inp.r);
+          const holdMs = (inp && inp.holdMs) || 0;
+          const cmd = { seq, l, r, holdMs };
+          this.pendingInputs.push(cmd);
+          if (this.pendingInputs.length > 90) this.pendingInputs.shift();
+
+          if (this.conn && this.conn.open) {
+            this.inputSendTick++;
+            const changed = l !== this.lastInputSent.l || r !== this.lastInputSent.r;
+            if (changed || l || r || this.inputSendTick % 4 === 0) {
+              this.lastInputSent = { l, r };
+              this.conn.send({ t: 'input', seq, l, r, holdMs });
+            }
           }
+          return cmd;
         }
 
         sendMatchStart(arenaIndex) {
-          if (this.conn && this.conn.open) this.conn.send({ t: 'match_start', ai: arenaIndex });
+          this.resetPredictionState();
+          this.sendReliable('match_start', { ai: arenaIndex });
         }
 
         sendEvent(kind, data = {}) {
-          if (this.conn && this.conn.open) this.conn.send({ t: 'evt', kind, ...data });
+          this.sendReliable('evt', { kind, ...data });
         }
 
         sendRematch() {
-          if (this.conn && this.conn.open) this.conn.send({ t: 'rematch' });
+          this.sendReliable('rematch', {});
         }
 
-        sendHostSnapshot(sim, meta) {
-          if (!this.conn || !this.conn.open) return;
+        buildHostSnapshot(sim, meta) {
           this.lastSeq++;
           const pack = (b) => ({
             x: Math.round(b.position.x * 10) / 10,
             y: Math.round(b.position.y * 10) / 10,
-            a: Math.round(b.angle * 1000) / 1000
+            vx: Math.round(b.velocity.x * 100) / 100,
+            vy: Math.round(b.velocity.y * 100) / 100,
+            a: Math.round(b.angle * 1000) / 1000,
+            av: Math.round(b.angularVelocity * 1000) / 1000
           });
           const payload = {
             t: 'snap',
             sq: this.lastSeq,
+            ak: this.remoteInput.seq,
             ai: sim.arenaIndex,
-            sc: meta.scores,
+            sc: [meta.scores[0], meta.scores[1]],
             rn: meta.roundNumber,
             ph: meta.phase,
             bt: meta.bannerText,
+            i1: meta.p1Input ? { l: !!meta.p1Input.l, r: !!meta.p1Input.r, holdMs: meta.p1Input.holdMs || 0 } : { l: false, r: false, holdMs: 0 },
             d1: sim.p1Car.dead ? 1 : 0,
             d2: sim.p2Car.dead ? 1 : 0,
             dr1: sim.p1Car.driving ? 1 : 0,
             dr2: sim.p2Car.driving ? 1 : 0,
-            sw: sim.seesaws.map((s) => ({ a: Math.round(s.body.angle * 1000) / 1000 }))
+            hm1: Math.round(sim.p1Car.accelHoldMs || 0),
+            hm2: Math.round(sim.p2Car.accelHoldMs || 0),
+            ad1: sim.p1Car.accelDir || 0,
+            ad2: sim.p2Car.accelDir || 0,
+            sw: sim.seesaws.map((s) => ({
+              a: Math.round(s.body.angle * 1000) / 1000,
+              av: Math.round(s.body.angularVelocity * 1000) / 1000
+            }))
           };
           for (const [carKey, bodyKey, shortKey] of BODY_KEYS) {
             payload[shortKey] = pack(sim[carKey][bodyKey]);
           }
-          this.conn.send(payload);
+          return payload;
         }
 
-        applyInterpolatedFrame(sim) {
-          if (this.snapshotBuffer.length === 0) return;
-          const renderTime = performance.now() - this.interpDelayMs;
-          while (this.snapshotBuffer.length >= 2 && this.snapshotBuffer[1].rx <= renderTime) {
-            this.snapshotBuffer.shift();
+        sendHostSnapshot(sim, meta) {
+          if (!this.conn || !this.conn.open) return;
+          this.conn.send(this.buildHostSnapshot(sim, meta));
+        }
+
+        reconcileClientFrame(sim, onSnapshotMeta) {
+          const snap = this.pendingSnapshot;
+          if (!snap) return false;
+          this.pendingSnapshot = null;
+
+          if (onSnapshotMeta) onSnapshotMeta(snap);
+
+          const ackSeq = snap.ak || 0;
+          if (this.pendingInputs.length > 0) {
+            this.pendingInputs = this.pendingInputs.filter((cmd) => cmd.seq > ackSeq);
           }
-          const s0 = this.snapshotBuffer[0];
-          const s1 = this.snapshotBuffer[1];
-          const alpha = s1 && s1.rx > s0.rx ? clamp((renderTime - s0.rx) / (s1.rx - s0.rx), 0, 1) : 0;
+          this.lastHostP1Input = snap.i1 || { l: false, r: false, holdMs: 0 };
 
-          if (sim.p1Car) sim.p1Car.driving = !!(s1 ? s1.dr1 : s0.dr1);
-          if (sim.p2Car) sim.p2Car.driving = !!(s1 ? s1.dr2 : s0.dr2);
+          const beforeP1 = sim.captureCarPose(sim.p1Car);
+          const beforeP2 = sim.captureCarPose(sim.p2Car);
 
-          for (const [carKey, bodyKey, shortKey] of BODY_KEYS) {
-            const body = sim[carKey] && sim[carKey][bodyKey];
-            if (!body) continue;
-            const a = s0[shortKey];
-            const b = s1 ? s1[shortKey] : a;
-            if (!a || !b) continue;
-            Matter.Body.setPosition(body, { x: lerp(a.x, b.x, alpha), y: lerp(a.y, b.y, alpha) });
-            Matter.Body.setAngle(body, lerpAngle(a.a, b.a, alpha));
-          }
+          // Step 1: Snap rigid bodies to authoritative host snapshot
+          sim.applyNetState(snap);
 
-          if (s0.sw && sim.seesaws.length === s0.sw.length) {
-            for (let i = 0; i < sim.seesaws.length; i++) {
-              const a0 = s0.sw[i].a;
-              const a1 = s1 && s1.sw && s1.sw[i] ? s1.sw[i].a : a0;
-              Matter.Body.setAngle(sim.seesaws[i].body, lerpAngle(a0, a1, alpha));
+          // Step 2: Replay unacknowledged local client inputs for Server Reconciliation
+          if (snap.ph === 'FIGHT' && this.pendingInputs.length > 0) {
+            const maxReplay = Math.min(this.pendingInputs.length, 24);
+            const startIdx = this.pendingInputs.length - maxReplay;
+            for (let i = startIdx; i < this.pendingInputs.length; i++) {
+              sim.step(this.lastHostP1Input, this.pendingInputs[i], true);
             }
           }
+
+          // Step 3: Smooth micro-divergence on predicted P2 & interpolated remote P1
+          if (beforeP2 && sim.p2Car) {
+            const dx = sim.p2Car.chassis.position.x - beforeP2.c.x;
+            const dy = sim.p2Car.chassis.position.y - beforeP2.c.y;
+            const errDist = Math.hypot(dx, dy);
+            if (errDist > 0.05 && errDist < 24) {
+              sim.blendCarPose(sim.p2Car, beforeP2, 0.35);
+            }
+          }
+          if (beforeP1 && sim.p1Car) {
+            const dx1 = sim.p1Car.chassis.position.x - beforeP1.c.x;
+            const dy1 = sim.p1Car.chassis.position.y - beforeP1.c.y;
+            if (Math.hypot(dx1, dy1) < 28) {
+              sim.blendCarPose(sim.p1Car, beforeP1, 0.45);
+            }
+          }
+          return true;
         }
       }
 
@@ -3259,8 +3729,8 @@
           window.addEventListener('resize', () => this.renderer.resize());
           window.addEventListener('orientationchange', () => setTimeout(() => this.renderer.resize(), 120));
 
-          this._checkUrlAutoJoin();
           this._startAttractMode();
+          this._checkUrlAutoJoin();
           this._startMainLoop();
         }
 
@@ -3292,6 +3762,7 @@
             onlineStatus: document.getElementById('online-status'),
             onlineStatusText: document.getElementById('online-status-text'),
             onlineLobbyPing: document.getElementById('online-lobby-ping'),
+            btnOnlineRetry: document.getElementById('btn-online-retry'),
             btnOnlineStart: document.getElementById('btn-online-start'),
 
             victoryTitle: document.getElementById('victory-title'),
@@ -3373,15 +3844,39 @@
         }
 
         _initNetwork() {
+          const applySnapshotMeta = (snap) => {
+            if (this.mode !== 'online_client') return;
+            if (snap.rn !== this.roundNumber || snap.ai !== this.sim.arenaIndex) {
+              this.roundNumber = snap.rn;
+              this.koPendingRound = 0;
+              this.net.pendingInputs = [];
+              this.sim.resetArena(snap.ai || 0);
+              this.renderer.clearEffects();
+            }
+            if (snap.sc[0] !== this.scores[0] || snap.sc[1] !== this.scores[1]) {
+              this.scores = [snap.sc[0], snap.sc[1]];
+              this._updateScoreUI();
+            }
+            const staleFight = this.koPendingRound === snap.rn && snap.ph === 'FIGHT';
+            if (!staleFight) this.phase = snap.ph;
+            if (snap.ph === 'KO') this.koPendingRound = snap.rn;
+            this.bannerText = snap.bt || '';
+            if (this.sim.p1Car) this.sim.p1Car.dead = !!snap.d1;
+            if (this.sim.p2Car) this.sim.p2Car.dead = !!snap.d2;
+          };
+          this._applySnapshotMeta = applySnapshotMeta;
+
           this.net = new NetworkManager({
             onRoomCode: (code) => { this.dom.hostRoomCode.textContent = code; },
-            onStatus: (text, cls) => {
+            onStatus: (text, cls, showRetry = false) => {
               this.dom.onlineStatusText.textContent = text;
               this.dom.onlineStatus.className = `status-pill ${cls}`;
+              this.dom.btnOnlineRetry.classList.toggle('hidden', !showRetry);
             },
             onConnected: (role) => {
               this.dom.onlineStatusText.textContent = role === 'host' ? 'Player 2 Connected!' : 'Connected to Host!';
               this.dom.onlineStatus.className = 'status-pill connected';
+              this.dom.btnOnlineRetry.classList.add('hidden');
               this.dom.btnOnlineStart.disabled = role !== 'host';
               this.dom.btnOnlineStart.textContent = role === 'host' ? 'START MATCH!' : 'WAITING FOR HOST...';
             },
@@ -3392,25 +3887,7 @@
             onMatchStart: (arenaIdx) => {
               this.startMatch('online_client', arenaIdx);
             },
-            onSnapshotState: (snap) => {
-              if (this.mode !== 'online_client') return;
-              if (snap.rn !== this.roundNumber || snap.ai !== this.sim.arenaIndex) {
-                this.roundNumber = snap.rn;
-                this.koPendingRound = 0;
-                this.sim.resetArena(snap.ai || 0);
-                this.renderer.clearEffects();
-              }
-              if (snap.sc[0] !== this.scores[0] || snap.sc[1] !== this.scores[1]) {
-                this.scores = [snap.sc[0], snap.sc[1]];
-                this._updateScoreUI();
-              }
-              const staleFight = this.koPendingRound === snap.rn && snap.ph === 'FIGHT';
-              if (!staleFight) this.phase = snap.ph;
-              if (snap.ph === 'KO') this.koPendingRound = snap.rn;
-              this.bannerText = snap.bt || '';
-              if (this.sim.p1Car) this.sim.p1Car.dead = !!snap.d1;
-              if (this.sim.p2Car) this.sim.p2Car.dead = !!snap.d2;
-            },
+            onSnapshotState: applySnapshotMeta,
             onGameEvent: (msg) => {
               if (msg.kind === 'bump') {
                 this.sound.playBump(msg.n || 0.5);
@@ -3447,6 +3924,8 @@
               }
             },
             onDisconnected: (reason) => {
+              this.mode = 'attract';
+              this.phase = 'MENU';
               this.input.setMode('menu');
               this.sound.updateEngine(false, 0, 0);
               this.dom.scorePill.classList.add('hidden');
@@ -3455,6 +3934,7 @@
               this.dom.onlineOverlay.classList.remove('hidden');
               this.dom.onlineStatusText.textContent = reason;
               this.dom.onlineStatus.className = 'status-pill error';
+              this.dom.btnOnlineRetry.classList.remove('hidden');
               this.dom.btnOnlineStart.disabled = true;
               this.dom.btnOnlineStart.textContent = 'WAITING FOR OPPONENT...';
             }
@@ -3565,6 +4045,17 @@
             this.startMatch('online_host', arenaIdx);
           });
 
+          this.dom.btnOnlineRetry.addEventListener('click', () => {
+            this.sound.unlock();
+            this.sound.playClick();
+            this.dom.btnOnlineRetry.classList.add('hidden');
+            if (this.net.role === 'client') {
+              this.net.joinRoom(this.dom.joinCodeInput.value || this.net.roomCode);
+            } else {
+              this.net.hostRoom();
+            }
+          });
+
           this.dom.btnExit.addEventListener('click', () => {
             this.sound.playClick();
             this.net.destroy();
@@ -3623,8 +4114,10 @@
           this.dom.onlineLobbyPing.textContent = '';
 
           if (tab === 'host') {
+            this.dom.btnOnlineRetry.classList.add('hidden');
             this.net.hostRoom();
           } else {
+            this.dom.btnOnlineRetry.classList.add('hidden');
             this.net.destroy();
             this.dom.onlineStatusText.textContent = 'Enter friend room code to join.';
             this.dom.onlineStatus.className = 'status-pill';
@@ -3673,6 +4166,9 @@
           this.dom.menuOverlay.classList.add('hidden');
           this.dom.onlineOverlay.classList.add('hidden');
           this.dom.victoryOverlay.classList.add('hidden');
+          if (document.activeElement && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
+          }
           this.dom.scorePill.classList.remove('hidden');
           this.dom.btnExit.classList.remove('hidden');
           this.dom.pingTag.classList.toggle('hidden', mode !== 'online_host' && mode !== 'online_client');
@@ -3790,9 +4286,24 @@
               scores: this.scores,
               roundNumber: this.roundNumber,
               phase: this.phase,
-              bannerText: this.bannerText
+              bannerText: this.bannerText,
+              p1Input: this.p1Input
             });
           }
+        }
+
+        _stepClientPredictedTick() {
+          if (this.phase === 'MATCH_OVER') return;
+          if (this.phase !== 'FIGHT') {
+            this.p2Input = { l: false, r: false, holdMs: 0 };
+            this.sim.step({ l: false, r: false, holdMs: 0 }, { l: false, r: false, holdMs: 0 }, false);
+            return;
+          }
+          // Separated input sampling -> queued for host + applied immediately for 0ms client prediction
+          const rawP2 = this.input.getP2();
+          this.p2Input = rawP2;
+          const cmd = this.net.queueClientInput(rawP2);
+          this.sim.step(this.net.lastHostP1Input, cmd, true);
         }
 
         _updateAudio() {
@@ -3820,8 +4331,12 @@
             last = now;
 
             if (this.mode === 'online_client') {
-              this.net.sendInputIfChanged(this.input.getP2());
-              this.net.applyInterpolatedFrame(this.sim);
+              this.net.reconcileClientFrame(this.sim, this._applySnapshotMeta);
+              acc += elapsed;
+              while (acc >= FIXED_DT) {
+                this._stepClientPredictedTick();
+                acc -= FIXED_DT;
+              }
             } else {
               acc += elapsed;
               while (acc >= FIXED_DT) {
