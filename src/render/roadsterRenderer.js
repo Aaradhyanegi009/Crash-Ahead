@@ -569,6 +569,225 @@ function drawJcbBody(ctx, colors) {
   ctx.fill();
 }
 
+function drawBikeBody(ctx, colors) {
+  ctx.lineWidth = 3 / CAR_SCALE;
+  ctx.strokeStyle = PALETTE.ink;
+
+  // Rear upswept exhaust pipe + muffler tip (matches exhaustLocal -34, +2)
+  ctx.fillStyle = '#adb5bd';
+  ctx.beginPath();
+  ctx.moveTo(-6, 7);
+  ctx.lineTo(-27, 4);
+  ctx.lineTo(-34, 0.5);
+  ctx.lineTo(-32.5, 4.8);
+  ctx.lineTo(-25, 8.2);
+  ctx.lineTo(-4, 10.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Dark tail cone tip
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.arc(-33.5, 2.4, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Rear swingarm connecting pivot (-4, 6) to rear axle (-21.5, 10.5)
+  ctx.fillStyle = '#6c757d';
+  ctx.beginPath();
+  ctx.moveTo(-22.5, 8.2);
+  ctx.lineTo(-3, 4.2);
+  ctx.lineTo(-2, 9.2);
+  ctx.lineTo(-21, 12.6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Front telescopic fork + golden stanchion from steering neck (+10, -14) to axle (+21.5, 10.5)
+  ctx.fillStyle = '#ffd166';
+  ctx.beginPath();
+  ctx.moveTo(8.5, -14.5);
+  ctx.lineTo(13, -15.5);
+  ctx.lineTo(18.5, -1.5);
+  ctx.lineTo(14, -0.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#d2dae2';
+  ctx.beginPath();
+  ctx.moveTo(14.5, -1.5);
+  ctx.lineTo(18.2, -2.5);
+  ctx.lineTo(23.2, 9.8);
+  ctx.lineTo(19.6, 11.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Compact engine block & silver cylinder fins under rider
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(-10, -1, 19, 11, 3.2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#9aa5b1';
+  ctx.beginPath();
+  ctx.roundRect(-6.5, 1.2, 11.5, 6.2, 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Sport-stunt motorcycle frame, sculpted tank, seat & swept tail fairing
+  ctx.beginPath();
+  ctx.moveTo(-34, -8.5);           // high tail fin
+  ctx.lineTo(-15, -6.5);           // rider seat dip
+  ctx.quadraticCurveTo(-5, -5.5, 0, -11.5); // rise into sculpted fuel tank
+  ctx.quadraticCurveTo(9, -17.5, 19.5, -12.5); // front tank & cowl crown
+  ctx.lineTo(24.5, -5.5);          // nose beak above front tire
+  ctx.lineTo(14, -2.5);
+  ctx.lineTo(9, 4.5);
+  ctx.lineTo(-10, 4.5);
+  ctx.lineTo(-22, -2.5);
+  ctx.closePath();
+
+  ctx.fillStyle = colors.body;
+  ctx.fill();
+
+  ctx.save();
+  ctx.clip();
+  // Dark saddle & racing speed stripe
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.fillRect(-19, -9.5, 19, 5.2);
+  ctx.fillStyle = PALETTE.stripeGold;
+  ctx.fillRect(-35, -3.5, 60, 3.5);
+  ctx.fillStyle = colors.lip;
+  ctx.fillRect(-35, 1.2, 60, 5.5);
+  ctx.restore();
+
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 3.3 / CAR_SCALE;
+  ctx.stroke();
+
+  // Front yellow headlight lens + handlebar riser & grip
+  ctx.fillStyle = '#ffe066';
+  ctx.beginPath();
+  ctx.roundRect(19.5, -11, 4.5, 4.6, 1.5);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = PALETTE.ink;
+  ctx.beginPath();
+  ctx.roundRect(7, -18.5, 7, 3.6, 1.5);
+  ctx.fill();
+}
+
+function drawTankBody(ctx, colors) {
+  ctx.lineWidth = 3.2 / CAR_SCALE;
+  ctx.strokeStyle = PALETTE.ink;
+
+  // Heavy upper tread belt & bogie rollers linking front/rear drive wheels
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(-37, -1.5, 74, 15.5, 7.2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Center armored road bogie wheels peeking along the track bed
+  for (const bx of [-8.8, 8.8]) {
+    ctx.fillStyle = '#495057';
+    ctx.beginPath();
+    ctx.arc(bx, 11.2, 8.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = colors.rim;
+    ctx.beginPath();
+    ctx.arc(bx, 11.2, 4.0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Heavy cannon barrel & slotted muzzle brake extending cleanly forward
+  ctx.fillStyle = '#495057';
+  ctx.beginPath();
+  ctx.roundRect(12, -16.8, 33, 5.4, 2.0);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(41, -18.0, 7.5, 7.8, 2.0);
+  ctx.fill();
+  ctx.stroke();
+
+  // Sloped Panzer Turret Dome with open top commander cupola (leaves helmet proudly exposed!)
+  ctx.fillStyle = colors.body;
+  ctx.beginPath();
+  ctx.moveTo(-23, -8.5);
+  ctx.lineTo(-18.5, -18.5);
+  ctx.lineTo(13, -18.5);
+  ctx.lineTo(19, -11.5);
+  ctx.lineTo(17, -8.5);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = colors.lip;
+  ctx.fillRect(-24, -12.8, 44, 5.2);
+  ctx.fillStyle = PALETTE.stripeGold;
+  ctx.fillRect(-24, -15.6, 44, 2.6);
+  ctx.restore();
+  ctx.stroke();
+
+  // Commander cupola ring rim
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(-11, -20.5, 16, 3.2, 1.4);
+  ctx.fill();
+  ctx.stroke();
+
+  // Rear diesel exhaust stack stub (aligns with exhaustLocal -38, -6)
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(-41, -11, 6, 8, 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Main Beveled Armored Hull & Side Mud Skirts
+  ctx.beginPath();
+  ctx.moveTo(-43, 6.5);
+  ctx.lineTo(-45, -2.5);
+  ctx.lineTo(-39, -9.5);
+  ctx.lineTo(36, -9.5);
+  ctx.lineTo(46, -1.5);
+  ctx.lineTo(43.5, 6.5);
+  ctx.closePath();
+
+  ctx.fillStyle = colors.body;
+  ctx.fill();
+
+  ctx.save();
+  ctx.clip();
+  // Armored skirt plate, gold tactical band & steel belly trim
+  ctx.fillStyle = '#3f4b56';
+  ctx.fillRect(-46, 0.5, 93, 7);
+  ctx.fillStyle = PALETTE.stripeGold;
+  ctx.fillRect(-46, -3.2, 93, 3.6);
+  ctx.fillStyle = colors.lip;
+  ctx.fillRect(-46, -9.5, 93, 3.8);
+  ctx.restore();
+
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 3.5 / CAR_SCALE;
+  ctx.stroke();
+
+  // Armored skirt rivets
+  ctx.fillStyle = '#d2dae2';
+  for (const rx of [-30, -15, 0, 15, 30]) {
+    ctx.beginPath();
+    ctx.arc(rx, 3.4, 1.35, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 function drawWheel(ctx, wheel, radius, colors, style = 'roadster') {
   ctx.save();
   ctx.translate(wheel.position.x, wheel.position.y);
@@ -584,6 +803,18 @@ function drawWheel(ctx, wheel, radius, colors, style = 'roadster') {
       ctx.rotate(a);
       ctx.beginPath();
       ctx.roundRect(-2.4 * CAR_SCALE, -radius - 1.4 * CAR_SCALE, 4.8 * CAR_SCALE, 3.6 * CAR_SCALE, 1.1 * CAR_SCALE);
+      ctx.fill();
+      ctx.restore();
+    }
+  } else if (style === 'tank') {
+    const lugCount = 10;
+    ctx.fillStyle = PALETTE.ink;
+    for (let i = 0; i < lugCount; i++) {
+      const a = (i / lugCount) * Math.PI * 2;
+      ctx.save();
+      ctx.rotate(a);
+      ctx.beginPath();
+      ctx.roundRect(-2.1 * CAR_SCALE, -radius - 1.2 * CAR_SCALE, 4.2 * CAR_SCALE, 3.2 * CAR_SCALE, 0.8 * CAR_SCALE);
       ctx.fill();
       ctx.restore();
     }
@@ -606,16 +837,27 @@ function drawWheel(ctx, wheel, radius, colors, style = 'roadster') {
   ctx.arc(0, 0, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  const rimR = style === 'jcb' ? radius * 0.56 : radius * 0.53;
-  ctx.fillStyle = style === 'jcb' ? '#f5b818' : colors.rim;
+  const rimR = style === 'jcb' ? radius * 0.56 : style === 'bike' ? radius * 0.62 : style === 'tank' ? radius * 0.58 : radius * 0.53;
+  ctx.fillStyle = style === 'jcb' ? '#f5b818' : style === 'tank' ? '#5c6670' : colors.rim;
   ctx.beginPath();
   ctx.arc(0, 0, rimR, 0, Math.PI * 2);
   ctx.fill();
 
-  if (style === 'jcb') {
+  if (style === 'jcb' || style === 'tank') {
     ctx.strokeStyle = colors.rim;
     ctx.lineWidth = 2.2 * CAR_SCALE;
     ctx.stroke();
+  } else if (style === 'bike') {
+    ctx.strokeStyle = PALETTE.ink;
+    ctx.lineWidth = 1.6 * CAR_SCALE;
+    const spokes = 5;
+    for (let i = 0; i < spokes; i++) {
+      const sa = (i / spokes) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(sa) * rimR, Math.sin(sa) * rimR);
+      ctx.stroke();
+    }
   }
 
   ctx.fillStyle = PALETTE.white;
@@ -623,9 +865,9 @@ function drawWheel(ctx, wheel, radius, colors, style = 'roadster') {
   ctx.arc(0, 0, radius * 0.23, 0, Math.PI * 2);
   ctx.fill();
 
-  if (style === 'truck' || style === 'jcb') {
+  if (style === 'truck' || style === 'jcb' || style === 'tank') {
     ctx.fillStyle = PALETTE.ink;
-    const bolts = 4;
+    const bolts = style === 'tank' ? 6 : 4;
     for (let i = 0; i < bolts; i++) {
       const ba = (i / bolts) * Math.PI * 2;
       ctx.beginPath();
@@ -663,6 +905,10 @@ export function drawVehicle(ctx, carState, isRedPlayer) {
     drawTruckBody(ctx, colors);
   } else if (model === 'jcb') {
     drawJcbBody(ctx, colors);
+  } else if (model === 'bike') {
+    drawBikeBody(ctx, colors);
+  } else if (model === 'tank') {
+    drawTankBody(ctx, colors);
   } else {
     drawRoadsterBody(ctx, colors);
   }

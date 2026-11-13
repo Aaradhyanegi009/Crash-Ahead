@@ -1,4 +1,4 @@
-import { EXTREME_JUMP_COOLDOWN_MS } from '../config/constants.js';
+import { DEATH_JUMP_COOLDOWN_MS, EXTREME_JUMP_COOLDOWN_MS } from '../config/constants.js';
 import { ARENAS } from '../maps/arenas.js';
 import { clamp, normalizeAngle } from '../utils/math.js';
 
@@ -29,9 +29,9 @@ export const BOT_DIFFICULTIES = Object.freeze({
     id: 'death',
     label: 'DEATH',
     speedScale: 1.30,
-    accelScale: 1.56,
-    aggression: 4.5,
-    jumpCooldownMs: EXTREME_JUMP_COOLDOWN_MS,
+    accelScale: 1.72,
+    aggression: 5.0,
+    jumpCooldownMs: DEATH_JUMP_COOLDOWN_MS,
     smartPathing: true,
     reactionCadence: 1,
     playerCanJump: false
@@ -55,6 +55,7 @@ export class SmartAI {
     this.feintDir = 0;
     this.feintTicks = 0;
     this._rngState = 0x9e3779b9;
+    this._stuckTicks = 0;
     this._lastCmd = { l: false, r: false, jump: false };
     this._pickPattern(null, 640);
   }
@@ -86,6 +87,7 @@ export class SmartAI {
     this.feintTicks = 0;
     this.feintCooldownTicks = 0;
     this.patternTicks = 0;
+    this._stuckTicks = 0;
     this._lastCmd = { l: false, r: false, jump: false };
     this._pickPattern(null, 640);
   }
@@ -153,7 +155,7 @@ export class SmartAI {
         if (!sw.isBridge && checkBox(sw.x, sw.w * 0.48 + 16, sw.y + 14, 150)) return true;
       }
     }
-    if (arena.caves && arena.caves.length > 0 && my < 305) return true;
+    if (arena.caves && arena.caves.length > 0 && my < 245) return true;
     return false;
   }
 
@@ -164,21 +166,24 @@ export class SmartAI {
       this.patternTicks = 120;
       return;
     }
+    const isDeath = profile.aggression >= 4.8;
     const pool = [];
     // Weight randomized winning patterns suited to current arena geometry
-    pool.push('headhunter', 'feint_counter', 'wheelie_scoop');
+    pool.push('headhunter', 'headhunter', 'wheelie_scoop');
+    if (!isDeath) pool.push('feint_counter');
     if (!arena || this._hasEnclosedOrArchWalls(arena) || arena.id === 8 || (arena.seesaws && arena.seesaws.some((s) => !s.isBridge))) {
       pool.push('highground', 'highground');
     }
     if (!arena || (this._isOpenWaterArena(arena) && arena.id !== 8)) {
       pool.push('ringout', 'ringout');
     }
+    if (isDeath) pool.push('headhunter', 'feint_counter');
     // Prefer a different pattern on re-roll so bot constantly shifts rhythm
     const filtered = pool.filter((p) => p !== this.pattern);
     const choices = filtered.length > 0 ? filtered : EXTREME_PATTERNS;
     this.pattern = choices[Math.floor(this._rand() * choices.length)];
-    const minT = profile.aggression >= 4.0 ? 68 : 85;
-    const spanT = profile.aggression >= 4.0 ? 65 : 85;
+    const minT = isDeath ? 48 : (profile.aggression >= 4.0 ? 68 : 85);
+    const spanT = isDeath ? 45 : (profile.aggression >= 4.0 ? 65 : 85);
     this.patternTicks = minT + Math.floor(this._rand() * spanT);
     if (this.pattern === 'highground') {
       this.commitDir = this._rand() < 0.72 ? (mx < 640 ? -1 : 1) : (mx < 640 ? 1 : -1);
@@ -191,8 +196,8 @@ export class SmartAI {
   _canJump(sim, me, profile, gx) {
     const cdMs = profile.jumpCooldownMs ? (me.jumpCooldownMs || profile.jumpCooldownMs) : 0;
     if (!cdMs || !me || me.dead) return false;
-    if (!gx && me.airTicks > 5) return false;
-    const minStartMs = profile.aggression >= 3.2 ? 380 : 650;
+    if (!gx && me.airTicks > (profile.aggression >= 4.8 ? 6 : 5)) return false;
+    const minStartMs = profile.aggression >= 4.8 ? 160 : (profile.aggression >= 3.2 ? 380 : 650);
     if (sim.roundElapsedMs < minStartMs) return false;
     return (sim.roundElapsedMs - me.lastJumpAtMs) >= cdMs;
   }
@@ -221,6 +226,12 @@ export class SmartAI {
     const isOpenWater = this._isOpenWaterArena(arena);
     const hasCurvedWalls = this._hasEnclosedOrArchWalls(arena);
     const blockedOverhead = this._hasOverheadClearanceIssue(arena, mx, my, mvx);
+
+    if (gx && me.driving && Math.abs(mvx) < 0.35 && Math.abs(me.chassis.velocity.y) < 0.35) {
+      this._stuckTicks++;
+    } else {
+      this._stuckTicks = 0;
+    }
 
     // Extreme & Death dynamically shift winning patterns rather than running one fixed script
     if (profile.aggression >= 3.0) {
@@ -252,11 +263,13 @@ export class SmartAI {
 
     // Tactical winning jump evaluation (purposeful head-dunk, vault dodge, bridge leap, or self-save)
     // Never jumps upward underneath overhead blocks (e.g. Map 8 center deck), arches, seesaws, or low cave ceilings!
+    const isDeath = profile.aggression >= 4.8;
     const evaluateJump = () => {
       if (!canJump || blockedOverhead) return false;
       const dxAbs = Math.abs(ox - mx);
       const closingToMe = ovx * (mx > ox ? 1 : -1);
-      const upright = Math.abs(angle) < 0.44 && Math.abs(me.chassis.angularVelocity) < 0.09;
+      const uprightLimit = isDeath ? 0.56 : 0.44;
+      const upright = Math.abs(angle) < uprightLimit && Math.abs(me.chassis.angularVelocity) < (isDeath ? 0.12 : 0.09);
 
       // Cliff/chasm safety guard: never jump blindly off open sea edges or into Map 8 sea hole
       const bounds = isOpenWater ? this._getOpenEdgeBounds(arena) : null;
@@ -290,29 +303,35 @@ export class SmartAI {
 
       // Overhead clearance guard: NEVER jump straight up into an enemy bumper/tire positioned right above/overlapping us!
       const myHeadY = me.head ? me.head.position.y : my;
-      if (dxAbs < 64 && oppHeadY < myHeadY - 4) return false;
+      if (dxAbs < (isDeath ? 52 : 64) && oppHeadY < myHeadY - 4) return false;
 
       // 3) True Deadlock / pin breakaway: stuck nearly motionless side-by-side -> hop cleanly above
-      if (dxAbs < 62 && Math.abs(mvx) < 0.85 && Math.abs(ovx) < 1.25 && oppHeadY >= myHeadY - 6 && sim.roundElapsedMs > 620) {
+      if (dxAbs < 62 && Math.abs(mvx) < 0.85 && Math.abs(ovx) < 1.25 && oppHeadY >= myHeadY - 6 && sim.roundElapsedMs > (isDeath ? 420 : 620)) {
         return true;
       }
 
-      // 4) Counter-vault over an incoming high-speed ram (needs >=58px horizontal space so we clear ABOVE hood, not mid-rise!)
-      if (upright && dxAbs >= 58 && dxAbs < 142 && closingToMe > 2.5 && oppHeadY >= myHeadY - 12 && oppHeadY <= my + 48) {
+      // Death sustained anti-stall escape when actively throttling yet pinned against terrain
+      if (isDeath && this._stuckTicks >= 22 && dxAbs > 65 && sim.roundElapsedMs > 480) {
         return true;
       }
 
-      // 5) Predictive Aerial Head-Dunk (at 64..158px closing range so peak descends wheels-first onto opp head!)
+      // 4) Counter-vault over an incoming high-speed ram (needs horizontal space so we clear ABOVE hood!)
+      if (upright && dxAbs >= (isDeath ? 52 : 58) && dxAbs < 152 && closingToMe > (isDeath ? 1.9 : 2.5) && oppHeadY >= myHeadY - 14 && oppHeadY <= my + 52) {
+        return true;
+      }
+
+      // 5) Predictive Aerial Head-Dunk (velocity-adaptive intercept so peak descends wheels-first onto opp head!)
       if (upright && (this.pattern !== 'wheelie_scoop' || oppHeadY < myHeadY - 5)) {
-        const predDx = Math.abs((oppHeadX + ovx * 11) - (mx + mvx * 11));
-        const strikeMax = profile.aggression >= 4.0 ? 158 : 138;
-        const headReachable = oppHeadY >= myHeadY - 24 && oppHeadY <= my + 54;
-        const movingToward = mvx * chaseDir > 1.3;
-        if (dxAbs >= 64 && predDx < strikeMax && headReachable && movingToward) return true;
+        const leadFrames = isDeath ? clamp(dxAbs / 11, 7, 13) : 11;
+        const predDx = Math.abs((oppHeadX + ovx * leadFrames) - (mx + mvx * leadFrames));
+        const strikeMax = isDeath ? 172 : (profile.aggression >= 4.0 ? 158 : 138);
+        const headReachable = oppHeadY >= myHeadY - (isDeath ? 36 : 24) && oppHeadY <= my + 56;
+        const movingToward = mvx * chaseDir > (isDeath ? 0.9 : 1.3);
+        if (dxAbs >= (isDeath ? 52 : 64) && predDx < strikeMax && headReachable && movingToward) return true;
       }
 
-      // 6) Anti-air intercept when opponent jumped away from directly on top of us
-      if (upright && profile.aggression >= 4.0 && !oppG && dxAbs >= 56 && dxAbs < 125 && oppHeadY < my - 24 && oppHeadY > my - 115) {
+      // 6) Anti-air intercept & Death defensive counter-dunk when opponent jumped near us
+      if (upright && profile.aggression >= 4.0 && !oppG && dxAbs >= (isDeath ? 52 : 56) && dxAbs < (isDeath ? 136 : 125) && oppHeadY < my - 18 && oppHeadY > my - 125) {
         return true;
       }
       return false;
@@ -443,9 +462,9 @@ export class SmartAI {
     if (profile.smartPathing && canClimbHigh) {
       if (this.commitTicks > 0 && this.commitMode === 'climb') {
         const reachedTopTarget = my <= oy + 26 && Math.abs(mx - ox) < 275 && (ox - mx) * mvx >= -0.3;
-        const maxClimbAng = arena.id === 13 ? 1.12 : (oppElevated ? 1.82 : 1.18);
+        const maxClimbAng = arena.id === 13 ? 1.12 : (oppElevated ? 1.92 : 1.18);
         const rimAbort = arena.id === 13 && (mx < 285 || mx > 995);
-        const tooSteepOrAir = Math.abs(angle) > maxClimbAng || (!gx && my < 330 && Math.abs(angle) > 1.1) || rimAbort;
+        const tooSteepOrAir = Math.abs(angle) > maxClimbAng || (!gx && my < 320 && Math.abs(angle) > 1.15) || rimAbort;
         const oppDroppedToFloor = oy > 465 && my > 440 && this.pattern !== 'highground';
         if (reachedTopTarget || oppDroppedToFloor || tooSteepOrAir) {
           this.commitTicks = 0;
@@ -457,16 +476,23 @@ export class SmartAI {
             this.commitMode = null;
             if (this.pattern === 'highground') this.pattern = 'headhunter';
           }
-          const launchJump = canJump && !blockedOverhead && Math.abs(angle) < 0.65 && my < oy + 28 && (ox - mx) * mvx > 0.8 && Math.abs(ox - mx) < 240;
+          // Launch jump onto upper platform from steep tube wall OR when cresting level with opponent
+          const wallLaunchJump = arena.id === 15 && canJump && !blockedOverhead && my < 460 && Math.abs(angle) > 0.75 && (ox - mx) * this.commitDir < 0;
+          const launchJump = wallLaunchJump || (canJump && !blockedOverhead && Math.abs(angle) < 0.65 && my < oy + 32 && (ox - mx) * mvx > 0.8 && Math.abs(ox - mx) < 260);
           return emit(this.commitDir < 0 ? this._moveLeft(launchJump) : this._moveRight(launchJump));
         }
       }
 
-      if ((oppElevated && Math.abs(ox - mx) < 420) || highGroundWanted) {
-        this.commitDir = highGroundWanted && this.commitDir !== 0
-          ? this.commitDir
-          : (mx < 580 ? -1 : mx > 700 ? 1 : (mvx < -0.2 ? -1 : mvx > 0.2 ? 1 : (mx < 640 ? -1 : 1)));
-        this.commitTicks = highGroundWanted ? 38 : 82;
+      if ((oppElevated && Math.abs(ox - mx) < 520) || highGroundWanted) {
+        if (arena.id === 15 && oppElevated) {
+          // On Map 15 enclosed circular tube, climb the circular end-wall facing the opponent's elevated platform!
+          this.commitDir = ox < 640 ? -1 : 1;
+        } else {
+          this.commitDir = highGroundWanted && this.commitDir !== 0
+            ? this.commitDir
+            : (mx < 580 ? -1 : mx > 700 ? 1 : (mvx < -0.2 ? -1 : mvx > 0.2 ? 1 : (mx < 640 ? -1 : 1)));
+        }
+        this.commitTicks = highGroundWanted ? 38 : 88;
         this.commitMode = 'climb';
         return emit(this.commitDir < 0 ? this._moveLeft(false) : this._moveRight(false));
       }
@@ -486,12 +512,13 @@ export class SmartAI {
         this.pattern === 'feint_counter' &&
         this.feintCooldownTicks <= 0 &&
         safeForFeint &&
+        (!isDeath || (ovx * (mx > ox ? 1 : -1) > 1.8 && oy <= my + 12)) &&
         Math.abs(ox - mx) > 175 &&
         Math.abs(ox - mx) < 340
       ) {
         this.feintDir = ox > mx ? -1 : 1;
-        this.feintTicks = (profile.aggression >= 4.0 ? 6 : 10) + Math.floor(this._rand() * (profile.aggression >= 4.0 ? 5 : 8));
-        this.feintCooldownTicks = 100;
+        this.feintTicks = isDeath ? (4 + Math.floor(this._rand() * 3)) : ((profile.aggression >= 4.0 ? 6 : 10) + Math.floor(this._rand() * (profile.aggression >= 4.0 ? 5 : 8)));
+        this.feintCooldownTicks = isDeath ? 75 : 100;
         return emit(this.feintDir < 0 ? this._moveLeft(false) : this._moveRight(false));
       }
     }
@@ -499,9 +526,9 @@ export class SmartAI {
     // Mid-air PD attitude control: never spin upside-down trying to steer horizontally in air (air has 0 linear drive!).
     // Keep wheels down & slight front-nose lift so we land safely atop enemy helmets instead of skull-first!
     if (!gx && my < 495) {
-      const desired = -me.facing * 0.08;
-      const pd = normalizeAngle(angle - desired) + me.chassis.angularVelocity * 8.0;
-      if (Math.abs(pd) > 0.14) {
+      const desired = -me.facing * (isDeath ? 0.05 : 0.08);
+      const pd = normalizeAngle(angle - desired) + me.chassis.angularVelocity * (isDeath ? 9.5 : 8.0);
+      if (Math.abs(pd) > (isDeath ? 0.09 : 0.14)) {
         return emit(pd > 0 ? this._moveRight() : this._moveLeft());
       }
       return emit({ l: false, r: false, jump: false });
@@ -514,12 +541,13 @@ export class SmartAI {
 
     // Never park directly underneath an elevated/descending opponent: sidestep toward safe ground, then counter-strike
     const myHeadYNow = me.head ? me.head.position.y : my;
-    if (profile.aggression >= 3.0 && gx && oppHeadY < myHeadYNow - 24 && Math.abs(ox - mx) < 88 && arena.id !== 8) {
+    if (profile.aggression >= 3.0 && gx && oppHeadY < myHeadYNow - (isDeath ? 16 : 24) && Math.abs(ox - mx) < (isDeath ? 102 : 88) && arena.id !== 8) {
       const awayDir = ox <= mx ? 1 : -1;
       const b = isOpenWater ? this._getOpenEdgeBounds(arena) : null;
       const cliffBlocked = isOpenWater && ((awayDir < 0 && mx < b.minX + 75) || (awayDir > 0 && mx > b.maxX - 75));
       if (!cliffBlocked) {
-        return emit(awayDir < 0 ? this._moveLeft(false) : this._moveRight(false));
+        const dodgeJump = isDeath && Math.abs(ox - mx) >= 52 && !oppG && evaluateJump();
+        return emit(awayDir < 0 ? this._moveLeft(dodgeJump) : this._moveRight(dodgeJump));
       }
     }
 

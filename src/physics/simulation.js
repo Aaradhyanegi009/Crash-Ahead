@@ -332,12 +332,14 @@ export class PhysicsSimulation {
 
   _addSeesaw(cfg) {
     const isBridge = !!cfg.isBridge;
+    const motorSpeed = typeof cfg.motorSpeed === 'number' ? cfg.motorSpeed : 0;
+    const isSpinner = Boolean(cfg.isSpinner || motorSpeed);
     const plank = this.Bodies.rectangle(cfg.x, cfg.y, cfg.w, 28, {
-      density: isBridge ? 0.0036 : 0.0042,
+      density: isSpinner ? 0.018 : (isBridge ? 0.0036 : 0.0042),
       chamfer: { radius: 14 },
       friction: 0.95,
       restitution: 0.08,
-      frictionAir: isBridge ? 0.006 : 0.012,
+      frictionAir: isSpinner ? 0.002 : (isBridge ? 0.006 : 0.012),
       slop: 0.015,
       angle: cfg.angle || 0,
       label: 'seesaw'
@@ -356,6 +358,8 @@ export class PhysicsSimulation {
       y: cfg.y,
       w: cfg.w,
       isBridge,
+      isSpinner,
+      motorSpeed,
       maxAngle: typeof cfg.maxAngle === 'number' ? cfg.maxAngle : 0,
       springRate: typeof cfg.springRate === 'number' ? cfg.springRate : 0
     });
@@ -610,7 +614,11 @@ export class PhysicsSimulation {
     if (this.roundElapsedMs - car.lastJumpAtMs < cooldownMs) return false;
     if (car.isAirborne && car.airTicks > 8) return false;
 
-    const dxBoost = chaseDir * VEHICLE_PHYSICS.JUMP_FWD_BOOST;
+    const gn = car.groundNormal || { x: 0, y: -1 };
+    const steepWall = Math.abs(gn.x) > 0.50 && gn.y < 0.30;
+    const dxBoost = steepWall
+      ? (gn.x * 4.2 + chaseDir * 0.5)
+      : (chaseDir * VEHICLE_PHYSICS.JUMP_FWD_BOOST);
     const maxVx = Math.max(10.8, VEHICLE_PHYSICS.MAX_FORWARD_SPEED * (car.speedScale || 1.0) + VEHICLE_PHYSICS.JUMP_FWD_BOOST + 0.5);
     const bodies = [car.chassis, car.wheelR, car.wheelF, car.head];
     for (const b of bodies) {
@@ -998,6 +1006,11 @@ export class PhysicsSimulation {
     }
 
     for (const sw of this.seesaws) {
+      if (sw.motorSpeed) {
+        const av = lerp(sw.body.angularVelocity, sw.motorSpeed, 0.35);
+        this.Body.setAngularVelocity(sw.body, clamp(av, -0.18, 0.18));
+        continue;
+      }
       let av = sw.body.angularVelocity * 0.985;
       if (sw.isBridge) {
         if (sw.springRate > 0) {

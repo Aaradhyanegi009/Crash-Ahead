@@ -576,54 +576,143 @@ export const ARENAS = Object.freeze([
     p2Spawn: { x: 785, y: 500 }
   }),
 
-  // 14. Floating 3-Swell Converging Wave Island with Curved Quarter-Pipe Wings
+  // 14. Rotating Mill Canyon (Distinct Open-Top Quarter-Pipe Basin + Continuous Motorized Center Platform)
   (() => {
-    const waveDuneY = (x) => {
-      const u = clamp((x - 230) / 820, 0, 1);
-      return 476 - 15 * Math.sin(u * Math.PI) * (0.75 + 0.55 * Math.cos(u * Math.PI * 4));
+    const surface = [];
+    const pushPt = (x, y) => {
+      const prev = surface[surface.length - 1];
+      if (!prev || Math.hypot(x - prev.x, y - prev.y) > 2) surface.push({ x, y });
     };
-    const isl = makeWingedFloatingIsland(230, 1050, 476, 112, waveDuneY, 600);
+
+    // Left canyon cliff crest curving smoothly into left overhanging quarter-pipe
+    const cxL = 360;
+    const cyC = 360;
+    const R = 175;
+    const arcEntryX = cxL + Math.cos(1.20 * Math.PI) * R;
+    const arcEntryY = cyC + Math.sin(1.20 * Math.PI) * R;
+    pushPt(0, 248);
+    const rimSteps = 7;
+    for (let i = 0; i <= rimSteps; i++) {
+      const u = i / rimSteps;
+      const x = 95 + u * (arcEntryX - 95);
+      const y = 248 + (arcEntryY - 248) * u - 32 * Math.sin(u * Math.PI);
+      pushPt(x, y);
+    }
+
+    // Left semicircular quarter-pipe wall (center 360, 360, R=175; dθ < 0 puts normals outward into rock)
+    const wallSteps = 18;
+    for (let i = 1; i <= wallSteps; i++) {
+      const th = (1.20 * Math.PI) - (i / wallSteps) * (0.70 * Math.PI);
+      pushPt(cxL + Math.cos(th) * R, cyC + Math.sin(th) * R);
+    }
+
+    // Converging smooth canyon basin floor dipping to y=574 under the rotating platform
+    const floorSteps = 22;
+    for (let i = 1; i < floorSteps; i++) {
+      const u = i / floorSteps;
+      const x = 360 + u * (920 - 360);
+      const y = 535 + 39 * (0.5 * (1 - Math.cos(u * Math.PI * 2)));
+      pushPt(x, y);
+    }
+
+    // Right semicircular quarter-pipe wall (center 920, 360, R=175; dθ < 0)
+    const cxR = 920;
+    for (let i = 0; i <= wallSteps; i++) {
+      const th = (0.5 * Math.PI) - (i / wallSteps) * (0.70 * Math.PI);
+      pushPt(cxR + Math.cos(th) * R, cyC + Math.sin(th) * R);
+    }
+
+    const arcExitX = cxR + Math.cos(-0.20 * Math.PI) * R;
+    const arcExitY = cyC + Math.sin(-0.20 * Math.PI) * R;
+    for (let i = 1; i <= rimSteps; i++) {
+      const u = i / rimSteps;
+      const x = arcExitX + u * (1185 - arcExitX);
+      const y = arcExitY + (248 - arcExitY) * u - 32 * Math.sin(u * Math.PI);
+      pushPt(x, y);
+    }
+    pushPt(1280, 248);
+
+    const visualPoly = [
+      ...surface,
+      { x: 1320, y: 248 },
+      { x: 1320, y: 760 },
+      { x: -40, y: 760 },
+      { x: -40, y: 248 }
+    ];
+
     return Object.freeze({
       id: 14,
-      name: 'WAVE DUNE ISLAND',
-      desc: 'Converging rolling ocean swells + quarter-pipe air wings',
-      islands: [isl],
+      name: 'ROTATING MILL CANYON',
+      desc: 'Deep quarter-pipe canyon + motorized rotating center platform',
+      islands: [],
       caves: [],
-      openRocks: [],
+      openRocks: [{ surface, visualPoly }],
       halfPipes: [],
-      blocks: [{ x: 640, y: 572, w: 680, h: 66, chamfer: 22, hiddenVisual: true }],
-      seesaws: [],
+      blocks: [],
+      seesaws: [
+        { x: 640, y: 374, w: 224, motorSpeed: 0.020, isSpinner: true }
+      ],
       pills: STATIC_ROCK_PILLS,
-      p1Spawn: { x: 288, y: 432 },
-      p2Spawn: { x: 992, y: 432 }
+      p1Spawn: { x: 350, y: 492 },
+      p2Spawn: { x: 930, y: 492 }
     });
   })(),
 
-  // 15. Amphitheater Arch with Convex Rock Sky-Bridge Overpass & Twin Seesaws
+  // 15. Enclosed Long Circular Tube with High Red Platform & Lower Blue Platform
   (() => {
-    const ampFloor = (x) => {
-      const u = clamp((x - 640) / 330, -1, 1);
-      return 554 - 20 * Math.cos(u * Math.PI * 2.0);
-    };
-    const arch = makeCavernArchOpenWalls(ampFloor, 395, 885);
+    // Counter-clockwise closed capsule loop so inwardSign=+1 places 72px rock walls strictly outside
+    const loop = [];
+    const cxL = 335;
+    const cxR = 945;
+    const cyMid = 365;
+    const R = 235; // Interior Y: 130..600, Interior X: 100..1180 (1080px long enclosed circular tube)
+
+    // Bottom floor Left -> Right with gentle 6px central convergence
+    const runSteps = 18;
+    for (let i = 0; i <= runSteps; i++) {
+      const u = i / runSteps;
+      const x = cxL + u * (cxR - cxL);
+      const y = (cyMid + R) + 6 * 0.5 * (1 - Math.cos(u * Math.PI * 2));
+      loop.push({ x, y });
+    }
+
+    // Right circular end-tube Bottom -> Top (theta: +pi/2 -> -pi/2)
+    const arcSteps = 28;
+    for (let i = 1; i <= arcSteps; i++) {
+      const th = (Math.PI * 0.5) - (i / arcSteps) * Math.PI;
+      loop.push({ x: cxR + Math.cos(th) * R, y: cyMid + Math.sin(th) * R });
+    }
+
+    // Top arched ceiling Right -> Left (cxR -> cxL, gentle 8px crown arch)
+    for (let i = 1; i <= runSteps; i++) {
+      const u = i / runSteps;
+      const x = cxR - u * (cxR - cxL);
+      const y = (cyMid - R) - 8 * 0.5 * (1 - Math.cos(u * Math.PI * 2));
+      loop.push({ x, y });
+    }
+
+    // Left circular end-tube Top -> Bottom (theta: -pi/2 -> -3*pi/2), omitting duplicate start point
+    for (let i = 1; i < arcSteps; i++) {
+      const th = (-Math.PI * 0.5) - (i / arcSteps) * Math.PI;
+      loop.push({ x: cxL + Math.cos(th) * R, y: cyMid + Math.sin(th) * R });
+    }
+
     return Object.freeze({
       id: 15,
-      name: 'SKY ARCH OVERPASS',
-      desc: 'Convex arched stone overpass + twin approach seesaws',
+      name: 'REACTOR TUBE DUEL',
+      desc: 'Enclosed circular tube + high Red & low Blue launch platforms',
       islands: [],
-      caves: [],
-      openRocks: [arch],
-      halfPipes: [
-        { cx: 640, cy: 540, r: 170, aStart: 1.28 * Math.PI, aEnd: 1.72 * Math.PI, thickness: 24 }
+      caves: [loop],
+      openRocks: [],
+      halfPipes: [],
+      blocks: [
+        { x: 420, y: 335, w: 220, h: 22, chamfer: 10 },
+        { x: 850, y: 468, w: 215, h: 22, chamfer: 10 }
       ],
-      blocks: [],
-      seesaws: [
-        { x: 424, y: 428, w: 162, angle: -0.14 },
-        { x: 856, y: 428, w: 162, angle: 0.14 }
-      ],
-      pills: STATIC_ROCK_PILLS,
-      p1Spawn: { x: 315, y: 492 },
-      p2Spawn: { x: 965, y: 492 }
+      seesaws: [],
+      pills: [],
+      p1Spawn: { x: 420, y: 300 },
+      p2Spawn: { x: 850, y: 433 }
     });
   })()
 ]);
