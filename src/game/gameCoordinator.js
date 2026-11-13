@@ -146,6 +146,7 @@ export class CrashAheadGame {
       if (snap.rn !== this.roundNumber || snap.ai !== this.sim.arenaIndex) {
         this.roundNumber = snap.rn;
         this.koPendingRound = 0;
+        this._countdownElapsedMs = 0;
         this.net.pendingInputs = [];
         this.sim.resetArena(snap.ai || 0);
         this.renderer.clearEffects();
@@ -154,8 +155,18 @@ export class CrashAheadGame {
         this.scores = [snap.sc[0], snap.sc[1]];
         this.ui.updateScores(this.scores);
       }
+      const prevPhase = this.phase;
       const staleFight = this.koPendingRound === snap.rn && (snap.ph === 'FIGHT' || snap.ph === 'COUNTDOWN');
       if (!staleFight) this.phase = snap.ph;
+      if (prevPhase !== 'COUNTDOWN' && this.phase === 'COUNTDOWN') {
+        this._countdownElapsedMs = 0;
+      }
+      if (prevPhase === 'COUNTDOWN' && this.phase === 'FIGHT') {
+        this.sim.releaseHoverCountdown();
+      }
+      if (this.phase === 'COUNTDOWN') {
+        this.sim.stepHoverCountdown(this._countdownElapsedMs || 0);
+      }
       if (snap.ph === 'KO') this.koPendingRound = snap.rn;
       const nextBanner = snap.bt || '';
       if (nextBanner !== this.bannerText && (nextBanner === '3' || nextBanner === '2' || nextBanner === '1' || nextBanner === 'GO!')) {
@@ -466,6 +477,7 @@ export class CrashAheadGame {
   _resetRound(explicitArenaIdx = null) {
     this.phase = 'COUNTDOWN';
     this.countdownMs = ROUND_COUNTDOWN_MS;
+    this._countdownElapsedMs = 0;
     this.goBannerMs = 0;
     this._lastCountdownSec = 3;
     this.bannerText = '3';
@@ -486,6 +498,7 @@ export class CrashAheadGame {
 
     const nextIdx = explicitArenaIdx !== null ? explicitArenaIdx : this._pickArenaIndex(this.sim.arenaIndex);
     this.sim.resetArena(nextIdx);
+    this.sim.stepHoverCountdown(0);
     this.sim.engine.timing.timeScale = 1.0;
     this._applyDifficultySpeeds();
     this.renderer.clearEffects();
@@ -541,14 +554,16 @@ export class CrashAheadGame {
       const empty = { l: false, r: false, jump: false };
       this.p1Input = empty;
       this.p2Input = empty;
-      this.sim.step(empty, empty, false, false);
       this.countdownMs -= FIXED_DT;
       if (this.countdownMs <= 0) {
+        this.sim.releaseHoverCountdown();
         this.phase = 'FIGHT';
         this.bannerText = 'GO!';
         this.goBannerMs = 600;
         this.sound.playCountdown(true);
       } else {
+        this._countdownElapsedMs = (this._countdownElapsedMs || 0) + FIXED_DT;
+        this.sim.stepHoverCountdown(this._countdownElapsedMs);
         const sec = clamp(Math.ceil(this.countdownMs / 1000), 1, 3);
         if (sec !== this._lastCountdownSec) {
           this._lastCountdownSec = sec;
@@ -610,7 +625,12 @@ export class CrashAheadGame {
     if (this.phase !== 'FIGHT') {
       this.p2Input = { l: false, r: false, holdMs: 0 };
       this.net.flushClientRelease();
-      this.sim.step({ l: false, r: false, holdMs: 0 }, { l: false, r: false, holdMs: 0 }, false, false);
+      if (this.phase === 'COUNTDOWN') {
+        this._countdownElapsedMs = (this._countdownElapsedMs || 0) + FIXED_DT;
+        this.sim.stepHoverCountdown(this._countdownElapsedMs);
+      } else {
+        this.sim.step({ l: false, r: false, holdMs: 0 }, { l: false, r: false, holdMs: 0 }, false, false);
+      }
       return;
     }
     const rawP2 = this.input.getP2();

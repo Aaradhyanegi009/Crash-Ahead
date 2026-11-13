@@ -411,6 +411,9 @@ export class PhysicsSimulation {
     for (const sw of arena.seesaws) {
       this._addSeesaw(sw);
     }
+    for (const s of this.seesaws) {
+      s.spawnAngle = s.body.angle;
+    }
 
     this.p1Car = this._buildRoadster(1, arena.p1Spawn.x, arena.p1Spawn.y);
     this.p2Car = this._buildRoadster(2, arena.p2Spawn.x, arena.p2Spawn.y);
@@ -521,6 +524,7 @@ export class PhysicsSimulation {
       wheelR,
       wheelF,
       head,
+      spawnParts: [chassis, wheelR, wheelF, head].map((b) => ({ x: b.position.x, y: b.position.y })),
       headConstraints: [neckSpine, neckL, neckR],
       headSevered: false,
       ragdollSpawned: false,
@@ -871,6 +875,38 @@ export class PhysicsSimulation {
       this.waterCrestY = Math.max(WATER_RISE.MIN_CREST_Y, this.waterCrestY - stepPx);
       this.waterHazardY = this.waterCrestY + WATER_RISE.HAZARD_OFFSET_Y;
     }
+  }
+
+  stepHoverCountdown(countdownElapsedMs = 0) {
+    const hoverY = -3.0 * (1 - Math.cos(countdownElapsedMs * 0.0055));
+    const cars = [this.p1Car, this.p2Car];
+    for (const car of cars) {
+      if (!car || !car.spawnParts) continue;
+      const parts = [car.chassis, car.wheelR, car.wheelF, car.head];
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const base = car.spawnParts[i];
+        if (!part || !base) continue;
+        this.Body.setPosition(part, { x: base.x, y: base.y + hoverY });
+        this.Body.setVelocity(part, { x: 0, y: 0 });
+        this.Body.setAngle(part, 0);
+        this.Body.setAngularVelocity(part, 0);
+      }
+      car.isAirborne = false;
+      car.airTicks = 0;
+      car.driving = false;
+    }
+
+    for (const s of this.seesaws) {
+      if (!s || !s.body) continue;
+      this.Body.setAngle(s.body, s.spawnAngle ?? 0);
+      this.Body.setAngularVelocity(s.body, 0);
+      this.Body.setVelocity(s.body, { x: 0, y: 0 });
+    }
+  }
+
+  releaseHoverCountdown() {
+    this.stepHoverCountdown(0);
   }
 
   step(p1Input, p2Input, canControl, updateWater = true) {
