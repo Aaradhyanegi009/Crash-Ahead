@@ -21,6 +21,7 @@ export class UIManager {
       btnMute: document.getElementById('btn-mute'),
       iconSoundOn: document.getElementById('icon-sound-on'),
       iconSoundOff: document.getElementById('icon-sound-off'),
+      botDiffButtons: Array.from(document.querySelectorAll('.bot-diff-btn')),
 
       tabHost: document.getElementById('tab-host'),
       tabJoin: document.getElementById('tab-join'),
@@ -64,6 +65,9 @@ export class UIManager {
     document.getElementById('btn-mode-local').addEventListener('click', () => h.onStartMode('local'));
     document.getElementById('btn-mode-ai').addEventListener('click', () => h.onStartMode('ai'));
     document.getElementById('btn-mode-online').addEventListener('click', h.onOpenOnline);
+    for (const btn of this.dom.botDiffButtons) {
+      btn.addEventListener('click', () => h.onSelectBotDifficulty(btn.dataset.diff));
+    }
 
     document.getElementById('btn-online-back').addEventListener('click', h.onOnlineBack);
     this.dom.tabHost.addEventListener('click', () => h.onSwitchOnlineTab('host'));
@@ -108,6 +112,12 @@ export class UIManager {
   updateCtrlLayoutLabel(singleLayout) {
     this.dom.btnCtrlToggle.textContent =
       singleLayout === 'split' ? '1P TOUCH: SPLIT THUMBS' : '1P TOUCH: SIDE PAIR';
+  }
+
+  updateBotDifficulty(diff) {
+    for (const btn of this.dom.botDiffButtons) {
+      btn.classList.toggle('active', btn.dataset.diff === diff);
+    }
   }
 
   updateMapPicker(selectedArenaIdx) {

@@ -98,6 +98,7 @@ export class InputManager {
     });
 
     window.addEventListener('blur', () => this._clearAllInputs());
+    window.addEventListener('pagehide', () => this._clearAllInputs());
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this._clearAllInputs();
     });
@@ -148,6 +149,11 @@ export class InputManager {
       p.el.addEventListener('pointermove', (e) => {
         const existing = this.activePointers.get(e.pointerId);
         if (!existing) return;
+        if (e.pointerType === 'mouse' && e.buttons === 0) {
+          this.activePointers.delete(e.pointerId);
+          this._recomputeState();
+          return;
+        }
         if (this.mode === 'local') {
           const hoveredKey = this._padKeyAtPoint(e.clientX, e.clientY);
           if (hoveredKey && hoveredKey !== existing.key) {

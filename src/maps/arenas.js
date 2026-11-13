@@ -353,15 +353,15 @@ export const ARENAS = Object.freeze([
       const yDeck = 452;
       if (isLeft) {
         const wing = sampleArcPoints(255, yDeck - rWing, rWing, Math.PI * 1.12, Math.PI * 0.5, 14);
-        const flat = sampleCurveX(255, 476, 12, (x) => {
-          const t = (x - 255) / 221;
+        const flat = sampleCurveX(255, 472, 12, (x) => {
+          const t = (x - 255) / 217;
           return yDeck - 4 * Math.sin(t * Math.PI);
         });
         const top = [...wing, ...flat.slice(1)];
         const tip = wing[0];
         const belly = chaikinSmooth([
-          { x: 476, y: yDeck + 6 },
-          { x: 468, y: 510 },
+          { x: 472, y: yDeck + 6 },
+          { x: 464, y: 510 },
           { x: 410, y: 568 },
           { x: 325, y: 584 },
           { x: 205, y: 562 },
@@ -371,8 +371,8 @@ export const ARENAS = Object.freeze([
         ], false, 2);
         return { top, belly, poly: [...top, ...belly.slice(1, -1)] };
       } else {
-        const flat = sampleCurveX(804, 1025, 12, (x) => {
-          const t = (x - 804) / 221;
+        const flat = sampleCurveX(808, 1025, 12, (x) => {
+          const t = (x - 808) / 217;
           return yDeck - 4 * Math.sin(t * Math.PI);
         });
         const wing = sampleArcPoints(1025, yDeck - rWing, rWing, Math.PI * 0.5, -Math.PI * 0.12, 14);
@@ -385,8 +385,8 @@ export const ARENAS = Object.freeze([
           { x: 1075, y: 562 },
           { x: 955, y: 584 },
           { x: 870, y: 568 },
-          { x: 812, y: 510 },
-          { x: 804, y: yDeck + 6 }
+          { x: 816, y: 510 },
+          { x: 808, y: yDeck + 6 }
         ], false, 2);
         return { top, belly, poly: [...top, ...belly.slice(1, -1)] };
       }
@@ -400,7 +400,7 @@ export const ARENAS = Object.freeze([
       openRocks: [],
       halfPipes: [],
       blocks: [],
-      seesaws: [{ x: 640, y: 452, w: 344 }],
+      seesaws: [{ x: 640, y: 465, w: 316, isBridge: true, maxAngle: 0.46, springRate: 0.0032 }],
       pills: STATIC_ROCK_PILLS,
       p1Spawn: { x: 295, y: 410 },
       p2Spawn: { x: 985, y: 410 }

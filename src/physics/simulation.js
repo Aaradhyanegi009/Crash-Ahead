@@ -52,6 +52,7 @@ export class PhysicsSimulation {
     this.onHeadKO = null;
     this.onWaterKO = null;
     this.onCarBump = null;
+    this.onJump = null;
 
     this._bindCollisions();
   }
@@ -142,30 +143,64 @@ export class PhysicsSimulation {
 
   _addSurfacePolyline(pts, inwardSign = 1, thickness = 34, closeLoop = false) {
     const count = closeLoop ? pts.length : pts.length - 1;
+    const jointRadius = thickness * 0.48;
+    const normals = [];
     for (let i = 0; i < count; i++) {
       const p0 = pts[i];
       const p1 = pts[(i + 1) % pts.length];
       const dx = p1.x - p0.x;
       const dy = p1.y - p0.y;
       const segLen = Math.hypot(dx, dy);
-      if (segLen < 1) continue;
+      if (segLen < 1) {
+        normals.push(null);
+        continue;
+      }
       const angle = Math.atan2(dy, dx);
       const nx = -Math.sin(angle) * inwardSign;
       const ny = Math.cos(angle) * inwardSign;
+      normals.push({ nx, ny });
       const cx = (p0.x + p1.x) * 0.5 + nx * (thickness * 0.5);
       const cy = (p0.y + p1.y) * 0.5 + ny * (thickness * 0.5);
 
-      const rect = this.Bodies.rectangle(cx, cy, segLen + 10, thickness, {
+      // Use exact segment length (+0.5px weld) so corners never poke above concave curves.
+      const rect = this.Bodies.rectangle(cx, cy, segLen + 0.5, thickness, {
         isStatic: true,
         angle,
-        chamfer: { radius: 6 },
-        friction: 1.0,
+        chamfer: { radius: 2 },
+        friction: 0.92,
         restitution: 0.08,
-        slop: 0.02,
+        slop: 0.015,
         label: 'island'
       });
       this.Composite.add(this.engine.world, rect);
       this.driveSurfaces.push(rect);
+    }
+
+    // Add interior tangent weld circles at vertices so convex joints never trap a tire.
+    const jointStart = closeLoop ? 0 : 1;
+    for (let i = jointStart; i < count; i++) {
+      const prevIdx = (i - 1 + normals.length) % normals.length;
+      const n0 = normals[prevIdx];
+      const n1 = normals[i];
+      if (!n0 || !n1) continue;
+      const ax = n0.nx + n1.nx;
+      const ay = n0.ny + n1.ny;
+      const len = Math.hypot(ax, ay) || 1;
+      const pt = pts[i];
+      const joint = this.Bodies.circle(
+        pt.x + (ax / len) * (thickness * 0.5),
+        pt.y + (ay / len) * (thickness * 0.5),
+        jointRadius,
+        {
+          isStatic: true,
+          friction: 0.92,
+          restitution: 0.08,
+          slop: 0.015,
+          label: 'island'
+        }
+      );
+      this.Composite.add(this.engine.world, joint);
+      this.driveSurfaces.push(joint);
     }
   }
 
@@ -181,23 +216,25 @@ export class PhysicsSimulation {
       const angle = Math.atan2(dy, dx);
       const cx = (p0.x + p1.x) * 0.5;
       const cy = (p0.y + p1.y) * 0.5;
-      const seg = this.Bodies.rectangle(cx, cy, segLen + 8, pipe.thickness, {
+      const seg = this.Bodies.rectangle(cx, cy, segLen + 0.5, pipe.thickness, {
         isStatic: true,
         angle,
-        chamfer: { radius: 6 },
-        friction: 1.0,
+        friction: 0.92,
         restitution: 0.10,
-        slop: 0.02,
+        slop: 0.015,
         label: 'island'
       });
       this.Composite.add(this.engine.world, seg);
       this.driveSurfaces.push(seg);
     }
-    for (const endPt of [pts[0], pts[pts.length - 1]]) {
-      const cap = this.Bodies.circle(endPt.x, endPt.y, pipe.thickness * 0.5, {
+    for (let i = 0; i < pts.length; i++) {
+      const pt = pts[i];
+      const capRadius = (i === 0 || i === pts.length - 1) ? pipe.thickness * 0.5 : pipe.thickness * 0.49;
+      const cap = this.Bodies.circle(pt.x, pt.y, capRadius, {
         isStatic: true,
-        friction: 1.0,
+        friction: 0.92,
         restitution: 0.10,
+        slop: 0.015,
         label: 'island'
       });
       this.Composite.add(this.engine.world, cap);
@@ -206,13 +243,14 @@ export class PhysicsSimulation {
   }
 
   _addSeesaw(cfg) {
+    const isBridge = !!cfg.isBridge;
     const plank = this.Bodies.rectangle(cfg.x, cfg.y, cfg.w, 28, {
-      density: 0.0042,
+      density: isBridge ? 0.0036 : 0.0042,
       chamfer: { radius: 14 },
-      friction: 1.0,
-      restitution: 0.10,
-      frictionAir: 0.012,
-      slop: 0.02,
+      friction: 0.95,
+      restitution: 0.08,
+      frictionAir: isBridge ? 0.006 : 0.012,
+      slop: 0.015,
       angle: cfg.angle || 0,
       label: 'seesaw'
     });
@@ -224,7 +262,15 @@ export class PhysicsSimulation {
       length: 0
     });
     this.Composite.add(this.engine.world, [plank, pivot]);
-    this.seesaws.push({ body: plank, x: cfg.x, y: cfg.y, w: cfg.w });
+    this.seesaws.push({
+      body: plank,
+      x: cfg.x,
+      y: cfg.y,
+      w: cfg.w,
+      isBridge,
+      maxAngle: typeof cfg.maxAngle === 'number' ? cfg.maxAngle : 0,
+      springRate: typeof cfg.springRate === 'number' ? cfg.springRate : 0
+    });
     this.driveSurfaces.push(plank);
   }
 
@@ -307,8 +353,8 @@ export class PhysicsSimulation {
       density: CAR_SPEC.density,
       restitution: CAR_SPEC.restitution,
       friction: CAR_SPEC.friction,
-      frictionAir: 0.012,
-      slop: 0.02,
+      frictionAir: 0.0045,
+      slop: 0.015,
       collisionFilter: { group },
       label: `chassis_${pTag}`
     });
@@ -317,10 +363,10 @@ export class PhysicsSimulation {
     const wheelR = this.Bodies.circle(x - CAR_SPEC.wheelOffsetX, y + CAR_SPEC.wheelOffsetY, CAR_SPEC.wheelRadius, {
       density: CAR_SPEC.wheelDensity,
       friction: CAR_SPEC.wheelFriction,
-      frictionStatic: 1.0,
+      frictionStatic: 0.22,
       restitution: CAR_SPEC.wheelRestitution,
-      frictionAir: 0.010,
-      slop: 0.01,
+      frictionAir: 0.004,
+      slop: 0.008,
       collisionFilter: { group },
       label: `wheel_${pTag}_r`
     });
@@ -328,10 +374,10 @@ export class PhysicsSimulation {
     const wheelF = this.Bodies.circle(x + CAR_SPEC.wheelOffsetX, y + CAR_SPEC.wheelOffsetY, CAR_SPEC.wheelRadius, {
       density: CAR_SPEC.wheelDensity,
       friction: CAR_SPEC.wheelFriction,
-      frictionStatic: 1.0,
+      frictionStatic: 0.22,
       restitution: CAR_SPEC.wheelRestitution,
-      frictionAir: 0.010,
-      slop: 0.01,
+      frictionAir: 0.004,
+      slop: 0.008,
       collisionFilter: { group },
       label: `wheel_${pTag}_f`
     });
@@ -409,8 +455,36 @@ export class PhysicsSimulation {
       accelDir: 0,
       groundAngle: 0,
       groundNormal: { x: 0, y: -1 },
-      driving: false
+      driving: false,
+      speedScale: 1.0,
+      accelScale: 1.0,
+      lastJumpAtMs: -99999
     };
+  }
+
+  triggerBotJump(car, chaseDir = 0) {
+    if (!car || car.dead) return false;
+    if (this.roundElapsedMs - car.lastJumpAtMs < 9000) return false;
+    if (car.isAirborne && car.airTicks > 8) return false;
+
+    const dxBoost = chaseDir * 1.35;
+    const bodies = [car.chassis, car.wheelR, car.wheelF, car.head];
+    for (const b of bodies) {
+      const targetVy = clamp(b.velocity.y - 7.8, -9.2, -5.8);
+      this.Body.setVelocity(b, {
+        x: clamp(b.velocity.x + dxBoost, -10.0, 10.0),
+        y: targetVy
+      });
+    }
+    car.lastJumpAtMs = this.roundElapsedMs;
+    car.airTicks = Math.max(car.airTicks, 2);
+    if (this.onJump) {
+      this.onJump(car.playerIndex, {
+        x: car.chassis.position.x,
+        y: car.chassis.position.y + CAR_SPEC.wheelOffsetY + 6
+      });
+    }
+    return true;
   }
 
   captureCarPose(car) {
@@ -443,6 +517,13 @@ export class PhysicsSimulation {
     if (!snap) return;
     const applyBody = (body, st) => {
       if (!body || !st) return;
+      if (Array.isArray(st)) {
+        this.Body.setPosition(body, { x: st[0], y: st[1] });
+        this.Body.setVelocity(body, { x: st[2], y: st[3] });
+        this.Body.setAngle(body, st[4]);
+        this.Body.setAngularVelocity(body, st[5]);
+        return;
+      }
       this.Body.setPosition(body, { x: st.x, y: st.y });
       this.Body.setAngle(body, st.a);
       if (typeof st.vx === 'number' && typeof st.vy === 'number') {
@@ -475,9 +556,15 @@ export class PhysicsSimulation {
     }
     if (snap.sw && this.seesaws.length === snap.sw.length) {
       for (let i = 0; i < this.seesaws.length; i++) {
-        this.Body.setAngle(this.seesaws[i].body, snap.sw[i].a);
-        if (typeof snap.sw[i].av === 'number') {
-          this.Body.setAngularVelocity(this.seesaws[i].body, snap.sw[i].av);
+        const swSt = snap.sw[i];
+        if (Array.isArray(swSt)) {
+          this.Body.setAngle(this.seesaws[i].body, swSt[0]);
+          this.Body.setAngularVelocity(this.seesaws[i].body, swSt[1]);
+        } else {
+          this.Body.setAngle(this.seesaws[i].body, swSt.a);
+          if (typeof swSt.av === 'number') {
+            this.Body.setAngularVelocity(this.seesaws[i].body, swSt.av);
+          }
         }
       }
     }
@@ -527,6 +614,11 @@ export class PhysicsSimulation {
     const g1 = this.vehicleController.updateVehicle(this.p1Car, activeP1, this.wheelContacts.p1, this.driveSurfaces);
     const g2 = this.vehicleController.updateVehicle(this.p2Car, activeP2, this.wheelContacts.p2, this.driveSurfaces);
 
+    if (canControl && activeP2.jump && this.p2Car && !this.p2Car.dead) {
+      const chaseDir = activeP2.r ? 1 : (activeP2.l ? -1 : 0);
+      this.triggerBotJump(this.p2Car, chaseDir);
+    }
+
     this.grounded.p1R = g1.rearGrounded;
     this.grounded.p1F = g1.frontGrounded;
     this.grounded.p2R = g2.rearGrounded;
@@ -538,7 +630,22 @@ export class PhysicsSimulation {
     this.vehicleController.clampAirborneAndMaxSpeed(this.p2Car);
 
     for (const sw of this.seesaws) {
-      this.Body.setAngularVelocity(sw.body, sw.body.angularVelocity * 0.985);
+      let av = sw.body.angularVelocity * 0.985;
+      if (sw.isBridge) {
+        if (sw.springRate > 0) {
+          av += -sw.body.angle * sw.springRate;
+        }
+        if (sw.maxAngle > 0) {
+          if (sw.body.angle > sw.maxAngle) {
+            this.Body.setAngle(sw.body, sw.maxAngle);
+            if (av > 0) av = 0;
+          } else if (sw.body.angle < -sw.maxAngle) {
+            this.Body.setAngle(sw.body, -sw.maxAngle);
+            if (av < 0) av = 0;
+          }
+        }
+      }
+      this.Body.setAngularVelocity(sw.body, av);
     }
 
     if (this.isHostSide) {

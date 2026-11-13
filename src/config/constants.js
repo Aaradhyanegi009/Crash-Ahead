@@ -77,22 +77,24 @@ export const VEHICLE_PHYSICS = Object.freeze({
   ACCEL_RAMP_MS: 600,
   ACCEL_MIN_GAIN: 0.24,
   ACCEL_RELEASE_DECAY: 2.4,
-  COAST_DRAG_COEFF: 0.0022,
-  CURVE_ADHESION_FORCE: 0.0105, // Centripetal grip for vertical wall climbs & loop launches
+  COAST_DRAG_COEFF: 0.00055,
+  CURVE_ADHESION_FORCE: 0.0118, // Centripetal grip for steep concave walls & curved bowls
   BRAKE_DECEL_FORCE: 0.025,
   BRAKE_ZERO_THRESHOLD: 0.28,
-  MAX_ANGULAR_VELOCITY: 0.135,
-  GROUND_ANGULAR_DAMPING: 0.86,
-  AIR_PITCH_TORQUE: 1.72,       // Balanced for composite car+wheel inertia (~21k): smooth controllable 360 backflips
-  MAX_AIR_TORQUE: 1.95,
-  AIR_MAX_SPIN: 0.105,          // Allows full 360 backflip off ramps while clamped against wild spin
-  AIR_ANGULAR_DAMPING: 0.90,
-  FORWARD_PITCH_MAX_OFFSET: 0.10,
+  MAX_ANGULAR_VELOCITY: 0.145,
+  GROUND_ANGULAR_DAMPING: 0.88,
+  AIR_PITCH_TORQUE: 1.86,       // Balanced for composite car+wheel inertia (~21k): snappy controllable 360 rolls
+  MAX_AIR_TORQUE: 2.05,
+  AIR_MAX_SPIN: 0.118,          // Fun air-rolls off ramps/steeps while clamped against wild spin
+  AIR_ANGULAR_DAMPING: 0.935,
+  FORWARD_WHEELIE_ANGLE: 0.088, // ~5 deg steady straight-line gas wheelie elevation against suspension
+  FORWARD_PITCH_MAX_OFFSET: 0.108,
   REVERSE_PITCH_BIAS: 0.04,
-  PITCH_KP: 0.014,
-  PITCH_KD: 0.18,
-  PITCH_TORQUE_LIMIT: 0.020,
+  PITCH_KP: 0.30,
+  PITCH_KD: 0.42,
+  PITCH_TORQUE_LIMIT: 0.052,
   WHEEL_BASE_FRICTION: 0.96,
+  WHEEL_COAST_FRICTION: 0.68,
   WHEEL_MAX_SPIN: 0.515,         // 6.6 / 13.05 = 0.506 rad/tick + grip headroom
   WHEEL_REVERSE_MAX_SPIN: 0.400, // 5.1 / 13.05 = 0.391 rad/tick + grip headroom
   GRAVITY_COMP_SCALE: 0.82

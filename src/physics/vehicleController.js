@@ -20,38 +20,43 @@ export class VehiclePhysicsController {
   _probeWheelRay(wheel, carDown, driveBodies) {
     if (!driveBodies || driveBodies.length === 0) return null;
     const start = wheel.position;
-    const probeDist = CAR_SPEC.wheelRadius + 3.8;
-    const end = {
-      x: start.x + carDown.x * probeDist,
-      y: start.y + carDown.y * probeDist
-    };
-    const hits = this.Query.ray(driveBodies, start, end, 4);
-    if (!hits || hits.length === 0) return null;
-
     const carUpX = -carDown.x;
     const carUpY = -carDown.y;
-    let bestN = null;
-    let bestDot = -1;
 
-    for (let i = 0; i < hits.length; i++) {
-      const h = hits[i];
-      let nx = h.normal ? h.normal.x : carUpX;
-      let ny = h.normal ? h.normal.y : carUpY;
-      if (nx * carDown.x + ny * carDown.y > 0) {
-        nx = -nx;
-        ny = -ny;
+    const castDir = (dx, dy, dist) => {
+      const end = { x: start.x + dx * dist, y: start.y + dy * dist };
+      const hits = this.Query.ray(driveBodies, start, end, 4);
+      if (!hits || hits.length === 0) return null;
+
+      let bestN = null;
+      let bestDot = -1;
+      for (let i = 0; i < hits.length; i++) {
+        const h = hits[i];
+        let nx = h.normal ? h.normal.x : -dx;
+        let ny = h.normal ? h.normal.y : -dy;
+        if (nx * dx + ny * dy > 0) {
+          nx = -nx;
+          ny = -ny;
+        }
+        const len = Math.hypot(nx, ny);
+        if (len < 0.001) continue;
+        nx /= len;
+        ny /= len;
+        const upDot = nx * carUpX + ny * carUpY;
+        if (upDot > 0.14 && upDot > bestDot) {
+          bestDot = upDot;
+          bestN = { x: nx, y: ny };
+        }
       }
-      const len = Math.hypot(nx, ny);
-      if (len < 0.001) continue;
-      nx /= len;
-      ny /= len;
-      const upDot = nx * carUpX + ny * carUpY;
-      if (upDot > 0.20 && upDot > bestDot) {
-        bestDot = upDot;
-        bestN = { x: nx, y: ny };
-      }
+      return bestN;
+    };
+
+    const primary = castDir(carDown.x, carDown.y, CAR_SPEC.wheelRadius + 5.6);
+    if (primary) return primary;
+    if (carDown.y > 0.35 && Math.abs(carDown.x) > 0.25) {
+      return castDir(0, 1, CAR_SPEC.wheelRadius + 2.8);
     }
-    return bestN;
+    return null;
   }
 
   detectGroundState(car, wheelContacts, driveBodies) {
@@ -74,6 +79,9 @@ export class VehiclePhysicsController {
             return { grounded: true, nx, ny };
           }
         }
+      }
+      if (car.isAirborne && Math.abs(angle) < 0.45 && wheel.velocity.y > 2.3) {
+        return { grounded: false, nx: 0, ny: 0 };
       }
       const rayNormal = this._probeWheelRay(wheel, carDown, driveBodies);
       if (rayNormal) {
@@ -103,8 +111,8 @@ export class VehiclePhysicsController {
       const len = Math.hypot(sumNx, sumNy) || 1;
       const targetNx = sumNx / len;
       const targetNy = sumNy / len;
-      const blendNx = lerp(car.groundNormal.x, targetNx, 0.50);
-      const blendNy = lerp(car.groundNormal.y, targetNy, 0.50);
+      const blendNx = lerp(car.groundNormal.x, targetNx, 0.72);
+      const blendNy = lerp(car.groundNormal.y, targetNy, 0.72);
       const bLen = Math.hypot(blendNx, blendNy) || 1;
       car.groundNormal = { x: blendNx / bLen, y: blendNy / bLen };
       car.groundAngle = Math.atan2(car.groundNormal.x, -car.groundNormal.y);
@@ -138,8 +146,9 @@ export class VehiclePhysicsController {
     const liftVel = -car.facing * car.chassis.angularVelocity;
 
     const err = targetNoseLift - noseLift;
-    const kp = extraAntiFlip && noseLift > 0.04 ? VEHICLE_PHYSICS.PITCH_KP * 1.65 : VEHICLE_PHYSICS.PITCH_KP;
-    const kd = extraAntiFlip && noseLift > 0.04 ? VEHICLE_PHYSICS.PITCH_KD * 1.35 : VEHICLE_PHYSICS.PITCH_KD;
+    const overTarget = noseLift > Math.max(0.11, targetNoseLift + 0.025);
+    const kp = extraAntiFlip && overTarget ? VEHICLE_PHYSICS.PITCH_KP * 1.45 : VEHICLE_PHYSICS.PITCH_KP;
+    const kd = extraAntiFlip && overTarget ? VEHICLE_PHYSICS.PITCH_KD * 1.25 : VEHICLE_PHYSICS.PITCH_KD;
     const torque = clamp(err * kp - liftVel * kd, -VEHICLE_PHYSICS.PITCH_TORQUE_LIMIT, VEHICLE_PHYSICS.PITCH_TORQUE_LIMIT);
     const nextAv = clamp(
       car.chassis.angularVelocity + (-car.facing * torque),
@@ -151,6 +160,7 @@ export class VehiclePhysicsController {
 
   clampAirborneAndMaxSpeed(car) {
     if (!car) return;
+    const spdScale = car.speedScale || 1.0;
     if (car.isAirborne) {
       const clampedAv = clamp(
         car.chassis.angularVelocity,
@@ -162,7 +172,7 @@ export class VehiclePhysicsController {
       }
     } else if (car.accelDir !== 0 && !car.dead) {
       const isRev = (car.accelDir * car.facing) < 0;
-      const maxS = isRev ? VEHICLE_PHYSICS.MAX_REVERSE_SPEED : VEHICLE_PHYSICS.MAX_FORWARD_SPEED;
+      const maxS = (isRev ? VEHICLE_PHYSICS.MAX_REVERSE_SPEED : VEHICLE_PHYSICS.MAX_FORWARD_SPEED) * spdScale;
       const tx = -car.groundNormal.y;
       const ty = car.groundNormal.x;
       const vT = car.chassis.velocity.x * tx + car.chassis.velocity.y * ty;
@@ -177,10 +187,11 @@ export class VehiclePhysicsController {
       }
     }
 
+    const worldCap = VEHICLE_PHYSICS.MAX_WORLD_SPEED * Math.max(1.0, spdScale);
     for (const body of [car.chassis, car.wheelR, car.wheelF, car.head]) {
       const spd = Math.hypot(body.velocity.x, body.velocity.y);
-      if (spd > VEHICLE_PHYSICS.MAX_WORLD_SPEED) {
-        const scale = VEHICLE_PHYSICS.MAX_WORLD_SPEED / spd;
+      if (spd > worldCap) {
+        const scale = worldCap / spd;
         this.Body.setVelocity(body, { x: body.velocity.x * scale, y: body.velocity.y * scale });
       }
     }
@@ -213,12 +224,13 @@ export class VehiclePhysicsController {
       const forwardPressed = car.facing > 0 ? inputR : inputL;
       const reversePressed = car.facing > 0 ? inputL : inputR;
       const pitchCmd = (forwardPressed ? 1 : 0) - (reversePressed ? 1 : 0);
-      const torqueDir = pitchCmd * car.facing;
+      // Inverted mid-air pitch rotation: Gas rolls nose-up/backflip, Reverse rolls nose-down
+      const torqueDir = -(pitchCmd * car.facing);
 
       if (torqueDir !== 0) {
-        const rampStart = pitchCmd < 0 ? 6 : 18;
-        const rampBase = pitchCmd < 0 ? 0.32 : 0.27;
-        const airGain = lerp(rampBase, 1.0, clamp((car.airTicks - rampStart) / 9, 0, 1));
+        const rampStart = pitchCmd > 0 ? 15 : 9;
+        const rampBase = pitchCmd > 0 ? 0.13 : 0.24;
+        const airGain = lerp(rampBase, 1.0, clamp((car.airTicks - rampStart) / 8, 0, 1));
         const clampedTorque = clamp(
           torqueDir * VEHICLE_PHYSICS.AIR_PITCH_TORQUE * airGain,
           -VEHICLE_PHYSICS.MAX_AIR_TORQUE,
@@ -243,16 +255,16 @@ export class VehiclePhysicsController {
     const vT = car.chassis.velocity.x * tx + car.chassis.velocity.y * ty;
 
     if (worldDir === 0) {
-      // Ease-out when gas is released: no wall adhesion (cleanly detaches from ramp lips for backflips!)
+      // Ease-out with reduced coasting friction so landed/released cars keep a slight natural roll
       car.accelDir = 0;
       car.accelHoldMs = Math.max(0, car.accelHoldMs - FIXED_DT * VEHICLE_PHYSICS.ACCEL_RELEASE_DECAY);
-      car.wheelR.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
-      car.wheelF.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
+      car.wheelR.friction = VEHICLE_PHYSICS.WHEEL_COAST_FRICTION;
+      car.wheelF.friction = VEHICLE_PHYSICS.WHEEL_COAST_FRICTION;
 
-      this.Body.setAngularVelocity(car.wheelR, car.wheelR.angularVelocity * 0.955);
-      this.Body.setAngularVelocity(car.wheelF, car.wheelF.angularVelocity * 0.955);
-      if (Math.abs(vT) > 0.05) {
-        const dragMag = clamp(Math.abs(vT) * VEHICLE_PHYSICS.COAST_DRAG_COEFF, 0.0004, 0.014);
+      this.Body.setAngularVelocity(car.wheelR, car.wheelR.angularVelocity * 0.992);
+      this.Body.setAngularVelocity(car.wheelF, car.wheelF.angularVelocity * 0.992);
+      if (Math.abs(vT) > 0.08) {
+        const dragMag = clamp(Math.abs(vT) * VEHICLE_PHYSICS.COAST_DRAG_COEFF, 0.00008, 0.005);
         const dragSign = vT > 0 ? -1 : 1;
         this.Body.applyForce(car.chassis, car.chassis.position, {
           x: tx * dragSign * dragMag,
@@ -320,9 +332,11 @@ export class VehiclePhysicsController {
     const smoothStep = rampU * rampU * (3 - 2 * rampU);
     const progressiveGain = VEHICLE_PHYSICS.ACCEL_MIN_GAIN + (1 - VEHICLE_PHYSICS.ACCEL_MIN_GAIN) * smoothStep;
 
-    const maxSpeed = isReverse ? VEHICLE_PHYSICS.MAX_REVERSE_SPEED : VEHICLE_PHYSICS.MAX_FORWARD_SPEED;
-    const baseTorque = isReverse ? VEHICLE_PHYSICS.REVERSE_TORQUE : VEHICLE_PHYSICS.FORWARD_TORQUE;
-    const maxWheelSpin = isReverse ? VEHICLE_PHYSICS.WHEEL_REVERSE_MAX_SPIN : VEHICLE_PHYSICS.WHEEL_MAX_SPIN;
+    const spdScale = car.speedScale || 1.0;
+    const accScale = car.accelScale || spdScale;
+    const maxSpeed = (isReverse ? VEHICLE_PHYSICS.MAX_REVERSE_SPEED : VEHICLE_PHYSICS.MAX_FORWARD_SPEED) * spdScale;
+    const baseTorque = (isReverse ? VEHICLE_PHYSICS.REVERSE_TORQUE : VEHICLE_PHYSICS.FORWARD_TORQUE) * accScale;
+    const maxWheelSpin = (isReverse ? VEHICLE_PHYSICS.WHEEL_REVERSE_MAX_SPIN : VEHICLE_PHYSICS.WHEEL_MAX_SPIN) * spdScale;
 
     const speedRatio = clamp(vAlong / maxSpeed, 0, 1.25);
     const lowEndMultiplier = 1.0 - 0.52 * clamp(speedRatio, 0, 1);
@@ -356,6 +370,7 @@ export class VehiclePhysicsController {
     const noseGrounded = car.facing > 0 ? ground.frontGrounded : ground.rearGrounded;
     const tailGrounded = car.facing > 0 ? ground.rearGrounded : ground.frontGrounded;
 
+    // Speed Boost multiplier applies tangentially without exceeding speed cap
     const chassisFrac = 0.50;
     let tailFrac = isReverse ? 0.20 : 0.28;
     let noseFrac = isReverse ? 0.30 : 0.22;
@@ -386,11 +401,15 @@ export class VehiclePhysicsController {
       }
     }
 
-    // Centripetal tire adhesion on steep curved walls & loops while actively throttling
-    if (uphillFactor > 0.12 || ground.normal.y > -0.90) {
-      const speedNorm = clamp(Math.abs(vAlong) / maxSpeed, 0.20, 1.0);
-      const wallFactor = clamp((ground.normal.y + 0.90) * 1.15, 0.25, 1.2);
-      const stick = VEHICLE_PHYSICS.CURVE_ADHESION_FORCE * Math.pow(speedNorm, 1.3) * wallFactor;
+    // Track concave bowls/walls with strong centripetal adhesion (Map 4 loops, Map 5 canyon, Map 7 oval, Map 8 bowls),
+    // while releasing downward suction on fast kicker crests so steeps/ramps launch into fun air-rolls!
+    const onSteepWallOrLoop = ground.normal.y > -0.78;
+    const crestingHillLip = !onSteepWallOrLoop && vAlong > 5.3 && uphillFactor > 0.34 && tailGrounded && !noseGrounded;
+    const concaveOrWall = onSteepWallOrLoop || (ground.normal.y > -0.90 && uphillFactor > 0.12 && ground.groundedCount === 2);
+    if (!crestingHillLip && concaveOrWall && vAlong > 0.7) {
+      const speedNorm = clamp(Math.abs(vAlong) / maxSpeed, 0.24, 1.0);
+      const wallFactor = clamp((ground.normal.y + 0.88) * 1.25, 0.30, 1.35);
+      const stick = VEHICLE_PHYSICS.CURVE_ADHESION_FORCE * Math.pow(speedNorm, 1.2) * wallFactor;
       this.Body.applyForce(car.chassis, car.chassis.position, {
         x: -ground.normal.x * stick,
         y: -ground.normal.y * stick
@@ -399,9 +418,27 @@ export class VehiclePhysicsController {
 
     if (isReverse) {
       this._applyPitchStability(car, ground.groundAngle, -VEHICLE_PHYSICS.REVERSE_PITCH_BIAS, true);
+    } else if (crestingHillLip) {
+      this._applyPitchStability(car, ground.groundAngle, VEHICLE_PHYSICS.FORWARD_PITCH_MAX_OFFSET, true);
     } else {
-      const forwardTargetLift = clamp(0.02 + uphillFactor * 0.06, 0, VEHICLE_PHYSICS.FORWARD_PITCH_MAX_OFFSET);
-      this._applyPitchStability(car, ground.groundAngle, forwardTargetLift, false);
+      // Immediate controlled +5 deg wheelie elevation on straight terrain, fading cleanly on slopes so hills/bumps stay planted
+      const slopeFade = clamp((Math.abs(ground.groundAngle) - 0.08) / 0.14, 0, 1);
+      const forwardTargetLift = lerp(VEHICLE_PHYSICS.FORWARD_WHEELIE_ANGLE, 0.0, slopeFade);
+      this._applyPitchStability(car, ground.groundAngle, forwardTargetLift, true);
+      // Apply subtle front-axle wheelie weight-transfer on straight flat terrain when below 5 deg target
+      const noseLiftNow = -car.facing * normalizeAngle(car.chassis.angle - ground.groundAngle);
+      if (
+        slopeFade < 0.5 &&
+        Math.abs(uphillFactor) < 0.08 &&
+        car.accelHoldMs > 30 &&
+        noseLiftNow < forwardTargetLift - 0.004
+      ) {
+        const liftGain = clamp((forwardTargetLift - noseLiftNow) / VEHICLE_PHYSICS.FORWARD_WHEELIE_ANGLE, 0, 1);
+        this.Body.applyForce(noseWheel, noseWheel.position, {
+          x: ground.normal.x * 0.0040 * liftGain,
+          y: ground.normal.y * 0.0040 * liftGain
+        });
+      }
     }
 
     return ground;

@@ -6,8 +6,8 @@
 // Ordered by preference (measured latency / delivery reliability). The host
 // picks the most preferred broker on which the joining player's hello arrived.
 export const RELAY_BROKERS = Object.freeze([
-  'wss://broker.hivemq.com:8884/mqtt',
   'wss://test.mosquitto.org:8081/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt',
   'wss://broker.emqx.io:8084/mqtt'
 ]);
 
@@ -140,6 +140,7 @@ export class MqttRelayLink {
     if (type === 9) { // SUBACK
       if (this.ready) return;
       this.ready = true;
+      this.readyAt = performance.now();
       this.pingTimer = setInterval(() => this._write(new Uint8Array([0xc0, 0x00])), 20000);
       if (this.onReady) this.onReady(this);
       return;

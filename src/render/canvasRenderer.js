@@ -106,6 +106,21 @@ export class CanvasRenderer {
     this.popStar = { x, y, color, life: 1.0 };
   }
 
+  spawnJumpBurst(x, y) {
+    for (let i = 0; i < 6; i++) {
+      const ang = -Math.PI * (0.15 + (i / 5) * 0.7);
+      const spd = 2.4 + (i % 2) * 1.4;
+      this.smoke.push({
+        x: x + (i - 2.5) * 6,
+        y,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd * 0.65,
+        r: 5.5,
+        life: 0.95
+      });
+    }
+  }
+
   updateEffects(dtScale = 1, sim = null) {
     this.tickCount++;
     if (sim) {

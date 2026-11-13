@@ -22,7 +22,8 @@ export class CrashAheadGame {
     this.renderer = new CanvasRenderer(this.canvas);
     this.input = new InputManager(this.sound);
     this.ui = new UIManager();
-    this.ai = new SmartAI();
+    this.aiDifficulty = 'hard';
+    this.ai = new SmartAI(this.aiDifficulty);
     this.sim = new PhysicsSimulation(true);
 
     this.mode = 'attract'; // 'attract' | 'ai' | 'local' | 'online_host' | 'online_client'
@@ -115,6 +116,10 @@ export class CrashAheadGame {
       this.sound.playBump(norm);
       if (norm > 0.4) Haptics.bump();
       if (this.mode === 'online_host') this.net.sendEvent('bump', { n: Math.round(norm * 100) / 100 });
+    };
+    this.sim.onJump = (_idx, pt) => {
+      this.renderer.spawnJumpBurst(pt.x, pt.y);
+      if (this.mode !== 'attract') this.sound.playJump();
     };
   }
 
@@ -225,6 +230,7 @@ export class CrashAheadGame {
     this.ui.updateSoundIcon(this.sound.muted);
     this.ui.updateMapPicker(this.selectedArenaIdx);
     this.ui.updateCtrlLayoutLabel(this.input.singleLayout);
+    this.ui.updateBotDifficulty(this.aiDifficulty);
 
     this.ui.bindHandlers({
       onForceLandscape: () => {
@@ -271,6 +277,11 @@ export class CrashAheadGame {
         this.sound.unlock();
         this.sound.playClick();
         this.startMatch(mode);
+      },
+      onSelectBotDifficulty: (diff) => {
+        this.sound.unlock();
+        this.sound.playClick();
+        this.setBotDifficulty(diff);
       },
       onOpenOnline: () => {
         this.sound.unlock();
@@ -397,8 +408,27 @@ export class CrashAheadGame {
 
   _triggerOnlineRematch() {
     const arenaIdx = this._pickArenaIndex(this.sim.arenaIndex);
-    this.net.sendEvent('rematch_start', { ai: arenaIdx });
+    this.net.sendRematchStart(arenaIdx);
     this.startMatch('online_host', arenaIdx);
+  }
+
+  setBotDifficulty(diff) {
+    this.ai.setDifficulty(diff);
+    this.aiDifficulty = this.ai.difficulty;
+    this.ui.updateBotDifficulty(this.aiDifficulty);
+    this._applyDifficultySpeeds();
+  }
+
+  _applyDifficultySpeeds() {
+    const prof = this.mode === 'ai' ? this.ai.getProfile() : null;
+    if (this.sim.p1Car) {
+      this.sim.p1Car.speedScale = 1.0;
+      this.sim.p1Car.accelScale = 1.0;
+    }
+    if (this.sim.p2Car) {
+      this.sim.p2Car.speedScale = prof ? prof.speedScale : 1.0;
+      this.sim.p2Car.accelScale = prof ? prof.accelScale : 1.0;
+    }
   }
 
   _resetRound(explicitArenaIdx = null) {
@@ -410,9 +440,13 @@ export class CrashAheadGame {
     this._pendingAward = 0;
     this.p1Input = { l: false, r: false };
     this.p2Input = { l: false, r: false };
+    if (this.mode === 'online_host' || this.mode === 'online_client') {
+      this.net.resetRoundInput();
+    }
 
     const nextIdx = explicitArenaIdx !== null ? explicitArenaIdx : this._pickArenaIndex(this.sim.arenaIndex);
     this.sim.resetArena(nextIdx);
+    this._applyDifficultySpeeds();
     this.renderer.clearEffects();
   }
 
@@ -457,10 +491,13 @@ export class CrashAheadGame {
         this.koTimerMs = KO_FREEZE_MS;
         this.sim.engine.timing.timeScale = 0.25;
         this.bannerText = this._pendingAward === 0 ? 'DRAW!' : 'BONK!';
+        if (this.mode === 'online_host') this.net.resetRoundInput();
       }
     }
 
     if (this.phase === 'KO') {
+      this.p1Input = { l: false, r: false };
+      this.p2Input = { l: false, r: false };
       this.sim.step({ l: false, r: false }, { l: false, r: false }, false, false);
       this.koTimerMs -= FIXED_DT;
       if (this.koTimerMs <= 0) {
@@ -480,7 +517,10 @@ export class CrashAheadGame {
       this.p1Input = this.input.getP1();
       if (this.mode === 'ai') this.p2Input = this.ai.decide(this.sim, false);
       else if (this.mode === 'local') this.p2Input = this.input.getP2();
-      else if (this.mode === 'online_host') this.p2Input = this.net.remoteInput;
+      else if (this.mode === 'online_host') {
+        this.net.tickHostWatchdog();
+        this.p2Input = this.net.remoteInput;
+      }
 
       this.sim.step(this.p1Input, this.p2Input, true, true);
     }
@@ -503,13 +543,18 @@ export class CrashAheadGame {
     if (this.phase === 'MATCH_OVER') return;
     if (this.phase !== 'FIGHT') {
       this.p2Input = { l: false, r: false, holdMs: 0 };
+      this.net.flushClientRelease();
       this.sim.step({ l: false, r: false, holdMs: 0 }, { l: false, r: false, holdMs: 0 }, false, false);
       return;
     }
     const rawP2 = this.input.getP2();
     this.p2Input = rawP2;
     const cmd = this.net.queueClientInput(rawP2);
-    this.sim.step(this.net.lastHostP1Input, cmd, true, false);
+    this.net.hostInputPredictTicks = (this.net.hostInputPredictTicks || 0) + 1;
+    const hostP1 = this.net.hostInputPredictTicks <= 6
+      ? this.net.lastHostP1Input
+      : { l: false, r: false, holdMs: 0 };
+    this.sim.step(hostP1, cmd, true, false);
   }
 
   _updateAudio() {

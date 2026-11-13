@@ -1,5 +1,6 @@
 import { PEER_PREFIX } from '../config/constants.js';
 import { BODY_KEYS } from '../physics/vehicleController.js';
+import { clamp } from '../utils/math.js';
 import { MqttRelayLink, RELAY_BROKERS } from './mqttRelay.js';
 
 const BC_LOBBY_CHANNEL = 'unfair-crash-ahead-lobby';
@@ -56,6 +57,7 @@ export class NetworkManager {
     this.cb = callbacks;
     this.peer = null;
     this.conn = null;
+    this.fastConn = null;
     this.role = null;
     this.roomCode = '';
     this.pingMs = 0;
@@ -83,10 +85,14 @@ export class NetworkManager {
     this.lastRelaySnapAt = 0;
     this.lastRemoteAt = 0;
 
+    this.matchEpoch = 1;
     this.remoteInput = { seq: 0, l: false, r: false, holdMs: 0 };
+    this.remoteInputAt = 0;
     this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
+    this.hostInputPredictTicks = 0;
     this.inputSeq = 0;
     this.inputSendTick = 0;
+    this.releaseBurstLeft = 0;
     this.lastInputSent = { l: false, r: false };
     this.pendingInputs = [];
     this.pendingSnapshot = null;
@@ -129,11 +135,20 @@ export class NetworkManager {
     return this.relayPeerReady || this.relayLinks.some((l) => !l.closed);
   }
 
-  _sendRaw(msg) {
+  _sendRaw(msg, fast = false) {
     if (this.localPeerReady && this.localChan) {
       try {
         this.localChan.postMessage({ _from: this.role, payload: msg });
         return true;
+      } catch (_) {}
+    }
+    if (fast && this.fastConn && this.fastConn.open) {
+      try {
+        const dc = this.fastConn.dataChannel || this.fastConn._dc;
+        if (!dc || dc.bufferedAmount < 16384) {
+          this.fastConn.send(msg);
+          return true;
+        }
       } catch (_) {}
     }
     if (this.conn && this.conn.open) {
@@ -180,7 +195,7 @@ export class NetworkManager {
         for (const l of this.relayLinks) {
           if (l.ready) l.publish(`${this._relayBase()}/h`, { f: this.relayId, k: 'hello' });
         }
-      }, 900);
+      }, 480);
     }
   }
 
@@ -235,27 +250,33 @@ export class NetworkManager {
           link.publish(`${this._relayBase()}/c/${msg.f}`, { f: this.relayId, k: 'busy' });
           return;
         }
-        // Collect hellos for a short window, then lock onto the most preferred broker
+        // Collect arriving hellos for a brief 260ms race window, preferring lowest-latency arrival
         if (this.relayPendingPeer && this.relayPendingPeer !== msg.f) return;
         this.relayPendingPeer = msg.f;
-        if (!this.relayCandidates.includes(link)) this.relayCandidates.push(link);
+        if (!this.relayCandidates.some((c) => c.link === link)) {
+          this.relayCandidates.push({ link, arrivedAt: performance.now() });
+        }
         if (!this.relayPickTimer) {
           this.relayPickTimer = setTimeout(() => {
             this.relayPickTimer = null;
-            const cands = this.relayCandidates.filter((l) => !l.closed);
+            const cands = this.relayCandidates.filter((c) => !c.link.closed);
             this.relayCandidates = [];
             const peer = this.relayPendingPeer;
             this.relayPendingPeer = null;
             if (!cands.length || this.relayPeerReady || this.role !== 'host') return;
             if (this.isConnected() && peer !== this.p2pPeerRid) return;
-            cands.sort((a, b) => RELAY_BROKERS.indexOf(a.url) - RELAY_BROKERS.indexOf(b.url));
-            const best = cands[0];
+            cands.sort((a, b) => {
+              const dt = a.arrivedAt - b.arrivedAt;
+              if (Math.abs(dt) > 40) return dt;
+              return RELAY_BROKERS.indexOf(a.link.url) - RELAY_BROKERS.indexOf(b.link.url);
+            });
+            const best = cands[0].link;
             this.relayPeerId = peer;
             this._lockRelayLink(best);
             this.relayPeerReady = true;
             best.publish(this._relayPeerTopic(), { f: this.relayId, k: 'welcome' });
             this._markConnected();
-          }, 700);
+          }, 260);
         }
         return;
       }
@@ -301,15 +322,39 @@ export class NetworkManager {
     }
   }
 
-  resetPredictionState() {
-    this.remoteInput = { seq: 0, l: false, r: false, holdMs: 0 };
+  resetRoundInput() {
+    this.remoteInput = { seq: this.remoteInput.seq || 0, l: false, r: false, holdMs: 0 };
+    this.remoteInputAt = 0;
     this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
+    this.hostInputPredictTicks = 0;
+    this.releaseBurstLeft = 0;
+    this.lastInputSent = { l: false, r: false };
+    this.pendingInputs = [];
+  }
+
+  resetPredictionState(nextEpoch = null) {
+    if (typeof nextEpoch === 'number') this.matchEpoch = nextEpoch;
+    this.remoteInput = { seq: 0, l: false, r: false, holdMs: 0 };
+    this.remoteInputAt = 0;
+    this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
+    this.hostInputPredictTicks = 0;
     this.inputSeq = 0;
     this.inputSendTick = 0;
+    this.releaseBurstLeft = 0;
     this.lastInputSent = { l: false, r: false };
     this.pendingInputs = [];
     this.pendingSnapshot = null;
     this.lastSeq = 0;
+  }
+
+  tickHostWatchdog() {
+    if ((this.remoteInput.l || this.remoteInput.r) && this.remoteInputAt > 0) {
+      if (performance.now() - this.remoteInputAt > 420) {
+        this.remoteInput.l = false;
+        this.remoteInput.r = false;
+        this.remoteInput.holdMs = 0;
+      }
+    }
   }
 
   _closeLocalRoom() {
@@ -333,6 +378,9 @@ export class NetworkManager {
     if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
     this._closeLocalRoom();
     this._stopRelay(true);
+    const oldFast = this.fastConn;
+    this.fastConn = null;
+    if (oldFast) { try { oldFast.close(); } catch (_) {} }
     const oldConn = this.conn;
     this.conn = null;
     if (oldConn) { try { oldConn.close(); } catch (_) {} }
@@ -342,6 +390,7 @@ export class NetworkManager {
     this.p2pPeerRid = null;
     this.pendingReliable.clear();
     this.seenEids.clear();
+    this.matchEpoch = 1;
     this.resetPredictionState();
   }
 
@@ -460,6 +509,10 @@ export class NetworkManager {
       }
       this.peer.on('connection', (conn) => {
         if (this.localPeerReady) { conn.close(); return; }
+        if (conn.label === 'fast' || conn.reliable === false) {
+          this._attachFastConnection(conn);
+          return;
+        }
         if (this.conn && this.conn.open) { conn.close(); return; }
         this._attachConnection(conn);
       });
@@ -478,8 +531,20 @@ export class NetworkManager {
     this._initPeer(null, () => {
       this.role = 'client';
       if (this.localPeerReady) return;
-      const conn = this.peer.connect(PEER_PREFIX + normalized, { serialization: 'json', reliable: true, metadata: { rid: this.relayId } });
+      const conn = this.peer.connect(PEER_PREFIX + normalized, {
+        label: 'ctrl',
+        serialization: 'json',
+        reliable: true,
+        metadata: { rid: this.relayId }
+      });
       this._attachConnection(conn);
+      const fastConn = this.peer.connect(PEER_PREFIX + normalized, {
+        label: 'fast',
+        serialization: 'json',
+        reliable: false,
+        metadata: { rid: this.relayId }
+      });
+      this._attachFastConnection(fastConn);
     });
     if (this.dialTimer) clearTimeout(this.dialTimer);
     this.dialTimer = setTimeout(() => {
@@ -490,6 +555,20 @@ export class NetworkManager {
         this.cb.onStatus('Room not found. Check the code and make sure the host is waiting.', 'error', true);
       }
     }, JOIN_TIMEOUT_MS);
+  }
+
+  _attachFastConnection(conn) {
+    if (!conn) return;
+    if (this.fastConn && this.fastConn !== conn) {
+      try { this.fastConn.close(); } catch (_) {}
+    }
+    this.fastConn = conn;
+    conn.on('data', (msg) => {
+      if (this.fastConn !== conn || this.localPeerReady) return;
+      this._handleMessage(msg);
+    });
+    conn.on('close', () => { if (this.fastConn === conn) this.fastConn = null; });
+    conn.on('error', () => { if (this.fastConn === conn) this.fastConn = null; });
   }
 
   _attachConnection(conn) {
@@ -588,39 +667,60 @@ export class NetworkManager {
         this.pendingReliable.delete(msg.eid);
         break;
       case 'ping':
-        if (this.isConnected()) this._sendRaw({ t: 'pong', ts: msg.ts });
+        if (this.isConnected()) this._sendRaw({ t: 'pong', ts: msg.ts }, true);
         break;
       case 'pong':
         this.pingMs = Math.max(1, Math.round(performance.now() - msg.ts));
         this.cb.onPing(this.pingMs);
         break;
       case 'input': {
+        if (typeof msg.ep === 'number' && msg.ep !== this.matchEpoch) return;
         const seq = msg.seq || 0;
         if (seq >= this.remoteInput.seq || seq === 0) {
           this.remoteInput = { seq, l: !!msg.l, r: !!msg.r, holdMs: msg.holdMs || 0 };
+          this.remoteInputAt = performance.now();
         }
         break;
       }
       case 'match_start':
-        this.resetPredictionState();
+        this.resetPredictionState(typeof msg.ep === 'number' ? msg.ep : this.matchEpoch);
         this.cb.onMatchStart(msg.ai || 0);
         break;
       case 'request_start':
         if (this.role === 'host' && this.cb.onStartRequested) this.cb.onStartRequested();
         break;
-      case 'snap':
+      case 'snap': {
+        if (typeof msg.ep === 'number') {
+          if (msg.ep < this.matchEpoch) return;
+          if (msg.ep > this.matchEpoch) {
+            this.resetPredictionState(msg.ep);
+          }
+        }
         if (msg.sq <= this.lastSeq) return;
         this.lastSeq = msg.sq;
         this.pendingSnapshot = msg;
         if (this.cb.onSnapshotPacket) this.cb.onSnapshotPacket(msg);
         break;
+      }
       case 'evt':
-        if (msg.kind === 'rematch_start') this.resetPredictionState();
+        if (msg.kind === 'rematch_start') {
+          this.resetPredictionState(typeof msg.ep === 'number' ? msg.ep : (this.matchEpoch + 1));
+        }
         this.cb.onGameEvent(msg);
         break;
       case 'rematch':
         this.cb.onRematchSignal();
         break;
+    }
+  }
+
+  flushClientRelease() {
+    if (!this.isConnected()) return;
+    if (this.lastInputSent.l || this.lastInputSent.r) {
+      const seq = ++this.inputSeq;
+      this.lastInputSent = { l: false, r: false };
+      this.releaseBurstLeft = 2;
+      this._sendRaw({ t: 'input', ep: this.matchEpoch, seq, l: false, r: false, holdMs: 0 }, true);
     }
   }
 
@@ -631,24 +731,35 @@ export class NetworkManager {
     const holdMs = (inp && inp.holdMs) || 0;
     const cmd = { seq, l, r, holdMs };
     this.pendingInputs.push(cmd);
-    if (this.pendingInputs.length > 90) this.pendingInputs.shift();
+    if (this.pendingInputs.length > 60) this.pendingInputs.shift();
 
     if (this.isConnected()) {
       this.inputSendTick++;
       const changed = l !== this.lastInputSent.l || r !== this.lastInputSent.r;
+      if (changed && !l && !r) this.releaseBurstLeft = 2;
       const relayOnly = this.transportName() === 'relay';
-      const heldSend = (l || r) && (!relayOnly || this.inputSendTick % 2 === 0);
-      if (changed || heldSend || this.inputSendTick % 4 === 0) {
+      const heldSend = (l || r) && (this.inputSendTick % (relayOnly ? 3 : 2) === 0);
+      const releaseEcho = !l && !r && this.releaseBurstLeft > 0;
+      const idleHeartbeat = this.inputSendTick % (relayOnly ? 8 : 4) === 0;
+      if (changed || heldSend || releaseEcho || idleHeartbeat) {
+        if (releaseEcho) this.releaseBurstLeft--;
         this.lastInputSent = { l, r };
-        this._sendRaw({ t: 'input', seq, l, r, holdMs });
+        this._sendRaw({ t: 'input', ep: this.matchEpoch, seq, l, r, holdMs }, true);
       }
     }
     return cmd;
   }
 
   sendMatchStart(arenaIndex) {
-    this.resetPredictionState();
-    this.sendReliable('match_start', { ai: arenaIndex });
+    const nextEp = this.matchEpoch + 1;
+    this.resetPredictionState(nextEp);
+    this.sendReliable('match_start', { ai: arenaIndex, ep: nextEp });
+  }
+
+  sendRematchStart(arenaIndex) {
+    const nextEp = this.matchEpoch + 1;
+    this.resetPredictionState(nextEp);
+    this.sendReliable('evt', { kind: 'rematch_start', ai: arenaIndex, ep: nextEp });
   }
 
   sendRequestStart() {
@@ -665,16 +776,18 @@ export class NetworkManager {
 
   buildHostSnapshot(sim, meta) {
     this.lastSeq++;
-    const pack = (b) => ({
-      x: Math.round(b.position.x * 10) / 10,
-      y: Math.round(b.position.y * 10) / 10,
-      vx: Math.round(b.velocity.x * 100) / 100,
-      vy: Math.round(b.velocity.y * 100) / 100,
-      a: Math.round(b.angle * 1000) / 1000,
-      av: Math.round(b.angularVelocity * 1000) / 1000
-    });
+    const pack = (b) => [
+      Math.round(b.position.x * 10) / 10,
+      Math.round(b.position.y * 10) / 10,
+      Math.round(b.velocity.x * 100) / 100,
+      Math.round(b.velocity.y * 100) / 100,
+      Math.round(b.angle * 1000) / 1000,
+      Math.round(b.angularVelocity * 1000) / 1000
+    ];
+    const p1 = meta.p1Input;
     const payload = {
       t: 'snap',
+      ep: this.matchEpoch,
       sq: this.lastSeq,
       ak: this.remoteInput.seq,
       ai: sim.arenaIndex,
@@ -684,7 +797,7 @@ export class NetworkManager {
       bt: meta.bannerText,
       rt: Math.round(sim.roundElapsedMs),
       wy: Math.round(sim.waterCrestY * 10) / 10,
-      i1: meta.p1Input ? { l: !!meta.p1Input.l, r: !!meta.p1Input.r, holdMs: meta.p1Input.holdMs || 0 } : { l: false, r: false, holdMs: 0 },
+      i1: p1 ? [p1.l ? 1 : 0, p1.r ? 1 : 0, p1.holdMs || 0] : [0, 0, 0],
       d1: sim.p1Car.dead ? 1 : 0,
       d2: sim.p2Car.dead ? 1 : 0,
       dr1: sim.p1Car.driving ? 1 : 0,
@@ -693,10 +806,10 @@ export class NetworkManager {
       hm2: Math.round(sim.p2Car.accelHoldMs || 0),
       ad1: sim.p1Car.accelDir || 0,
       ad2: sim.p2Car.accelDir || 0,
-      sw: sim.seesaws.map((s) => ({
-        a: Math.round(s.body.angle * 1000) / 1000,
-        av: Math.round(s.body.angularVelocity * 1000) / 1000
-      }))
+      sw: sim.seesaws.map((s) => [
+        Math.round(s.body.angle * 1000) / 1000,
+        Math.round(s.body.angularVelocity * 1000) / 1000
+      ])
     };
     for (const [carKey, bodyKey, shortKey] of BODY_KEYS) {
       payload[shortKey] = pack(sim[carKey][bodyKey]);
@@ -708,16 +821,17 @@ export class NetworkManager {
     if (!this.isConnected()) return;
     const via = this.transportName();
     if (via === 'p2p') {
-      const dc = this.conn.dataChannel || this.conn._dc;
-      if (dc && dc.bufferedAmount > 32768) return;
+      const ch = (this.fastConn && this.fastConn.open) ? this.fastConn : this.conn;
+      const dc = ch ? (ch.dataChannel || ch._dc) : null;
+      if (dc && dc.bufferedAmount > 24576) return;
     } else if (via === 'relay') {
-      // ~20Hz over the internet relay to stay well within public broker limits
+      // ~31Hz compact snapshots over internet relay
       const now = performance.now();
-      if (now - this.lastRelaySnapAt < 45) return;
-      if (this.relayLink && this.relayLink.bufferedAmount() > 65536) return;
+      if (now - this.lastRelaySnapAt < 32) return;
+      if (this.relayLink && this.relayLink.bufferedAmount() > 32768) return;
       this.lastRelaySnapAt = now;
     }
-    this._sendRaw(this.buildHostSnapshot(sim, meta));
+    this._sendRaw(this.buildHostSnapshot(sim, meta), true);
   }
 
   reconcileClientFrame(sim, onSnapshotMeta) {
@@ -731,7 +845,12 @@ export class NetworkManager {
     if (this.pendingInputs.length > 0) {
       this.pendingInputs = this.pendingInputs.filter((cmd) => cmd.seq > ackSeq);
     }
-    this.lastHostP1Input = snap.i1 || { l: false, r: false, holdMs: 0 };
+    if (Array.isArray(snap.i1)) {
+      this.lastHostP1Input = { l: !!snap.i1[0], r: !!snap.i1[1], holdMs: snap.i1[2] || 0 };
+    } else {
+      this.lastHostP1Input = snap.i1 || { l: false, r: false, holdMs: 0 };
+    }
+    this.hostInputPredictTicks = 0;
 
     const beforeP1 = sim.captureCarPose(sim.p1Car);
     const beforeP2 = sim.captureCarPose(sim.p2Car);
@@ -739,29 +858,35 @@ export class NetworkManager {
     // Step 1: Snap rigid bodies + water height to authoritative host snapshot
     sim.applyNetState(snap);
 
-    // Step 2: Rewind/replay unacknowledged local client inputs (don't double-step host water)
+    // Step 2: Rewind/replay unacknowledged local client inputs without over-predicting P1 or coasting idle frames
     if (snap.ph === 'FIGHT' && this.pendingInputs.length > 0) {
-      const maxReplay = Math.min(this.pendingInputs.length, 24);
+      const hasActiveInput = this.pendingInputs.some((c) => c.l || c.r);
+      const oneWayEst = this.pingMs > 0 ? clamp(Math.round((this.pingMs * 0.5) / 16.7), 2, 6) : 4;
+      const replayCap = hasActiveInput ? 12 : oneWayEst;
+      const maxReplay = Math.min(this.pendingInputs.length, replayCap);
       const startIdx = this.pendingInputs.length - maxReplay;
+      const coast = { l: false, r: false, holdMs: 0 };
       for (let i = startIdx; i < this.pendingInputs.length; i++) {
-        sim.step(this.lastHostP1Input, this.pendingInputs[i], true, false);
+        const p1Step = (i - startIdx) < 3 ? this.lastHostP1Input : coast;
+        sim.step(p1Step, this.pendingInputs[i], true, false);
       }
     }
 
-    // Step 3: Blend micro-divergence smoothly
+    // Step 3: Progressive error convergence to avoid cycling teleports
     if (beforeP2 && sim.p2Car) {
       const dx = sim.p2Car.chassis.position.x - beforeP2.c.x;
       const dy = sim.p2Car.chassis.position.y - beforeP2.c.y;
       const errDist = Math.hypot(dx, dy);
-      if (errDist > 0.05 && errDist < 24) {
-        sim.blendCarPose(sim.p2Car, beforeP2, 0.35);
+      if (errDist > 0.05 && errDist < 68) {
+        sim.blendCarPose(sim.p2Car, beforeP2, errDist < 22 ? 0.56 : 0.74);
       }
     }
     if (beforeP1 && sim.p1Car) {
       const dx1 = sim.p1Car.chassis.position.x - beforeP1.c.x;
       const dy1 = sim.p1Car.chassis.position.y - beforeP1.c.y;
-      if (Math.hypot(dx1, dy1) < 28) {
-        sim.blendCarPose(sim.p1Car, beforeP1, 0.45);
+      const err1 = Math.hypot(dx1, dy1);
+      if (err1 > 0.05 && err1 < 68) {
+        sim.blendCarPose(sim.p1Car, beforeP1, err1 < 22 ? 0.56 : 0.76);
       }
     }
     return true;
