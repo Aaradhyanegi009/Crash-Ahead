@@ -17,14 +17,14 @@ export class VehiclePhysicsController {
     this.engine = engine;
   }
 
-  _probeWheelRay(wheel, wheelRadius, carDown, driveBodies, prevNormal) {
+  _probeWheelRay(wheel, wheelRadius, carDown, driveBodies, prevNormal, isGrounded = false) {
     if (!driveBodies || driveBodies.length === 0) return null;
     const start = wheel.position;
     const carUpX = -carDown.x;
     const carUpY = -carDown.y;
     const pnx = prevNormal ? prevNormal.x : 0;
     const pny = prevNormal ? prevNormal.y : -1;
-    const probeDist = (wheelRadius || CAR_SPEC.wheelRadius) + 1.35;
+    const probeDist = (wheelRadius || CAR_SPEC.wheelRadius) + (isGrounded ? 3.2 : 1.35);
 
     const castDir = (dx, dy, dist) => {
       const end = { x: start.x + dx * dist, y: start.y + dy * dist };
@@ -72,6 +72,27 @@ export class VehiclePhysicsController {
     return null;
   }
 
+  _hasTrackAhead(car, normal, driveT, driveBodies) {
+    if (!car || !driveBodies || driveBodies.length === 0) return false;
+    const fdx = car.wheelF.position.x - car.wheelR.position.x;
+    const fdy = car.wheelF.position.y - car.wheelR.position.y;
+    const leadWheel = (fdx * driveT.x + fdy * driveT.y) >= 0 ? car.wheelF : car.wheelR;
+    const start = {
+      x: leadWheel.position.x + driveT.x * 20 + normal.x * 10,
+      y: leadWheel.position.y + driveT.y * 20 + normal.y * 10
+    };
+    const end = {
+      x: leadWheel.position.x + driveT.x * 20 - normal.x * 28,
+      y: leadWheel.position.y + driveT.y * 20 - normal.y * 28
+    };
+    const hits = this.Query.ray(driveBodies, start, end, 1);
+    if (!hits || hits.length === 0) return false;
+    for (let i = 0; i < hits.length; i++) {
+      if (hits[i].body && !hits[i].body.isBackside) return true;
+    }
+    return false;
+  }
+
   detectGroundState(car, wheelContacts, driveBodies) {
     const angle = car.chassis.angle;
     const carDown = { x: -Math.sin(angle), y: Math.cos(angle) };
@@ -93,7 +114,7 @@ export class VehiclePhysicsController {
       if (car.isAirborne && velUp > 1.4) {
         return { grounded: false, nx: 0, ny: 0, upDot: 0, isBackside: false };
       }
-      const rayNormal = this._probeWheelRay(wheel, wheelRadius, carDown, driveBodies, car.groundNormal);
+      const rayNormal = this._probeWheelRay(wheel, wheelRadius, carDown, driveBodies, car.groundNormal, !car.isAirborne);
       if (rayNormal) {
         const upDot = rayNormal.x * carUp.x + rayNormal.y * carUp.y;
         return { grounded: true, nx: rayNormal.x, ny: rayNormal.y, upDot, isBackside: Boolean(rayNormal.isBackside) };
@@ -485,25 +506,32 @@ export class VehiclePhysicsController {
       }
     }
 
-    // Track steep circular walls & convex curves with mass-matched tire adhesion so BOTH wheels stay seated,
-    // while releasing downward suction cleanly on kicker crests & open ramp/wing lips so cars launch into clean air!
-    const onSteepWallOrLoop = ground.normal.y > -0.78;
-    const crestingHillLip = !onSteepWallOrLoop && vAlong > 5.2 && uphillFactor > 0.34 && tailGrounded && !noseGrounded;
-    const onOpenRampLip = ground.groundedCount === 1 && uphillFactor > 0.46 && ground.normal.y < 0.22 && vAlong > 2.6;
-    const concaveOrWall = !ground.isBackside && (onSteepWallOrLoop || (ground.normal.y > -0.92 && uphillFactor > 0.10 && ground.groundedCount === 2));
-    if (!crestingHillLip && !onOpenRampLip && concaveOrWall && vAlong > 0.6) {
-      const speedNorm = clamp(Math.abs(vAlong) / maxSpeed, 0.24, 1.0);
-      const wallFactor = clamp((ground.normal.y + 0.90) * 1.25, 0.30, 1.35);
-      // Scale centripetal adhesion by actual model mass so roadster/truck/jcb handle circular curves consistently
-      const stick = VEHICLE_PHYSICS.CURVE_ADHESION_FORCE * 0.83 * massScale * Math.pow(speedNorm, 1.15) * wallFactor;
+    // Track circular hills, convex crests, concave bowls, and steep loop walls so BOTH wheels stay planted,
+    // while releasing cleanly right at open ramp/wing lips so reversing up open wings still launches into air!
+    const hasTrackAhead = !ground.isBackside && this._hasTrackAhead(car, ground.normal, driveT, driveBodies);
+    const onOpenWingTip = !hasTrackAhead && ground.normal.y > -0.45 && uphillFactor > 0.44 && vAlong > 2.2;
+    const onCurvedTrack = !ground.isBackside && hasTrackAhead && (
+      ground.normal.y > -0.96 ||
+      (car.curveRate || 0) > 0.007 ||
+      Math.abs(ground.normal.x) > 0.12
+    );
+    if (!onOpenWingTip && onCurvedTrack && vAlong > 0.45) {
+      const speedNorm = clamp(Math.abs(vAlong) / maxSpeed, 0.25, 1.0);
+      const slopeGrip = clamp((ground.normal.y + 1.0) * 1.65, 0, 1.45);
+      const curveGrip = clamp((car.curveRate || 0) * 24, 0, 0.72);
+      const downhillHold = driveT.y > 0.08 && Math.abs(ground.normal.x) > 0.16 ? 0.36 : 0;
+      const hillFactor = clamp(Math.max(0.34, slopeGrip + curveGrip + downhillHold), 0.34, 1.50);
+      // Scale centripetal adhesion by actual model mass so roadster/truck/jcb hug circular curves uniformly
+      const massAdhesionScale = clamp(totalMass / 15.3403, 0.48, 1.35);
+      const stick = VEHICLE_PHYSICS.CURVE_ADHESION_FORCE * 1.06 * massAdhesionScale * Math.pow(speedNorm, 1.05) * hillFactor;
       const sx = -ground.normal.x * stick;
       const sy = -ground.normal.y * stick;
-      this.Body.applyForce(car.chassis, car.chassis.position, { x: sx * 0.42, y: sy * 0.42 });
-      this.Body.applyForce(car.wheelR, car.wheelR.position, { x: sx * 0.29, y: sy * 0.29 });
-      this.Body.applyForce(car.wheelF, car.wheelF.position, { x: sx * 0.29, y: sy * 0.29 });
-      if (ground.groundedCount === 1 && ground.normal.y > -0.25 && tangentForce > 0 && !(isReverse && uphillFactor > 0.42)) {
+      this.Body.applyForce(car.chassis, car.chassis.position, { x: sx * 0.40, y: sy * 0.40 });
+      this.Body.applyForce(car.wheelR, car.wheelR.position, { x: sx * 0.30, y: sy * 0.30 });
+      this.Body.applyForce(car.wheelF, car.wheelF.position, { x: sx * 0.30, y: sy * 0.30 });
+      if (ground.groundedCount === 1 && Math.abs(ground.normal.x) > 0.16 && tangentForce > 0 && !(isReverse && !hasTrackAhead && uphillFactor > 0.42)) {
         const liftedWheel = ground.rearGrounded ? car.wheelF : car.wheelR;
-        this.Body.applyForce(liftedWheel, liftedWheel.position, { x: sx * 0.32, y: sy * 0.32 });
+        this.Body.applyForce(liftedWheel, liftedWheel.position, { x: sx * 0.40, y: sy * 0.40 });
       }
     }
 
@@ -511,11 +539,12 @@ export class VehiclePhysicsController {
       // Keep wheels flush on steep reverse-ramp climbs so cars launch cleanly along the ramp rather than pitching away
       const revPitch = -VEHICLE_PHYSICS.REVERSE_PITCH_BIAS * (1 - clamp(uphillFactor * 1.4, 0, 1));
       this._applyPitchStability(car, ground.groundAngle, revPitch, true);
-    } else if (crestingHillLip) {
+    } else if (onOpenWingTip && uphillFactor > 0.50) {
       this._applyPitchStability(car, ground.groundAngle, VEHICLE_PHYSICS.FORWARD_PITCH_MAX_OFFSET, true);
     } else {
-      // Immediate controlled +5 deg wheelie elevation on straight terrain, fading cleanly on slopes so hills/bumps stay planted
-      const slopeFade = clamp((Math.abs(ground.groundAngle) - 0.08) / 0.14, 0, 1);
+      // Immediate controlled +5 deg wheelie elevation on straight terrain, fading cleanly on slopes & circular hills
+      const curveFade = clamp(((car.curveRate || 0) - 0.006) / 0.014, 0, 1);
+      const slopeFade = clamp(Math.max((Math.abs(ground.groundAngle) - 0.08) / 0.14, curveFade), 0, 1);
       const forwardTargetLift = lerp(VEHICLE_PHYSICS.FORWARD_WHEELIE_ANGLE, 0.0, slopeFade);
       this._applyPitchStability(car, ground.groundAngle, forwardTargetLift, true);
       // Apply subtle front-axle wheelie weight-transfer on straight flat terrain when below 5 deg target

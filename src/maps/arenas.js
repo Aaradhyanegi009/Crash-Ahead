@@ -33,12 +33,10 @@ function doubleValleyY(x, base = 442, crest = 434, depth = 42, leftX = 255, righ
 }
 
 function caterpillar3PeakY(x) {
-  // Smooth 3-peak wave across x=255..1025 landing tangentially at y=462 at both wing joints
-  const d = Math.abs(x - 640);
-  const u = clamp(d / 385, 0, 1);
-  const wave = -26 * Math.cos(u * Math.PI * 4.0);
-  const centerBoost = d < 95 ? -14 * Math.cos((d / 95) * Math.PI * 0.5) : 0;
-  return 488 + wave + centerBoost;
+  // Smooth converging 3-swell wave across x=255..1025 landing tangentially at y=462 without sharp cusps
+  const u = clamp((x - 640) / 385, -1, 1);
+  const env = Math.cos(u * Math.PI * 0.5);
+  return 462 - 22 * env * env - 30 * Math.cos(u * Math.PI * 3.0) * env * env;
 }
 
 function cavernFloor4DipY(x) {
@@ -55,9 +53,9 @@ function cloverFloorY(x) {
 function makeWingedFloatingIsland(xLeft, xRight, yJoint, rWing, topFn, bellyMidY = 564) {
   // End wings at ~1.04*PI / -0.04*PI (~7 deg inward) so reversing up launches
   // cleanly upward/inward for air time without curling into a razor perch beak.
-  const leftWingTop = sampleArcPoints(xLeft, yJoint - rWing, rWing, Math.PI * 1.04, Math.PI * 0.5, 16);
-  const centerTop = sampleCurveX(xLeft, xRight, 34, topFn);
-  const rightWingTop = sampleArcPoints(xRight, yJoint - rWing, rWing, Math.PI * 0.5, -Math.PI * 0.04, 16);
+  const leftWingTop = sampleArcPoints(xLeft, yJoint - rWing, rWing, Math.PI * 1.04, Math.PI * 0.5, 18);
+  const centerTop = sampleCurveX(xLeft, xRight, 48, topFn);
+  const rightWingTop = sampleArcPoints(xRight, yJoint - rWing, rWing, Math.PI * 0.5, -Math.PI * 0.04, 18);
   const top = [...leftWingTop, ...centerTop.slice(1, -1), ...rightWingTop];
 
   const rTipX = rightWingTop[rightWingTop.length - 1].x;
@@ -103,10 +101,10 @@ function makeCloverInteriorLoop() {
 
 function makeOvalCapsuleLoop(cx = 640, cy = 355, halfStraight = 265, r = 215) {
   const pts = [];
-  for (let i = 0; i <= 20; i++) {
-    const x = lerp(cx - halfStraight, cx + halfStraight, i / 20);
+  for (let i = 0; i <= 24; i++) {
+    const x = lerp(cx - halfStraight, cx + halfStraight, i / 24);
     const u = (x - cx) / halfStraight;
-    const y = (cy + r) - 10 * Math.cos(u * Math.PI * 1.5);
+    const y = (cy + r) - 16 * (0.5 + 0.5 * Math.cos(u * Math.PI));
     pts.push({ x, y });
   }
   pts.push(...sampleEllipseArc(cx + halfStraight, cy, r + 15, r, Math.PI * 0.48, -Math.PI * 0.48, 16));
@@ -133,9 +131,9 @@ function makeCavernArchOpenWalls(floorFn, lipXLeft = 405, lipXRight = 875) {
   const raw = [];
   raw.push({ x: lipXLeft, y: -18 });
   raw.push(...sampleEllipseArc(lipXLeft, yWallMid, 250, 215, -Math.PI * 0.52, -Math.PI, 12));
-  raw.push(...sampleEllipseArc(xFloorL, yWallMid, rxPipe, ryPipeL, Math.PI, Math.PI * 0.5, 16).slice(1));
-  raw.push(...sampleCurveX(xFloorL, xFloorR, 28, floorFn).slice(1, -1));
-  raw.push(...sampleEllipseArc(xFloorR, yWallMid, rxPipe, ryPipeR, Math.PI * 0.5, 0, 16));
+  raw.push(...sampleEllipseArc(xFloorL, yWallMid, rxPipe, ryPipeL, Math.PI, Math.PI * 0.5, 18).slice(1));
+  raw.push(...sampleCurveX(xFloorL, xFloorR, 40, floorFn).slice(1, -1));
+  raw.push(...sampleEllipseArc(xFloorR, yWallMid, rxPipe, ryPipeR, Math.PI * 0.5, 0, 18));
   raw.push(...sampleEllipseArc(lipXRight, yWallMid, 250, 215, 0, -Math.PI * 0.48, 12).slice(1));
   raw.push({ x: lipXRight, y: -18 });
   const surface = chaikinSmooth(raw, false, 2);
@@ -167,9 +165,9 @@ function makeCanyonWallPair(floorFn, lipXLeft = 325, lipXRight = 955) {
   const raw = [];
   raw.push({ x: lipXLeft, y: -18 });
   raw.push(...sampleEllipseArc(320, yWallMid, 185, 240, -Math.PI * 0.52, -Math.PI, 12));
-  raw.push(...sampleEllipseArc(xFloorL, yWallMid, rxPipe, ryPipeL, Math.PI, Math.PI * 0.5, 16).slice(1));
-  raw.push(...sampleCurveX(xFloorL, xFloorR, 32, floorFn).slice(1, -1));
-  raw.push(...sampleEllipseArc(xFloorR, yWallMid, rxPipe, ryPipeR, Math.PI * 0.5, 0, 16));
+  raw.push(...sampleEllipseArc(xFloorL, yWallMid, rxPipe, ryPipeL, Math.PI, Math.PI * 0.5, 18).slice(1));
+  raw.push(...sampleCurveX(xFloorL, xFloorR, 40, floorFn).slice(1, -1));
+  raw.push(...sampleEllipseArc(xFloorR, yWallMid, rxPipe, ryPipeR, Math.PI * 0.5, 0, 18));
   raw.push(...sampleEllipseArc(960, yWallMid, 185, 240, 0, -Math.PI * 0.48, 12).slice(1));
   raw.push({ x: lipXRight, y: -18 });
   const surface = chaikinSmooth(raw, false, 2);
@@ -231,8 +229,8 @@ function makeWingEdgeIsland(isLeft, edgeX = 412, wingX = 235, yDeck = 452, rWing
   return { top, belly, poly: [...top, ...belly.slice(1, -1)] };
 }
 
-function makeCenterMoundIsland(xLeft = 560, xRight = 720, yEdge = 452, lift = 18) {
-  const top = sampleCurveX(xLeft, xRight, 14, (x) => {
+function makeCenterMoundIsland(xLeft = 560, xRight = 720, yEdge = 452, lift = 22) {
+  const top = sampleCurveX(xLeft, xRight, 20, (x) => {
     const t = (x - xLeft) / (xRight - xLeft);
     return yEdge - lift * Math.sin(t * Math.PI);
   });
@@ -345,11 +343,10 @@ export const ARENAS = Object.freeze([
   // 5. Open Canyon Bowl with Overhanging Lip Cliffs
   (() => {
     const canyonFloor = (x) => {
-      const d = Math.abs(x - 640);
-      const t = clamp(d / 455, 0, 1);
-      const peak = -135 * Math.exp(-(d * d) / (92 * 92));
-      const dips = 34 * Math.sin(t * Math.PI * 2.5);
-      return 540 + peak + dips;
+      const u = clamp((x - 640) / 335, -1, 1);
+      const peak = -56 * Math.exp(-(u * u) / (0.42 * 0.42));
+      const dips = 14 * (1 - Math.cos(u * Math.PI * 2.0));
+      return 544 + peak + dips;
     };
     const wall = makeCanyonWallPair(canyonFloor, 315, 965);
     return Object.freeze({
@@ -371,8 +368,8 @@ export const ARENAS = Object.freeze([
   // 6. Cavern Arch with Twin Angled Seesaw Bridges
   (() => {
     const arch = makeCavernArchOpenWalls((x) => {
-      const u = (x - 640) / 460;
-      return 538 + 38 * Math.sin(Math.abs(u) * Math.PI * 1.6);
+      const u = clamp((x - 640) / 230, -1, 1);
+      return 552 - 22 * Math.cos(u * Math.PI * 2.0);
     }, 495, 785);
     return Object.freeze({
       id: 6,
@@ -503,7 +500,7 @@ export const ARENAS = Object.freeze([
     desc: '3 floating curved islands linked by twin seesaw bridges',
     islands: [
       makeWingEdgeIsland(true, 412, 235, 452, 104),
-      makeCenterMoundIsland(560, 720, 452, 18),
+      makeCenterMoundIsland(556, 724, 452, 22),
       makeWingEdgeIsland(false, 868, 1045, 452, 104)
     ],
     caves: [],
@@ -511,8 +508,8 @@ export const ARENAS = Object.freeze([
     halfPipes: [],
     blocks: [],
     seesaws: [
-      { x: 486, y: 465, w: 132, isBridge: true, maxAngle: 0.42, springRate: 0.0036 },
-      { x: 794, y: 465, w: 132, isBridge: true, maxAngle: 0.42, springRate: 0.0036 }
+      { x: 484, y: 461, w: 138, isBridge: true, maxAngle: 0.28, springRate: 0.0042 },
+      { x: 796, y: 461, w: 138, isBridge: true, maxAngle: 0.28, springRate: 0.0042 }
     ],
     pills: STATIC_ROCK_PILLS,
     p1Spawn: { x: 280, y: 410 },
@@ -541,8 +538,8 @@ export const ARENAS = Object.freeze([
   // 12. Open Overhanging Bowl with Giant Center Seesaw Teeter
   (() => {
     const teeterFloor = (x) => {
-      const d = Math.abs(x - 640);
-      return 552 + 18 * Math.sin((clamp(d, 0, 450) / 450) * Math.PI * 1.5);
+      const u = clamp((x - 640) / 335, -1, 1);
+      return 556 - 20 * Math.cos(u * Math.PI * 2.0);
     };
     const wall = makeCanyonWallPair(teeterFloor, 305, 975);
     return Object.freeze({
@@ -579,22 +576,22 @@ export const ARENAS = Object.freeze([
     p2Spawn: { x: 785, y: 500 }
   }),
 
-  // 14. Floating 5-Wave Ocean Swell Island with Curved Quarter-Pipe Wings
+  // 14. Floating 3-Swell Converging Wave Island with Curved Quarter-Pipe Wings
   (() => {
     const waveDuneY = (x) => {
       const u = clamp((x - 230) / 820, 0, 1);
-      return 476 - 30 * Math.sin(u * Math.PI) * Math.sin(u * Math.PI * 5);
+      return 476 - 15 * Math.sin(u * Math.PI) * (0.75 + 0.55 * Math.cos(u * Math.PI * 4));
     };
     const isl = makeWingedFloatingIsland(230, 1050, 476, 112, waveDuneY, 600);
     return Object.freeze({
       id: 14,
       name: 'WAVE DUNE ISLAND',
-      desc: 'Roller-coaster ocean swells + quarter-pipe air wings',
+      desc: 'Converging rolling ocean swells + quarter-pipe air wings',
       islands: [isl],
       caves: [],
       openRocks: [],
       halfPipes: [],
-      blocks: [{ x: 640, y: 562, w: 720, h: 74, chamfer: 22, hiddenVisual: true }],
+      blocks: [{ x: 640, y: 572, w: 680, h: 66, chamfer: 22, hiddenVisual: true }],
       seesaws: [],
       pills: STATIC_ROCK_PILLS,
       p1Spawn: { x: 288, y: 432 },
@@ -605,8 +602,8 @@ export const ARENAS = Object.freeze([
   // 15. Amphitheater Arch with Convex Rock Sky-Bridge Overpass & Twin Seesaws
   (() => {
     const ampFloor = (x) => {
-      const u = clamp((x - 640) / 485, -1, 1);
-      return 552 + 22 * Math.cos(u * Math.PI * 2);
+      const u = clamp((x - 640) / 330, -1, 1);
+      return 554 - 20 * Math.cos(u * Math.PI * 2.0);
     };
     const arch = makeCavernArchOpenWalls(ampFloor, 395, 885);
     return Object.freeze({
@@ -617,16 +614,16 @@ export const ARENAS = Object.freeze([
       caves: [],
       openRocks: [arch],
       halfPipes: [
-        { cx: 640, cy: 525, r: 160, aStart: 1.30 * Math.PI, aEnd: 1.70 * Math.PI, thickness: 24 }
+        { cx: 640, cy: 540, r: 170, aStart: 1.28 * Math.PI, aEnd: 1.72 * Math.PI, thickness: 24 }
       ],
       blocks: [],
       seesaws: [
-        { x: 435, y: 402, w: 170, angle: -0.10 },
-        { x: 845, y: 402, w: 170, angle: 0.10 }
+        { x: 424, y: 428, w: 162, angle: -0.14 },
+        { x: 856, y: 428, w: 162, angle: 0.14 }
       ],
       pills: STATIC_ROCK_PILLS,
-      p1Spawn: { x: 325, y: 500 },
-      p2Spawn: { x: 955, y: 500 }
+      p1Spawn: { x: 315, y: 492 },
+      p2Spawn: { x: 965, y: 492 }
     });
   })()
 ]);

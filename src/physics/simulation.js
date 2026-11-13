@@ -291,7 +291,8 @@ export class PhysicsSimulation {
   }
 
   _addHalfPipeColliders(pipe) {
-    const steps = 20;
+    const arcLen = Math.abs(pipe.aEnd - pipe.aStart) * pipe.r;
+    const steps = clamp(Math.ceil(arcLen / 14), 24, 68);
     const pts = sampleArcPoints(pipe.cx, pipe.cy, pipe.r, pipe.aStart, pipe.aEnd, steps);
     for (let i = 0; i < pts.length - 1; i++) {
       const p0 = pts[i];
