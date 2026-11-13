@@ -8,6 +8,7 @@ import {
   DOUBLE_KO_WINDOW_MS,
   VEHICLE_PHYSICS,
   CAR_MODEL_IDS,
+  CAR_MODELS,
   PALETTE
 } from '../config/constants.js';
 import { clamp } from '../utils/math.js';
@@ -36,7 +37,8 @@ export class CrashAheadGame {
     this.scores = [0, 0];
     this.roundNumber = 1;
     this.bannerText = '';
-    this.selectedArenaIdx = -1; // -1 = RANDOM MAPS (ALL 9), 0..8 = locked specific map
+    this.selectedArenaIdx = -1; // -1 = RANDOM MAPS (ALL 15), 0..14 = locked specific map
+    this.selectedCarIdx = -1;   // -1 = RANDOM VEHICLES (ALL 5), 0..4 = locked P1 vehicle
     this.attractMapTicks = 0;
 
     this.countdownMs = 0;
@@ -79,6 +81,12 @@ export class CrashAheadGame {
 
   _pickRandomCarPair() {
     const pick = () => CAR_MODEL_IDS[Math.floor(Math.random() * CAR_MODEL_IDS.length)] || CAR_MODEL_IDS[0];
+    if (this.selectedCarIdx >= 0 && this.selectedCarIdx < CAR_MODEL_IDS.length) {
+      const p1 = CAR_MODEL_IDS[this.selectedCarIdx];
+      const others = CAR_MODEL_IDS.filter((id) => id !== p1);
+      const p2 = others[Math.floor(Math.random() * others.length)] || p1;
+      return [p1, p2];
+    }
     return [pick(), pick()];
   }
 
@@ -291,6 +299,7 @@ export class CrashAheadGame {
   _bindUI() {
     this.ui.updateSoundIcon(this.sound.muted);
     this.ui.updateMapPicker(this.selectedArenaIdx);
+    this.ui.updateCarPicker(this.selectedCarIdx, CAR_MODEL_IDS, CAR_MODELS);
     this.ui.updateCtrlLayoutLabel(this.input.singleLayout);
     this.ui.updateBotDifficulty(this.aiDifficulty);
 
@@ -328,6 +337,23 @@ export class CrashAheadGame {
         this.ui.updateMapPicker(this.selectedArenaIdx);
         if (this.mode === 'attract') {
           const previewIdx = this.selectedArenaIdx >= 0 ? this.selectedArenaIdx : this._pickArenaIndex(-1);
+          const [m1, m2] = this._pickRandomCarPair();
+          this.sim.resetArena(previewIdx, m1, m2);
+          this.renderer.clearEffects();
+        }
+      },
+      onStepCar: (delta) => {
+        this.sound.unlock();
+        this.sound.playClick();
+        const total = CAR_MODEL_IDS.length + 1;
+        const cur = this.selectedCarIdx + 1;
+        const next = ((cur + delta) % total + total) % total;
+        this.selectedCarIdx = next - 1;
+        this.ui.updateCarPicker(this.selectedCarIdx, CAR_MODEL_IDS, CAR_MODELS);
+        if (this.mode === 'attract') {
+          const previewIdx = this.selectedArenaIdx >= 0
+            ? this.selectedArenaIdx
+            : (this.sim ? this.sim.arenaIndex : this._pickArenaIndex(-1));
           const [m1, m2] = this._pickRandomCarPair();
           this.sim.resetArena(previewIdx, m1, m2);
           this.renderer.clearEffects();
@@ -740,7 +766,10 @@ export class CrashAheadGame {
         this.mode !== 'attract' && this.phase === 'FIGHT',
         this._isPlayerJumpEnabled()
       );
-      return elapsed;
+      return {
+        elapsed,
+        alpha: this.phase === 'MATCH_OVER' ? 1 : clamp(acc / FIXED_DT, 0, 1)
+      };
     };
 
     const bgTick = () => {
@@ -765,10 +794,15 @@ export class CrashAheadGame {
     }
 
     const loop = (now) => {
-      const elapsed = advanceSimulation(now);
+      const { elapsed, alpha } = advanceSimulation(now);
       this.renderer.updateEffects(elapsed / FIXED_DT, this.sim);
       this._updateAudio();
-      this.renderer.render(this.sim, this.bannerText);
+      const restorePose = this.sim.applyRenderInterpolation(alpha);
+      try {
+        this.renderer.render(this.sim, this.bannerText);
+      } finally {
+        restorePose();
+      }
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);

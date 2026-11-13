@@ -19,6 +19,8 @@ export class UIManager {
 
       mapTitle: document.getElementById('map-picker-title'),
       mapSub: document.getElementById('map-picker-sub'),
+      carTitle: document.getElementById('car-picker-title'),
+      carSub: document.getElementById('car-picker-sub'),
       btnCtrlToggle: document.getElementById('btn-ctrl-toggle'),
       btnMute: document.getElementById('btn-mute'),
       iconSoundOn: document.getElementById('icon-sound-on'),
@@ -70,6 +72,12 @@ export class UIManager {
     document.getElementById('btn-map-prev').addEventListener('click', () => h.onStepMap(-1));
     document.getElementById('btn-map-next').addEventListener('click', () => h.onStepMap(1));
     document.getElementById('btn-map-cycle').addEventListener('click', () => h.onStepMap(1));
+    const btnCarPrev = document.getElementById('btn-car-prev');
+    const btnCarNext = document.getElementById('btn-car-next');
+    const btnCarCycle = document.getElementById('btn-car-cycle');
+    if (btnCarPrev) btnCarPrev.addEventListener('click', () => h.onStepCar(-1));
+    if (btnCarNext) btnCarNext.addEventListener('click', () => h.onStepCar(1));
+    if (btnCarCycle) btnCarCycle.addEventListener('click', () => h.onStepCar(1));
     this.dom.btnCtrlToggle.addEventListener('click', h.onToggleCtrlLayout);
 
     document.getElementById('btn-mode-local').addEventListener('click', () => h.onStartMode('local'));
@@ -134,11 +142,25 @@ export class UIManager {
     const total = ARENAS.length;
     if (selectedArenaIdx < 0) {
       this.dom.mapTitle.textContent = `RANDOM MAPS (ALL ${total})`;
-      this.dom.mapSub.textContent = `Random map & random cars each round • Tap < > to lock Map 1–${total}`;
+      this.dom.mapSub.textContent = `Random map each round • Tap < > to lock Map 1–${total}`;
     } else {
       const a = ARENAS[selectedArenaIdx];
-      this.dom.mapTitle.textContent = `MAP ${a.id}/${total}: ${a.name} (RANDOM CARS)`;
+      this.dom.mapTitle.textContent = `MAP ${a.id}/${total}: ${a.name}`;
       this.dom.mapSub.textContent = a.desc;
+    }
+  }
+
+  updateCarPicker(selectedCarIdx, modelIds = [], modelsMap = {}) {
+    if (!this.dom.carTitle || !this.dom.carSub) return;
+    const total = modelIds.length;
+    if (selectedCarIdx < 0 || selectedCarIdx >= total) {
+      this.dom.carTitle.textContent = `RANDOM VEHICLES (ALL ${total})`;
+      this.dom.carSub.textContent = 'Roadster, Truck, JCB, Bike & Tank • Tap < > to pick';
+    } else {
+      const id = modelIds[selectedCarIdx];
+      const name = modelsMap[id]?.name || String(id).toUpperCase();
+      this.dom.carTitle.textContent = `VEHICLE ${selectedCarIdx + 1}/${total}: ${name}`;
+      this.dom.carSub.textContent = `P1 locked to ${name} • Tap < > to switch vehicle`;
     }
   }
 

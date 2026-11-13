@@ -36,6 +36,24 @@ export class PhysicsSimulation {
       constraintIterations: 4
     });
 
+    const Detector = window.Matter?.Detector;
+    if (Detector && !Detector._crashAheadHooked) {
+      const origCollisions = Detector.collisions;
+      Detector.collisions = function(detector) {
+        const collisions = origCollisions.call(this, detector);
+        if (detector && typeof detector._postProcessCollisions === 'function') {
+          detector._postProcessCollisions(collisions);
+        }
+        return collisions;
+      };
+      Detector._crashAheadHooked = true;
+    }
+    if (this.engine?.detector) {
+      this.engine.detector._postProcessCollisions = (collisions) => this._smoothTerrainCollisions(collisions);
+    }
+    this._prevBodyPoses = new Map();
+    this._prevWaterCrestY = WATER_CREST_Y;
+
     this.vehicleController = new VehiclePhysicsController(this.Body, this.Query, this.engine);
 
     this.arenaIndex = 0;
@@ -53,6 +71,8 @@ export class PhysicsSimulation {
     this.waterCrestY = WATER_CREST_Y;
     this.waterHazardY = WATER_HAZARD_Y;
     this.waterRising = false;
+    if (this._prevBodyPoses) this._prevBodyPoses.clear();
+    this._prevWaterCrestY = this.waterCrestY;
 
     this.onHeadKO = null;
     this.onWaterKO = null;
@@ -181,11 +201,168 @@ export class PhysicsSimulation {
     });
   }
 
+  _applySmoothedNormal(c, sx, sy, sign, align) {
+    const nx = sx * sign;
+    const ny = sy * sign;
+    const newDepth = Math.max(0.001, c.depth * align);
+    c.normal.x = nx;
+    c.normal.y = ny;
+    c.tangent.x = -ny;
+    c.tangent.y = nx;
+    c.depth = newDepth;
+    c.penetration.x = nx * newDepth;
+    c.penetration.y = ny * newDepth;
+  }
+
+  _smoothTerrainCollisions(collisions) {
+    const keptWheelHits = [];
+    for (let k = collisions.length - 1; k >= 0; k--) {
+      const c = collisions[k];
+      const lA = c.bodyA.label || '';
+      const lB = c.bodyB.label || '';
+      const aIsCar = lA.startsWith('wheel_') || lA.startsWith('chassis_');
+      const bIsCar = lB.startsWith('wheel_') || lB.startsWith('chassis_');
+      if (aIsCar === bIsCar) continue;
+
+      const carPart = aIsCar ? c.bodyA : c.bodyB;
+      const terr = aIsCar ? c.bodyB : c.bodyA;
+      const isWheel = (carPart.label || '').startsWith('wheel_');
+      const sign = aIsCar ? 1 : -1;
+      const ox = c.normal.x * sign;
+      const oy = c.normal.y * sign;
+      let frontOutX = 0;
+      let frontOutY = 0;
+      let isSmoothFront = false;
+
+      if (terr._curveSeg) {
+        const m = terr._curveSeg;
+        const relX = carPart.position.x - m.ax;
+        const relY = carPart.position.y - m.ay;
+        const uRaw = (relX * m.dirX + relY * m.dirY) / m.segLen;
+        if ((m.openStart && uRaw < 0.04) || (m.openEnd && uRaw > 0.96)) continue;
+
+        const faceDot = ox * m.outNx + oy * m.outNy;
+        if (faceDot < -0.25) continue;
+
+        const atInnerStart = uRaw <= 0.22 && !m.openStart && m.adjDotStart > 0.55;
+        const atInnerEnd = uRaw >= 0.78 && !m.openEnd && m.adjDotEnd > 0.55;
+        if (faceDot <= 0.14) {
+          if ((atInnerStart || atInnerEnd) && (relX * m.outNx + relY * m.outNy > -m.halfThick * 0.45)) {
+            collisions.splice(k, 1);
+          }
+          continue;
+        }
+
+        const u = uRaw < 0 ? 0 : (uRaw > 1 ? 1 : uRaw);
+        let sx = m.nAx + (m.nBx - m.nAx) * u;
+        let sy = m.nAy + (m.nBy - m.nAy) * u;
+        const sl = Math.hypot(sx, sy) || 1;
+        sx /= sl;
+        sy /= sl;
+        const align = ox * sx + oy * sy;
+        if (align > 0.2 && align < 0.9995) {
+          this._applySmoothedNormal(c, sx, sy, sign, align);
+        }
+        frontOutX = sx;
+        frontOutY = sy;
+        isSmoothFront = true;
+      } else if (terr._curveJoint) {
+        const m = terr._curveJoint;
+        const faceDot = ox * m.outNx + oy * m.outNy;
+        if (faceDot < -0.25) continue;
+
+        if (m.isConcave) {
+          collisions.splice(k, 1);
+          continue;
+        }
+
+        if (faceDot <= 0.15) {
+          collisions.splice(k, 1);
+          continue;
+        }
+        const cross01 = m.n0x * m.n1y - m.n0y * m.n1x;
+        const ax = cross01 >= 0 ? m.n0x : m.n1x;
+        const ay = cross01 >= 0 ? m.n0y : m.n1y;
+        const bx = cross01 >= 0 ? m.n1x : m.n0x;
+        const by = cross01 >= 0 ? m.n1y : m.n0y;
+        let sx = ox;
+        let sy = oy;
+        let clamped = false;
+        if (ax * oy - ay * ox < 0) {
+          sx = ax;
+          sy = ay;
+          clamped = true;
+        } else if (ox * by - oy * bx < 0) {
+          sx = bx;
+          sy = by;
+          clamped = true;
+        }
+        if (clamped) {
+          const align = ox * sx + oy * sy;
+          if (align <= 0.15) {
+            collisions.splice(k, 1);
+            continue;
+          }
+          this._applySmoothedNormal(c, sx, sy, sign, align);
+        }
+        frontOutX = sx;
+        frontOutY = sy;
+        isSmoothFront = true;
+      } else if (terr._halfPipeSeg) {
+        const m = terr._halfPipeSeg;
+        if (m.openStart || m.openEnd) continue;
+        const faceDot = ox * m.outNx + oy * m.outNy;
+        if (Math.abs(faceDot) < (m.isCap ? 0.2 : 0.15)) {
+          collisions.splice(k, 1);
+          continue;
+        }
+        const rSign = faceDot >= 0 ? 1 : -1;
+        let sx = (m.cx - carPart.position.x) * rSign;
+        let sy = (m.cy - carPart.position.y) * rSign;
+        const sl = Math.hypot(sx, sy) || 1;
+        sx /= sl;
+        sy /= sl;
+        const align = ox * sx + oy * sy;
+        if (align > 0.2 && align < 0.9995) {
+          this._applySmoothedNormal(c, sx, sy, sign, align);
+        }
+        frontOutX = sx;
+        frontOutY = sy;
+        isSmoothFront = true;
+      }
+
+      if (isSmoothFront && isWheel) {
+        let merged = false;
+        for (let i = 0; i < keptWheelHits.length; i++) {
+          const entry = keptWheelHits[i];
+          if (entry.wheelId !== carPart.id) continue;
+          if (entry.nx * frontOutX + entry.ny * frontOutY > 0.72) {
+            if (c.depth > entry.c.depth) {
+              const dropIdx = collisions.indexOf(entry.c);
+              if (dropIdx >= 0) collisions.splice(dropIdx, 1);
+              entry.c = c;
+              entry.nx = frontOutX;
+              entry.ny = frontOutY;
+            } else {
+              collisions.splice(k, 1);
+            }
+            merged = true;
+            break;
+          }
+        }
+        if (!merged) {
+          keptWheelHits.push({ wheelId: carPart.id, c, nx: frontOutX, ny: frontOutY });
+        }
+      }
+    }
+  }
+
   _addSurfacePolyline(pts, inwardSign = 1, thickness = 34, closeLoop = false, opts = {}) {
     const isBackside = Boolean(opts.isBackside);
     const taperEnds = Boolean(opts.taperEnds && !closeLoop);
     const count = closeLoop ? pts.length : pts.length - 1;
     const normals = [];
+    const segments = [];
     for (let i = 0; i < count; i++) {
       const p0 = pts[i];
       const p1 = pts[(i + 1) % pts.length];
@@ -194,6 +371,7 @@ export class PhysicsSimulation {
       const segLen = Math.hypot(dx, dy);
       if (segLen < 1) {
         normals.push(null);
+        segments.push(null);
         continue;
       }
       const angle = Math.atan2(dy, dx);
@@ -210,20 +388,59 @@ export class PhysicsSimulation {
       const cx = (p0.x + p1.x) * 0.5 + nx * (segThick * 0.5);
       const cy = (p0.y + p1.y) * 0.5 + ny * (segThick * 0.5);
 
-      // Tiny segment chamfer avoids carved V-notches between curve segments while interior weld circles seal convex joints
-      const segChamfer = Math.min(1.2, segLen * 0.2, segThick * 0.25);
       const rect = this.Bodies.rectangle(cx, cy, segLen, segThick, {
         isStatic: true,
         angle,
-        chamfer: { radius: segChamfer },
         friction: 0.92,
-        restitution: 0.08,
-        slop: 0.015,
+        restitution: 0.0,
+        slop: 0.004,
         label: 'island',
         isBackside
       });
       this.Composite.add(this.engine.world, rect);
       this.driveSurfaces.push(rect);
+      segments.push({ rect, p0, dx, dy, segLen, segThick, nx, ny });
+    }
+
+    for (let i = 0; i < count; i++) {
+      const s = segments[i];
+      if (!s) continue;
+      const outX = -s.nx;
+      const outY = -s.ny;
+      const prevN = i > 0 ? normals[i - 1] : (closeLoop ? normals[count - 1] : null);
+      const nextN = i < count - 1 ? normals[i + 1] : (closeLoop ? normals[0] : null);
+      const prevOutX = prevN ? -prevN.nx : outX;
+      const prevOutY = prevN ? -prevN.ny : outY;
+      const nextOutX = nextN ? -nextN.nx : outX;
+      const nextOutY = nextN ? -nextN.ny : outY;
+      let nAx = prevOutX + outX;
+      let nAy = prevOutY + outY;
+      const lenA = Math.hypot(nAx, nAy) || 1;
+      nAx /= lenA;
+      nAy /= lenA;
+      let nBx = outX + nextOutX;
+      let nBy = outY + nextOutY;
+      const lenB = Math.hypot(nBx, nBy) || 1;
+      nBx /= lenB;
+      nBy /= lenB;
+      s.rect._curveSeg = {
+        ax: s.p0.x,
+        ay: s.p0.y,
+        dirX: s.dx / s.segLen,
+        dirY: s.dy / s.segLen,
+        segLen: s.segLen,
+        halfThick: s.segThick * 0.5,
+        outNx: outX,
+        outNy: outY,
+        nAx,
+        nAy,
+        nBx,
+        nBy,
+        openStart: !closeLoop && i === 0,
+        openEnd: !closeLoop && i === count - 1,
+        adjDotStart: prevOutX * outX + prevOutY * outY,
+        adjDotEnd: nextOutX * outX + nextOutY * outY
+      };
     }
 
     // Add interior tangent weld circles at vertices so convex joints never trap a tire.
@@ -237,6 +454,7 @@ export class PhysicsSimulation {
       const ay = n0.ny + n1.ny;
       const len = Math.hypot(ax, ay) || 1;
       const pt = pts[i];
+      const pNext = pts[(i + 1) % pts.length];
       const localThick = taperEnds
         ? (i === 1 || i === count - 1)
           ? Math.min(thickness, 14)
@@ -247,16 +465,26 @@ export class PhysicsSimulation {
       const joint = this.Bodies.circle(
         pt.x + (ax / len) * (localThick * 0.5),
         pt.y + (ay / len) * (localThick * 0.5),
-        localThick * 0.49,
+        localThick * 0.5,
         {
           isStatic: true,
           friction: 0.92,
-          restitution: 0.08,
-          slop: 0.015,
+          restitution: 0.0,
+          slop: 0.004,
           label: 'island',
           isBackside
         }
       );
+      const isConcave = ((pNext.x - pt.x) * (-n0.nx) + (pNext.y - pt.y) * (-n0.ny)) > 0;
+      joint._curveJoint = {
+        outNx: -(ax / len),
+        outNy: -(ay / len),
+        n0x: -n0.nx,
+        n0y: -n0.ny,
+        n1x: -n1.nx,
+        n1y: -n1.ny,
+        isConcave
+      };
       this.Composite.add(this.engine.world, joint);
       this.driveSurfaces.push(joint);
     }
@@ -276,8 +504,8 @@ export class PhysicsSimulation {
           {
             isStatic: true,
             friction: 0.92,
-            restitution: 0.08,
-            slop: 0.015,
+            restitution: 0.0,
+            slop: 0.004,
             label: 'island',
             isBackside
           }
@@ -303,28 +531,55 @@ export class PhysicsSimulation {
       const angle = Math.atan2(dy, dx);
       const cx = (p0.x + p1.x) * 0.5;
       const cy = (p0.y + p1.y) * 0.5;
+      const inX = pipe.cx - cx;
+      const inY = pipe.cy - cy;
+      const inLen = Math.hypot(inX, inY) || 1;
       const seg = this.Bodies.rectangle(cx, cy, segLen, pipe.thickness, {
         isStatic: true,
         angle,
-        chamfer: { radius: Math.min(1.0, segLen * 0.2) },
         friction: 0.92,
-        restitution: 0.10,
-        slop: 0.015,
+        restitution: 0.0,
+        slop: 0.004,
         label: 'island'
       });
+      seg._halfPipeSeg = {
+        cx: pipe.cx,
+        cy: pipe.cy,
+        r: pipe.r,
+        outNx: inX / inLen,
+        outNy: inY / inLen,
+        openStart: i === 0,
+        openEnd: i === pts.length - 2,
+        isCap: false
+      };
       this.Composite.add(this.engine.world, seg);
       this.driveSurfaces.push(seg);
     }
     for (let i = 0; i < pts.length; i++) {
       const pt = pts[i];
       const capRadius = pipe.thickness * 0.5;
+      const inX = pipe.cx - pt.x;
+      const inY = pipe.cy - pt.y;
+      const inLen = Math.hypot(inX, inY) || 1;
       const cap = this.Bodies.circle(pt.x, pt.y, capRadius, {
         isStatic: true,
         friction: 0.92,
-        restitution: 0.10,
-        slop: 0.015,
+        restitution: 0.0,
+        slop: 0.004,
         label: 'island'
       });
+      if (i > 0 && i < pts.length - 1) {
+        cap._halfPipeSeg = {
+          cx: pipe.cx,
+          cy: pipe.cy,
+          r: pipe.r,
+          outNx: inX / inLen,
+          outNy: inY / inLen,
+          openStart: false,
+          openEnd: false,
+          isCap: true
+        };
+      }
       this.Composite.add(this.engine.world, cap);
       this.driveSurfaces.push(cap);
     }
@@ -338,9 +593,9 @@ export class PhysicsSimulation {
       density: isSpinner ? 0.018 : (isBridge ? 0.0036 : 0.0042),
       chamfer: { radius: 14 },
       friction: 0.95,
-      restitution: 0.08,
+      restitution: 0.0,
       frictionAir: isSpinner ? 0.002 : (isBridge ? 0.006 : 0.012),
-      slop: 0.015,
+      slop: 0.004,
       angle: cfg.angle || 0,
       label: 'seesaw'
     });
@@ -384,6 +639,8 @@ export class PhysicsSimulation {
     this.waterCrestY = WATER_CREST_Y;
     this.waterHazardY = WATER_HAZARD_Y;
     this.waterRising = false;
+    if (this._prevBodyPoses) this._prevBodyPoses.clear();
+    this._prevWaterCrestY = this.waterCrestY;
 
     for (const isl of arena.islands) {
       this._addSurfacePolyline(isl.top, 1, 28, false, { taperEnds: true, endCaps: true });
@@ -424,8 +681,8 @@ export class PhysicsSimulation {
         angle: blk.angle || 0,
         chamfer: { radius: blkChamfer },
         friction: 0.92,
-        restitution: 0.14,
-        slop: 0.015,
+        restitution: 0.0,
+        slop: 0.004,
         label: 'island',
         isBackside: Boolean(blk.hiddenVisual)
       });
@@ -457,11 +714,11 @@ export class PhysicsSimulation {
     const chassis = this.Bodies.rectangle(x, y, spec.width, spec.height, {
       chamfer: { radius: spec.chamfer ?? 8.5 * CAR_SCALE },
       density: spec.density,
-      restitution: spec.restitution,
-      friction: spec.friction,
-      frictionStatic: 0.04,
+      restitution: Math.min(spec.restitution, 0.01),
+      friction: Math.min(spec.friction, 0.012),
+      frictionStatic: 0.008,
       frictionAir: 0.0045,
-      slop: 0.015,
+      slop: 0.005,
       collisionFilter: { group },
       label: `chassis_${pTag}`
     });
@@ -473,27 +730,20 @@ export class PhysicsSimulation {
     const radLeft = facing > 0 ? (spec.wheelRadiusR ?? spec.wheelRadius) : (spec.wheelRadiusF ?? spec.wheelRadius);
     const radRight = facing > 0 ? (spec.wheelRadiusF ?? spec.wheelRadius) : (spec.wheelRadiusR ?? spec.wheelRadius);
 
-    const wheelR = this.Bodies.circle(x - spec.wheelOffsetX, y + yOffLeft, radLeft, {
+    const makeWheel = (wx, wy, rad, label) => this.Bodies.polygon(wx, wy, 28, rad, {
+      circleRadius: rad,
       density: spec.wheelDensity,
       friction: spec.wheelFriction,
-      frictionStatic: 0.22,
-      restitution: spec.wheelRestitution,
+      frictionStatic: 0.16,
+      restitution: 0.0,
       frictionAir: 0.004,
-      slop: 0.008,
+      slop: 0.004,
       collisionFilter: { group },
-      label: `wheel_${pTag}_r`
+      label
     });
 
-    const wheelF = this.Bodies.circle(x + spec.wheelOffsetX, y + yOffRight, radRight, {
-      density: spec.wheelDensity,
-      friction: spec.wheelFriction,
-      frictionStatic: 0.22,
-      restitution: spec.wheelRestitution,
-      frictionAir: 0.004,
-      slop: 0.008,
-      collisionFilter: { group },
-      label: `wheel_${pTag}_f`
-    });
+    const wheelR = makeWheel(x - spec.wheelOffsetX, y + yOffLeft, radLeft, `wheel_${pTag}_r`);
+    const wheelF = makeWheel(x + spec.wheelOffsetX, y + yOffRight, radRight, `wheel_${pTag}_f`);
 
     const headOffX = (spec.headOffsetX || 0) * facing;
     const head = this.Bodies.circle(x + headOffX, y + spec.headOffsetY, spec.headRadius, {
@@ -652,6 +902,67 @@ export class PhysicsSimulation {
 
   triggerBotJump(car, chaseDir = 0) {
     return this.triggerJump(car, chaseDir);
+  }
+
+  _forEachRenderBody(fn) {
+    for (const car of [this.p1Car, this.p2Car]) {
+      if (!car) continue;
+      if (car.chassis) fn(car.chassis);
+      if (car.wheelR) fn(car.wheelR);
+      if (car.wheelF) fn(car.wheelF);
+      if (car.head) fn(car.head);
+    }
+    for (const s of this.seesaws) {
+      if (s && s.body) fn(s.body);
+    }
+    for (const rag of this.ragdolls) {
+      if (!rag) continue;
+      for (const part of [rag.head, rag.torso, rag.armL, rag.armR, rag.legL, rag.legR]) {
+        if (part) fn(part);
+      }
+    }
+  }
+
+  snapshotPrevRenderState() {
+    if (!this._prevBodyPoses) this._prevBodyPoses = new Map();
+    this._prevBodyPoses.clear();
+    this._forEachRenderBody((b) => {
+      this._prevBodyPoses.set(b.id, { x: b.position.x, y: b.position.y, a: b.angle });
+    });
+    this._prevWaterCrestY = this.waterCrestY;
+  }
+
+  applyRenderInterpolation(alpha = 1) {
+    if (!this._prevBodyPoses || this._prevBodyPoses.size === 0 || alpha >= 0.999) {
+      return () => {};
+    }
+    const t = clamp(alpha, 0, 1);
+    const saved = [];
+    this._forEachRenderBody((b) => {
+      const prev = this._prevBodyPoses.get(b.id);
+      if (!prev) return;
+      const dx = b.position.x - prev.x;
+      const dy = b.position.y - prev.y;
+      if (dx * dx + dy * dy > 100 * 100) return;
+      saved.push({ body: b, x: b.position.x, y: b.position.y, angle: b.angle });
+      b.position.x = prev.x + dx * t;
+      b.position.y = prev.y + dy * t;
+      const da = Math.atan2(Math.sin(b.angle - prev.a), Math.cos(b.angle - prev.a));
+      b.angle = prev.a + da * t;
+    });
+    const savedWater = this.waterCrestY;
+    if (Number.isFinite(this._prevWaterCrestY)) {
+      this.waterCrestY = this._prevWaterCrestY + (savedWater - this._prevWaterCrestY) * t;
+    }
+    return () => {
+      for (let i = 0; i < saved.length; i++) {
+        const item = saved[i];
+        item.body.position.x = item.x;
+        item.body.position.y = item.y;
+        item.body.angle = item.angle;
+      }
+      this.waterCrestY = savedWater;
+    };
   }
 
   captureCarPose(car) {
@@ -931,6 +1242,7 @@ export class PhysicsSimulation {
   }
 
   stepHoverCountdown(countdownElapsedMs = 0) {
+    this.snapshotPrevRenderState();
     const tMs = Number.isFinite(countdownElapsedMs) ? countdownElapsedMs : 0;
     const hoverY = -3.0 * (1 - Math.cos(tMs * 0.0055));
     const cars = [this.p1Car, this.p2Car];
@@ -966,6 +1278,7 @@ export class PhysicsSimulation {
   }
 
   step(p1Input, p2Input, canControl, updateWater = true) {
+    this.snapshotPrevRenderState();
     const empty = { l: false, r: false, holdMs: 0 };
     const activeP1 = canControl ? (p1Input || empty) : empty;
     const activeP2 = canControl ? (p2Input || empty) : empty;
