@@ -1,0 +1,3688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#FAD6BE">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Crash Ahead! — 1v1 Cartoon Physics Car Battle</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@600;700&family=Rubik:wght@700;800&display=swap" rel="stylesheet">
+
+  <!-- Matter.js 0.19.0 2D Physics Engine -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <!-- PeerJS 1.5.4 WebRTC P2P Networking -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <style>
+    :root {
+      --sky-peach: #FAD6BE;
+      --ink: #111111;
+      --red: #F25C54;
+      --red-dark: #C93B33;
+      --blue: #00B4FF;
+      --blue-dark: #0082B8;
+      --yellow: #F7B538;
+      --yellow-dark: #D4921C;
+      --slate: #3A3E42;
+      --white: #FFFFFF;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--sky-peach);
+      font-family: 'Fredoka', 'Rubik', system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      overscroll-behavior: none;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* Full-Bleed Responsive 16:9 Stage */
+    #stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--sky-peach);
+      overflow: hidden;
+    }
+
+    #game-canvas {
+      display: block;
+      aspect-ratio: 16 / 9;
+      width: min(100vw, calc(100vh * 16 / 9));
+      height: min(100vh, calc(100vw * 9 / 16));
+      width: min(100vw, calc(100dvh * 16 / 9));
+      height: min(100dvh, calc(100vw * 9 / 16));
+      touch-action: none;
+    }
+
+    /* Top-Center White Score Half-Pill & Bottom-Center White EXIT Half-Pill */
+    .hud-pill {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--white);
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+    }
+
+    .top-pill {
+      top: 0;
+      padding: 6px 26px 9px;
+      border-radius: 0 0 36px 36px;
+      gap: 10px;
+      font-size: clamp(22px, 4vw, 32px);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: 0.5px;
+      border: 4px solid var(--ink);
+      border-top: none;
+      pointer-events: none;
+    }
+
+    .score-red { color: var(--red); }
+    .score-sep { color: var(--slate); font-size: 0.78em; }
+    .score-blue { color: var(--blue); }
+
+    .ping-tag {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--slate);
+      background: #EEF1F4;
+      padding: 2px 7px;
+      border-radius: 999px;
+      margin-left: 2px;
+    }
+
+    .bottom-pill {
+      bottom: 0;
+      padding: 10px 30px 7px;
+      border-radius: 36px 36px 0 0;
+      border: 4px solid var(--ink);
+      border-bottom: none;
+      font-family: inherit;
+      font-size: clamp(14px, 2.2vw, 18px);
+      font-weight: 800;
+      color: var(--slate);
+      letter-spacing: 1px;
+      cursor: pointer;
+    }
+
+    .bottom-pill:active {
+      background: #F0F2F4;
+    }
+
+    /* Subtle Active Map Watermark Tag Top-Right (Only small helper badge during play? No, kept strictly screenshot-clean; shown in lobby/map picker) */
+
+    /* Circular Tactile Cartoon Arrow Controls */
+    #touch-controls {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 15;
+    }
+
+    .btn-pair {
+      position: fixed;
+      bottom: max(18px, env(safe-area-inset-bottom, 0px));
+      display: flex;
+      gap: 18px;
+      pointer-events: auto;
+    }
+
+    .left-pair { left: max(26px, env(safe-area-inset-left, 0px)); }
+    .right-pair { right: max(26px, env(safe-area-inset-right, 0px)); }
+
+    .circle-pad {
+      width: 78px;
+      height: 78px;
+      border-radius: 50%;
+      border: 5px solid var(--ink);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      touch-action: none;
+      outline: none;
+      box-shadow: inset 0 -7px 0 rgba(0, 0, 0, 0.22);
+      transition: transform 0.06s ease;
+    }
+
+    .pad-red { background: var(--red); }
+    .pad-blue { background: var(--blue); }
+
+    .circle-pad svg {
+      width: 38px;
+      height: 38px;
+      fill: none;
+      stroke: var(--ink);
+      stroke-width: 6.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+
+    .circle-pad.pressed {
+      transform: translateY(3px) scale(0.94);
+      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+    }
+
+    /* Split-Thumbs 1P Layout: Left button on bottom-left, Right button on bottom-right */
+    #touch-controls.mode-1p-split .btn-pair {
+      display: contents;
+    }
+
+    #touch-controls.mode-1p-split .pad-left-btn {
+      position: fixed;
+      bottom: max(18px, env(safe-area-inset-bottom, 0px));
+      left: max(26px, env(safe-area-inset-left, 0px));
+      pointer-events: auto;
+    }
+
+    #touch-controls.mode-1p-split .pad-right-btn {
+      position: fixed;
+      bottom: max(18px, env(safe-area-inset-bottom, 0px));
+      right: max(26px, env(safe-area-inset-right, 0px));
+      pointer-events: auto;
+    }
+
+    @media (max-height: 460px), (max-width: 760px) {
+      .btn-pair {
+        bottom: 14px;
+        gap: 14px;
+      }
+      .left-pair { left: 16px; }
+      .right-pair { right: 16px; }
+      #touch-controls.mode-1p-split .pad-left-btn {
+        bottom: 14px;
+        left: 16px;
+      }
+      #touch-controls.mode-1p-split .pad-right-btn {
+        bottom: 14px;
+        right: 16px;
+      }
+      .circle-pad {
+        width: 68px;
+        height: 68px;
+        border-width: 4.5px;
+      }
+      .circle-pad svg {
+        width: 32px;
+        height: 32px;
+      }
+    }
+
+    /* Flat-Vector White Cartoon Menu & Modals */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      background: rgba(17, 17, 17, 0.14);
+    }
+
+    .lobby-card {
+      width: min(490px, 95vw);
+      max-height: 94vh;
+      overflow-y: auto;
+      background: var(--white);
+      border: 5px solid var(--ink);
+      border-radius: 28px;
+      padding: 20px 22px 18px;
+      box-shadow: 0 10px 0 var(--ink);
+    }
+
+    .lobby-card.compact {
+      width: min(430px, 94vw);
+    }
+
+    .lobby-card.center {
+      text-align: center;
+    }
+
+    .lobby-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .game-title {
+      font-size: clamp(26px, 4.8vw, 34px);
+      font-weight: 800;
+      line-height: 1.02;
+      color: var(--ink);
+      letter-spacing: -0.5px;
+    }
+
+    .game-title.small {
+      font-size: 24px;
+    }
+
+    .game-sub {
+      margin-top: 3px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #5A5F66;
+      letter-spacing: 0.5px;
+    }
+
+    .mini-tools {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .mini-circle-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 3.5px solid var(--ink);
+      background: var(--white);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .mini-circle-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: var(--ink);
+    }
+
+    .mini-circle-btn:active {
+      transform: translateY(2px);
+    }
+
+    .mini-pill-btn {
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 800;
+      padding: 6px 14px;
+      border-radius: 999px;
+      border: 3.5px solid var(--ink);
+      background: var(--white);
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    /* Map Picker Stepper Inside Cartoon Card */
+    .map-picker-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      background: #F4F5F7;
+      border: 4px solid var(--ink);
+      border-radius: 18px;
+      padding: 5px 6px;
+    }
+
+    .map-step-btn {
+      width: 36px;
+      height: 36px;
+      flex-shrink: 0;
+      border-radius: 12px;
+      border: 3px solid var(--ink);
+      background: var(--white);
+      font-family: inherit;
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--ink);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.12);
+    }
+
+    .map-step-btn:active {
+      transform: translateY(2px);
+    }
+
+    .map-picker-label {
+      flex: 1;
+      text-align: center;
+      border: none;
+      background: transparent;
+      font-family: inherit;
+      cursor: pointer;
+      padding: 2px 4px;
+    }
+
+    .map-picker-main {
+      display: block;
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--ink);
+      line-height: 1.15;
+    }
+
+    .map-picker-sub {
+      display: block;
+      font-size: 10.5px;
+      font-weight: 700;
+      color: #5A5F66;
+      margin-top: 1px;
+    }
+
+    .mode-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .cartoon-btn {
+      width: 100%;
+      font-family: inherit;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+      padding: 12px 16px;
+      border-radius: 999px;
+      border: 4px solid var(--ink);
+      cursor: pointer;
+      text-align: center;
+      transition: transform 0.06s ease;
+    }
+
+    .cartoon-btn.btn-sm {
+      font-size: 14px;
+      padding: 9px 12px;
+    }
+
+    .btn-red {
+      background: var(--red);
+      color: var(--white);
+      box-shadow: inset 0 -5px 0 var(--red-dark);
+    }
+
+    .btn-blue {
+      background: var(--blue);
+      color: var(--white);
+      box-shadow: inset 0 -5px 0 var(--blue-dark);
+    }
+
+    .btn-yellow {
+      background: var(--yellow);
+      color: var(--ink);
+      box-shadow: inset 0 -5px 0 var(--yellow-dark);
+    }
+
+    .cartoon-btn:active:not(:disabled) {
+      transform: translateY(2px);
+    }
+
+    .cartoon-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .lobby-footer {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toggle-chip {
+      font-family: inherit;
+      font-size: 11.5px;
+      font-weight: 800;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 3px solid var(--ink);
+      background: var(--white);
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    .keys-hint {
+      font-size: 11px;
+      font-weight: 700;
+      color: #5A5F66;
+    }
+
+    /* Online P2P Card */
+    .tab-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .tab-row .cartoon-btn:not(.active) {
+      background: #EAECEF;
+      color: var(--slate);
+      box-shadow: inset 0 -4px 0 #CFD4DA;
+    }
+
+    .online-panel {
+      margin-bottom: 12px;
+    }
+
+    .code-display-box {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border: 4px solid var(--ink);
+      border-radius: 16px;
+      background: #FFF6E8;
+      margin-bottom: 8px;
+    }
+
+    .code-label {
+      font-size: 12px;
+      font-weight: 800;
+      color: #5A5F66;
+    }
+
+    .code-value {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      color: var(--ink);
+    }
+
+    .copy-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .join-input-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+
+    .code-input {
+      font-family: inherit;
+      font-size: 19px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      text-align: center;
+      padding: 8px 10px;
+      border-radius: 16px;
+      border: 4px solid var(--ink);
+      outline: none;
+      width: 100%;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-radius: 14px;
+      border: 3px solid var(--ink);
+      background: #F4F5F7;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .status-pill.connected { background: #E3F9EC; }
+    .status-pill.error { background: #FFE6E4; }
+
+    /* Victory Modal */
+    .victory-score {
+      font-size: 38px;
+      font-weight: 800;
+      color: var(--ink);
+      margin: 6px 0 8px;
+    }
+
+    .victory-note {
+      min-height: 18px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #5A5F66;
+      margin-bottom: 12px;
+    }
+
+    /* Portrait Orientation Enforcement */
+    #rotate-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: var(--sky-peach);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .rotate-card {
+      width: min(360px, 90vw);
+      background: var(--white);
+      border: 5px solid var(--ink);
+      border-radius: 26px;
+      padding: 24px 20px;
+      text-align: center;
+      box-shadow: 0 8px 0 var(--ink);
+    }
+
+    .rotate-card h2 {
+      font-size: 22px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .rotate-card p {
+      font-size: 14px;
+      font-weight: 600;
+      color: #5A5F66;
+      margin-bottom: 16px;
+    }
+
+    .phone-icon-anim {
+      width: 44px;
+      height: 70px;
+      margin: 0 auto 14px;
+      border: 4px solid var(--ink);
+      border-radius: 10px;
+      background: var(--blue);
+      animation: tilt-phone 1.6s ease-in-out infinite;
+    }
+
+    @keyframes tilt-phone {
+      0%, 20% { transform: rotate(0deg); }
+      50%, 75% { transform: rotate(-90deg); }
+      100% { transform: rotate(0deg); }
+    }
+
+    @media (orientation: portrait) and (max-width: 900px) {
+      body:not(.force-landscape) #rotate-overlay {
+        display: flex;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Portrait Orientation Enforcement Overlay -->
+  <div id="rotate-overlay" role="dialog" aria-label="Rotate Device">
+    <div class="rotate-card">
+      <div class="phone-icon-anim"></div>
+      <h2>ROTATE TO LANDSCAPE</h2>
+      <p>Crash Ahead plays best sideways for full multi-touch control.</p>
+      <button id="force-landscape-btn" class="cartoon-btn btn-blue" type="button">PLAY ANYWAY</button>
+    </div>
+  </div>
+
+  <!-- Full-Bleed Responsive Cartoon Stage -->
+  <div id="stage">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Top-Center White Score Half-Pill -->
+    <div id="score-pill" class="hud-pill top-pill hidden" aria-live="polite">
+      <span id="score-p1" class="score-red">0</span>
+      <span class="score-sep">&bull;</span>
+      <span id="score-p2" class="score-blue">0</span>
+      <span id="online-ping-tag" class="ping-tag hidden">0ms</span>
+    </div>
+
+    <!-- Bottom-Center White EXIT Half-Pill -->
+    <button id="btn-exit" class="hud-pill bottom-pill hidden" type="button">EXIT</button>
+
+    <!-- Multi-Touch Circular Cartoon Controls -->
+    <div id="touch-controls">
+      <div id="group-p1" class="btn-pair left-pair">
+        <button id="pad-p1-l" class="circle-pad pad-red" type="button" aria-label="Red Left">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M24 10 L13 20 L24 30" />
+          </svg>
+        </button>
+        <button id="pad-p1-r" class="circle-pad pad-red" type="button" aria-label="Red Right">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M16 10 L27 20 L16 30" />
+          </svg>
+        </button>
+      </div>
+
+      <div id="group-p2" class="btn-pair right-pair">
+        <button id="pad-p2-l" class="circle-pad pad-blue" type="button" aria-label="Blue Left">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M24 10 L13 20 L24 30" />
+          </svg>
+        </button>
+        <button id="pad-p2-r" class="circle-pad pad-blue" type="button" aria-label="Blue Right">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M16 10 L27 20 L16 30" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Clean Flat-Vector Menu Modal -->
+    <div id="menu-overlay" class="overlay">
+      <div class="lobby-card">
+        <div class="lobby-top-row">
+          <div class="title-wrap">
+            <h1 class="game-title">CRASH AHEAD!</h1>
+            <p class="game-sub">FIRST TO 5 BONKS OR WATER SPLASHES</p>
+          </div>
+          <div class="mini-tools">
+            <button id="btn-mute" class="mini-circle-btn" type="button" title="Sound" aria-label="Toggle Sound">
+              <svg id="icon-sound-on" viewBox="0 0 24 24"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2c0-1.7-1-3.2-2.5-3.9v7.8c1.5-.7 2.5-2.2 2.5-3.9zM14 4.2v2c2.8.8 4.8 3.2 4.8 5.8s-2 5-4.8 5.8v2c3.9-.9 6.8-4.2 6.8-7.8S17.9 5.1 14 4.2z"/></svg>
+              <svg id="icon-sound-off" class="hidden" viewBox="0 0 24 24"><path d="M16.5 12c0-1.7-1-3.2-2.5-3.9v2.2l2.4 2.4c.1-.2.1-.5.1-.7zm4.3 0c0-3.6-2.9-6.9-6.8-7.8v2c2.8.8 4.8 3.2 4.8 5.8 0 .9-.2 1.8-.7 2.6l1.5 1.5c.8-1.2 1.2-2.6 1.2-4.1zM4.3 3L3 4.3 7.7 9H3v6h4l5 5v-6.7l4.2 4.2c-.7.5-1.4.9-2.2 1.1v2c1.4-.3 2.6-.9 3.7-1.8L19.7 21 21 19.7 4.3 3zM12 5L9.9 7.1 12 9.2V5z"/></svg>
+            </button>
+            <button id="btn-fullscreen" class="mini-circle-btn" type="button" title="Fullscreen" aria-label="Toggle Fullscreen">
+              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Map Picker Pill -->
+        <div class="map-picker-row">
+          <button id="btn-map-prev" class="map-step-btn" type="button" aria-label="Previous Map">&lt;</button>
+          <button id="btn-map-cycle" class="map-picker-label" type="button" title="Cycle Map">
+            <span id="map-picker-title" class="map-picker-main">ALL 15 MAPS (RANDOM ROTATION)</span>
+            <span id="map-picker-sub" class="map-picker-sub">Tap arrows to lock Maps 1&ndash;15 or preview</span>
+          </button>
+          <button id="btn-map-next" class="map-step-btn" type="button" aria-label="Next Map">&gt;</button>
+        </div>
+
+        <div class="mode-stack">
+          <button id="btn-mode-local" class="cartoon-btn btn-red" type="button">2 PLAYER (SAME DEVICE)</button>
+          <button id="btn-mode-online" class="cartoon-btn btn-blue" type="button">ONLINE 1v1 (ROOM CODE)</button>
+          <button id="btn-mode-ai" class="cartoon-btn btn-yellow" type="button">1 PLAYER (VS BOT)</button>
+        </div>
+
+        <div class="lobby-footer">
+          <button id="btn-ctrl-toggle" class="toggle-chip" type="button">1P TOUCH: SPLIT THUMBS</button>
+          <span class="keys-hint">KEYS: A / D (RED) &bull; &larr; / &rarr; (BLUE)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Online P2P Room Card -->
+    <div id="online-overlay" class="overlay hidden">
+      <div class="lobby-card compact">
+        <div class="lobby-top-row">
+          <h2 class="game-title small">ONLINE 1v1</h2>
+          <button id="btn-online-back" class="mini-pill-btn" type="button">BACK</button>
+        </div>
+
+        <div class="tab-row">
+          <button id="tab-host" class="cartoon-btn btn-sm btn-red active" type="button">HOST ROOM</button>
+          <button id="tab-join" class="cartoon-btn btn-sm btn-blue" type="button">JOIN ROOM</button>
+        </div>
+
+        <div id="panel-host" class="online-panel">
+          <div class="code-display-box">
+            <span class="code-label">ROOM CODE</span>
+            <span id="host-room-code" class="code-value">CRSH-----</span>
+          </div>
+          <div class="copy-row">
+            <button id="btn-copy-code" class="cartoon-btn btn-sm btn-yellow" type="button">COPY CODE</button>
+            <button id="btn-copy-link" class="cartoon-btn btn-sm btn-blue" type="button">COPY LINK</button>
+          </div>
+        </div>
+
+        <div id="panel-join" class="online-panel hidden">
+          <div class="join-input-row">
+            <input id="join-code-input" class="code-input" type="text" maxlength="9" placeholder="CODE" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+            <button id="btn-join-connect" class="cartoon-btn btn-sm btn-yellow" type="button">JOIN</button>
+          </div>
+        </div>
+
+        <div id="online-status" class="status-pill">
+          <span id="online-status-text">Initializing PeerJS...</span>
+          <span id="online-lobby-ping"></span>
+        </div>
+
+        <button id="btn-online-start" class="cartoon-btn btn-red" type="button" disabled>WAITING FOR OPPONENT...</button>
+      </div>
+    </div>
+
+    <!-- Victory Modal -->
+    <div id="victory-overlay" class="overlay hidden">
+      <div class="lobby-card compact center">
+        <h2 id="victory-title" class="game-title">RED WINS!</h2>
+        <div id="victory-score" class="victory-score">5 &bull; 2</div>
+        <div id="victory-note" class="victory-note"></div>
+        <div class="copy-row">
+          <button id="btn-rematch" class="cartoon-btn btn-sm btn-yellow" type="button">PLAY AGAIN</button>
+          <button id="btn-victory-menu" class="cartoon-btn btn-sm btn-blue" type="button">MENU</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      // =========================================================================
+      // 1. CONSTANTS, PALETTE & PHYSICS TUNING
+      // =========================================================================
+      const WORLD_W = 1280;
+      const WORLD_H = 720;
+      const FIXED_DT = 1000 / 60;
+      const WIN_SCORE = 5;
+      const KO_FREEZE_MS = 650;
+      const DOUBLE_KO_WINDOW_MS = 100;
+      const PEER_PREFIX = 'crash-ahead-p2p-';
+
+      const WATER_CREST_Y = WORLD_H - 62;  // 658
+      const WATER_HAZARD_Y = WORLD_H - 52; // 668
+
+      const PALETTE = {
+        skyPeach: '#FAD6BE',
+        horizonMauve: '#B58D94',
+        sunCream: '#FCE8CC',
+        cityBack: '#D3A7A8',
+        cityFront: '#B58D94',
+        cityWindow: '#E5BCB8',
+        rockFill: '#4A4F55',
+        rockPill: '#3A3E42',
+        ink: '#111111',
+        plankFill: '#9E5834',
+        waterTop: '#2994FF',
+        waterDeep: '#1565C0',
+        white: '#FFFFFF',
+        charcoal: '#232529',
+        stripeGold: '#F7B538',
+        red: { body: '#F25C54', lip: '#C93B33', rim: '#F25C54', helmet: '#F25C54' },
+        blue: { body: '#00B4FF', lip: '#0082B8', rim: '#00B4FF', helmet: '#00B4FF' }
+      };
+
+      const CAR_SPEC = {
+        width: 90,
+        height: 26,
+        density: 0.005,
+        restitution: 0.14,
+        friction: 0.32,
+        wheelOffsetX: 27,
+        wheelOffsetY: 13,
+        wheelRadius: 14.5,
+        wheelDensity: 0.008,
+        wheelFriction: 1.0,
+        wheelRestitution: 0.14,
+        headRadius: 11.5,
+        headOffsetY: -16,
+        headDensity: 0.0005,
+        headRestitution: 0.15,
+        maxWheelSpin: 0.45,
+        slopeAssistForce: 0.0044,
+        wheelieAngle: 0.24,
+        airTargetSpin: 0.135,
+        airSpinDamping: 0.90
+      };
+
+      function clamp(v, min, max) {
+        return v < min ? min : v > max ? max : v;
+      }
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      function normalizeAngle(a) {
+        let r = a % (Math.PI * 2);
+        if (r > Math.PI) r -= Math.PI * 2;
+        if (r < -Math.PI) r += Math.PI * 2;
+        return r;
+      }
+
+      function lerpAngle(a, b, t) {
+        return a + normalizeAngle(b - a) * t;
+      }
+
+      // =========================================================================
+      // 2. SOUND FX & HAPTICS
+      // =========================================================================
+      class SoundFX {
+        constructor() {
+          this.ctx = null;
+          this.muted = localStorage.getItem('crashahead_muted') === '1';
+          this.engineOsc = null;
+          this.engineGain = null;
+          this.lastBumpAt = 0;
+        }
+
+        unlock() {
+          if (!this.ctx) {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            this.ctx = new Ctx();
+          }
+          if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+          if (!this.engineOsc && this.ctx) {
+            try {
+              const osc = this.ctx.createOscillator();
+              const filter = this.ctx.createBiquadFilter();
+              const gain = this.ctx.createGain();
+              osc.type = 'sawtooth';
+              osc.frequency.value = 54;
+              filter.type = 'lowpass';
+              filter.frequency.value = 210;
+              gain.gain.value = 0;
+              osc.connect(filter);
+              filter.connect(gain);
+              gain.connect(this.ctx.destination);
+              osc.start();
+              this.engineOsc = osc;
+              this.engineGain = gain;
+            } catch (_) {}
+          }
+        }
+
+        setMuted(m) {
+          this.muted = !!m;
+          localStorage.setItem('crashahead_muted', this.muted ? '1' : '0');
+          if (this.muted && this.engineGain && this.ctx) {
+            this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.04);
+          }
+        }
+
+        updateEngine(active, throttle, speedNorm) {
+          if (!this.ctx || !this.engineGain || !this.engineOsc) return;
+          const now = this.ctx.currentTime;
+          if (this.muted || !active) {
+            this.engineGain.gain.setTargetAtTime(0, now, 0.05);
+            return;
+          }
+          const targetFreq = 52 + throttle * 46 + speedNorm * 40;
+          const targetVol = 0.014 + throttle * 0.028;
+          this.engineOsc.frequency.setTargetAtTime(targetFreq, now, 0.06);
+          this.engineGain.gain.setTargetAtTime(targetVol, now, 0.06);
+        }
+
+        playBump(strength = 0.6) {
+          if (this.muted || !this.ctx) return;
+          const nowMs = performance.now();
+          if (nowMs - this.lastBumpAt < 70) return;
+          this.lastBumpAt = nowMs;
+          const t = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(160 + strength * 70, t);
+          osc.frequency.exponentialRampToValueAtTime(52, t + 0.09);
+          gain.gain.setValueAtTime(Math.min(0.18, 0.06 + strength * 0.12), t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(t);
+          osc.stop(t + 0.11);
+        }
+
+        playBonk() {
+          if (this.muted || !this.ctx) return;
+          const t = this.ctx.currentTime;
+          const o1 = this.ctx.createOscillator();
+          const g1 = this.ctx.createGain();
+          o1.type = 'sine';
+          o1.frequency.setValueAtTime(340, t);
+          o1.frequency.exponentialRampToValueAtTime(95, t + 0.16);
+          g1.gain.setValueAtTime(0.28, t);
+          g1.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+          o1.connect(g1);
+          g1.connect(this.ctx.destination);
+          o1.start(t);
+          o1.stop(t + 0.19);
+        }
+
+        playSplash() {
+          if (this.muted || !this.ctx) return;
+          const t = this.ctx.currentTime;
+          const dur = 0.34;
+          const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+          const data = buf.getChannelData(0);
+          for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (data.length * 0.32));
+          const src = this.ctx.createBufferSource();
+          src.buffer = buf;
+          const bp = this.ctx.createBiquadFilter();
+          bp.type = 'bandpass';
+          bp.frequency.setValueAtTime(750, t);
+          bp.frequency.exponentialRampToValueAtTime(240, t + dur);
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(0.26, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+          src.connect(bp);
+          bp.connect(gain);
+          gain.connect(this.ctx.destination);
+          src.start(t);
+        }
+
+        playVictory() {
+          if (this.muted || !this.ctx) return;
+          const notes = [523.25, 659.25, 783.99, 1046.5];
+          const t0 = this.ctx.currentTime;
+          notes.forEach((f, idx) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'triangle';
+            const s = t0 + idx * 0.095;
+            osc.frequency.setValueAtTime(f, s);
+            gain.gain.setValueAtTime(0.16, s);
+            gain.gain.exponentialRampToValueAtTime(0.001, s + 0.28);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(s);
+            osc.stop(s + 0.3);
+          });
+        }
+
+        playClick() {
+          if (this.muted || !this.ctx) return;
+          const t = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(620, t);
+          osc.frequency.exponentialRampToValueAtTime(380, t + 0.045);
+          gain.gain.setValueAtTime(0.09, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(t);
+          osc.stop(t + 0.055);
+        }
+      }
+
+      const Haptics = {
+        bump() { try { if (navigator.vibrate) navigator.vibrate(20); } catch (_) {} },
+        ko() { try { if (navigator.vibrate) navigator.vibrate(140); } catch (_) {} }
+      };
+
+      // =========================================================================
+      // 3. GEOMETRY & ARENAS (ALL 15 MAPS: 9 CORE SCREENSHOT MAPS + 6 DERIVED)
+      // =========================================================================
+      function sampleArcPoints(cx, cy, r, aStart, aEnd, steps = 16) {
+        const pts = [];
+        for (let i = 0; i <= steps; i++) {
+          const a = lerp(aStart, aEnd, i / steps);
+          pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+        }
+        return pts;
+      }
+
+      function sampleEllipseArc(cx, cy, rx, ry, aStart, aEnd, steps = 16) {
+        const pts = [];
+        for (let i = 0; i <= steps; i++) {
+          const a = lerp(aStart, aEnd, i / steps);
+          pts.push({ x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ry });
+        }
+        return pts;
+      }
+
+      function sampleCurveX(x0, x1, steps, fn) {
+        const pts = [];
+        for (let i = 0; i <= steps; i++) {
+          const x = lerp(x0, x1, i / steps);
+          pts.push({ x, y: fn(x) });
+        }
+        return pts;
+      }
+
+      function chaikinSmooth(pts, closed = false, passes = 2) {
+        let cur = pts.map((p) => ({ x: p.x, y: p.y }));
+        for (let pass = 0; pass < passes; pass++) {
+          const out = [];
+          const len = cur.length;
+          if (!closed) out.push(cur[0]);
+          const limit = closed ? len : len - 1;
+          for (let i = 0; i < limit; i++) {
+            const p0 = cur[i];
+            const p1 = cur[(i + 1) % len];
+            out.push({ x: lerp(p0.x, p1.x, 0.25), y: lerp(p0.y, p1.y, 0.25) });
+            out.push({ x: lerp(p0.x, p1.x, 0.75), y: lerp(p0.y, p1.y, 0.75) });
+          }
+          if (!closed) out.push(cur[len - 1]);
+          cur = out;
+        }
+        return cur;
+      }
+
+      function generateRockPills(seed = 1) {
+        const pills = [];
+        let s = seed * 9301 + 49297;
+        const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+        for (let i = 0; i < 34; i++) {
+          pills.push({
+            x: 40 + rnd() * 1140,
+            y: 45 + rnd() * 600,
+            w: 46 + rnd() * 82,
+            h: 16
+          });
+        }
+        return pills;
+      }
+
+      function doubleValleyY(x, base = 436, crest = 430, depth = 40, leftX = 180, rightX = 1100, ledge = 135) {
+        const cx = 640;
+        const span = (cx - leftX) - ledge;
+        const d = Math.abs(x - cx);
+        if (d >= span) return base;
+        const t = d / span;
+        const midline = lerp(crest, base, 0.5 * (1 - Math.cos(Math.PI * t)));
+        const dip = depth * 0.5 * (1 - Math.cos(2 * Math.PI * t));
+        return midline + dip;
+      }
+
+      function caterpillar3PeakY(x) {
+        // Continuous smooth 3-peak + flanking outer-dome caterpillar wave (zero V-notch steps)
+        const d = Math.abs(x - 640);
+        const u = clamp(d / 445, 0, 1);
+        // Cos peaks at d=0 (crest), d~195 (side peaks), d~420 (rounded spawn domes)
+        const wave = -24 * Math.cos(u * Math.PI * 4.3);
+        const outerLift = u > 0.65 ? -28 * Math.pow((u - 0.65) / 0.35, 1.5) : 0;
+        const centerBoost = d < 95 ? -14 * Math.cos((d / 95) * Math.PI * 0.5) : 0;
+        return 492 + wave + outerLift + centerBoost;
+      }
+
+      function cavernFloor4DipY(x) {
+        // Gentle 4-dip / 3-crest cavern floor between x=170 and x=1110
+        const u = clamp((x - 165) / 950, 0, 1);
+        return 542 + 16 * Math.sin(u * Math.PI * 7 - Math.PI * 0.5);
+      }
+
+      function cloverFloorY(x) {
+        const u = (x - 640) / 460;
+        if (Math.abs(u) >= 1) return 546;
+        return 544 + 28 * (0.5 - 0.5 * Math.cos(2 * Math.PI * u)) - 18 * Math.cos(Math.PI * u);
+      }
+
+      function makeCloverInteriorLoop() {
+        // Counter-clockwise continuous smooth loop of the 3-lobed enclosed cave interior
+        const pts = [];
+        pts.push(...sampleCurveX(230, 1050, 28, cloverFloorY));
+        pts.push(...sampleEllipseArc(1055, 455, 118, 90, Math.PI * 0.45, -Math.PI * 0.45, 10));
+        pts.push({ x: 1035, y: 335 });
+        pts.push(...sampleEllipseArc(905, 215, 165, 112, 0.28, -Math.PI * 0.85, 12));
+        pts.push({ x: 688, y: 170 });
+        pts.push({ x: 640, y: 205 });
+        pts.push({ x: 592, y: 170 });
+        pts.push(...sampleEllipseArc(375, 215, 165, 112, -Math.PI * 0.15, -Math.PI * 1.28, 12));
+        pts.push({ x: 245, y: 335 });
+        pts.push(...sampleEllipseArc(225, 455, 118, 90, -Math.PI * 0.55, -Math.PI * 1.45, 10));
+        return chaikinSmooth(pts, true, 2);
+      }
+
+      function makeOvalCapsuleLoop(cx = 640, cy = 355, halfStraight = 265, r = 215) {
+        const pts = [];
+        for (let i = 0; i <= 20; i++) {
+          const x = lerp(cx - halfStraight, cx + halfStraight, i / 20);
+          const u = (x - cx) / halfStraight;
+          const y = (cy + r) - 10 * Math.cos(u * Math.PI * 1.5);
+          pts.push({ x, y });
+        }
+        pts.push(...sampleEllipseArc(cx + halfStraight, cy, r + 15, r, Math.PI * 0.48, -Math.PI * 0.48, 16));
+        for (let i = 1; i <= 18; i++) {
+          const x = lerp(cx + halfStraight, cx - halfStraight, i / 18);
+          pts.push({ x, y: (cy - r) - 12 * Math.cos(((x - cx) / halfStraight) * Math.PI * 0.5) });
+        }
+        pts.push(...sampleEllipseArc(cx - halfStraight, cy, r + 15, r, -Math.PI * 0.52, -Math.PI * 1.48, 16));
+        return chaikinSmooth(pts, true, 1);
+      }
+
+      function makeCavernArchOpenWalls(floorFn, lipXLeft = 405, lipXRight = 875, _topY = 92) {
+        // Silky-smooth cave arch walls rising gently off top viewport around central skylight
+        const raw = [];
+        raw.push({ x: lipXLeft, y: -18 });
+        raw.push(...sampleEllipseArc(lipXLeft, 285, 250, 215, -Math.PI * 0.52, -Math.PI * 1.08, 12));
+        raw.push(...sampleCurveX(185, 1095, 30, floorFn));
+        raw.push(...sampleEllipseArc(lipXRight, 285, 250, 215, 0.08, -Math.PI * 0.48, 12));
+        raw.push({ x: lipXRight, y: -18 });
+        const surface = chaikinSmooth(raw, false, 2);
+
+        const visualPoly = [
+          { x: lipXLeft, y: -25 },
+          { x: -25, y: -25 },
+          { x: -25, y: 745 },
+          { x: 1305, y: 745 },
+          { x: 1305, y: -25 },
+          { x: lipXRight, y: -25 },
+          ...surface.slice().reverse()
+        ];
+        return { surface, visualPoly };
+      }
+
+      function makeCanyonWallPair(floorFn, lipXLeft = 325, lipXRight = 955) {
+        const raw = [];
+        raw.push({ x: lipXLeft, y: -18 });
+        raw.push(...sampleEllipseArc(320, 265, 180, 240, -Math.PI * 0.52, -Math.PI * 1.20, 14));
+        raw.push(...sampleCurveX(185, 1095, 32, floorFn));
+        raw.push(...sampleEllipseArc(960, 265, 180, 240, 0.20, -Math.PI * 0.48, 14));
+        raw.push({ x: lipXRight, y: -18 });
+        const surface = chaikinSmooth(raw, false, 1);
+
+        const visualPoly = [
+          { x: lipXLeft, y: -25 },
+          { x: -25, y: -25 },
+          { x: -25, y: 745 },
+          { x: 1305, y: 745 },
+          { x: 1305, y: -25 },
+          { x: lipXRight, y: -25 },
+          ...surface.slice().reverse()
+        ];
+        return { surface, visualPoly };
+      }
+
+      const ARENAS = [
+        // 1. Classic Double-Valley Floating Island
+        (() => {
+          const top = sampleCurveX(180, 1100, 32, (x) => doubleValleyY(x));
+          const belly = chaikinSmooth([
+            { x: 1100, y: 446 },
+            { x: 1085, y: 500 },
+            { x: 1005, y: 562 },
+            { x: 895, y: 604 },
+            { x: 775, y: 606 },
+            { x: 640, y: 564 },
+            { x: 505, y: 606 },
+            { x: 385, y: 604 },
+            { x: 275, y: 562 },
+            { x: 195, y: 500 },
+            { x: 180, y: 446 }
+          ], false, 2);
+          return {
+            id: 1,
+            name: 'DOUBLE-VALLEY ISLAND',
+            desc: 'Classic floating rock over open water',
+            islands: [{ top, belly, poly: [...top, ...belly.slice(1, -1)] }],
+            caves: [],
+            openRocks: [],
+            halfPipes: [],
+            blocks: [{ x: 640, y: 542, w: 690, h: 86, chamfer: 26, hiddenVisual: true }],
+            seesaws: [],
+            pills: generateRockPills(1),
+            p1Spawn: { x: 245, y: 404 },
+            p2Spawn: { x: 1035, y: 404 }
+          };
+        })(),
+
+        // 2. Bumpy 3-Peak Caterpillar Island
+        (() => {
+          const top = sampleCurveX(185, 1095, 42, caterpillar3PeakY);
+          const belly = chaikinSmooth([
+            { x: 1098, y: 472 },
+            { x: 1134, y: 540 },
+            { x: 1090, y: 598 },
+            { x: 960, y: 612 },
+            { x: 640, y: 614 },
+            { x: 320, y: 612 },
+            { x: 190, y: 598 },
+            { x: 146, y: 540 },
+            { x: 182, y: 472 }
+          ], false, 2);
+          return {
+            id: 2,
+            name: '3-PEAK CATERPILLAR',
+            desc: 'Triple center waves on thick floating rock',
+            islands: [{ top, belly, poly: [...top, ...belly.slice(1, -1)] }],
+            caves: [],
+            openRocks: [],
+            halfPipes: [],
+            blocks: [{ x: 640, y: 562, w: 800, h: 80, chamfer: 22, hiddenVisual: true }],
+            seesaws: [],
+            pills: generateRockPills(2),
+            p1Spawn: { x: 240, y: 414 },
+            p2Spawn: { x: 1040, y: 414 }
+          };
+        })(),
+
+        // 3. Cavern Arch with High Center Seesaw
+        (() => {
+          const arch = makeCavernArchOpenWalls(cavernFloor4DipY, 415, 865, 92);
+          return {
+            id: 3,
+            name: 'HIGH SEESAW CAVERN',
+            desc: 'Arched rock walls + suspended seesaw beam',
+            islands: [],
+            caves: [],
+            openRocks: [arch],
+            halfPipes: [],
+            blocks: [],
+            seesaws: [{ x: 640, y: 300, w: 340 }],
+            pills: generateRockPills(3),
+            p1Spawn: { x: 280, y: 505 },
+            p2Spawn: { x: 1000, y: 505 }
+          };
+        })(),
+
+        // 4. The Cloud / Clover Enclosed Cave
+        (() => {
+          const loop = makeCloverInteriorLoop();
+          return {
+            id: 4,
+            name: 'CLOVER CLOUD CAVE',
+            desc: '3-lobed 360° loop cavern with ceiling tooth',
+            islands: [],
+            caves: [loop],
+            openRocks: [],
+            halfPipes: [],
+            blocks: [],
+            seesaws: [],
+            pills: generateRockPills(4),
+            p1Spawn: { x: 270, y: 512 },
+            p2Spawn: { x: 1010, y: 512 }
+          };
+        })(),
+
+        // 5. Open Canyon Bowl with Overhanging Lip Cliffs
+        (() => {
+          const canyonFloor = (x) => {
+            const d = Math.abs(x - 640);
+            const t = clamp(d / 455, 0, 1);
+            const peak = -135 * Math.exp(-(d * d) / (92 * 92));
+            const dips = 34 * Math.sin(t * Math.PI * 2.5);
+            return 540 + peak + dips;
+          };
+          const wall = makeCanyonWallPair(canyonFloor, 315, 965);
+          return {
+            id: 5,
+            name: 'OVERHANG CANYON',
+            desc: 'Center mountain peak + C-shaped quarter-pipes',
+            islands: [],
+            caves: [],
+            openRocks: [wall],
+            halfPipes: [],
+            blocks: [],
+            seesaws: [],
+            pills: generateRockPills(5),
+            p1Spawn: { x: 265, y: 492 },
+            p2Spawn: { x: 1015, y: 492 }
+          };
+        })(),
+
+        // 6. Cavern Arch with Twin Angled Seesaw Bridges
+        (() => {
+          const arch = makeCavernArchOpenWalls((x) => {
+            const u = (x - 640) / 460;
+            return 538 + 38 * Math.sin(Math.abs(u) * Math.PI * 1.6);
+          }, 495, 785, 76);
+          return {
+            id: 6,
+            name: 'TWIN SEESAW ARCH',
+            desc: 'Duel directly on twin rotating bridges',
+            islands: [],
+            caves: [],
+            openRocks: [arch],
+            halfPipes: [],
+            blocks: [],
+            seesaws: [
+              { x: 438, y: 356, w: 260, angle: 0.16 },
+              { x: 842, y: 356, w: 260, angle: -0.16 }
+            ],
+            pills: generateRockPills(6),
+            p1Spawn: { x: 375, y: 300 },
+            p2Spawn: { x: 905, y: 300 }
+          };
+        })(),
+
+        // 7. Fully Enclosed Oval Capsule Dome + Low Center Seesaw
+        (() => {
+          const oval = makeOvalCapsuleLoop(640, 355, 265, 215);
+          return {
+            id: 7,
+            name: 'OVAL CAPSULE DOME',
+            desc: 'Smooth enclosed stadium loop + low seesaw',
+            islands: [],
+            caves: [oval],
+            openRocks: [],
+            halfPipes: [],
+            blocks: [],
+            seesaws: [{ x: 640, y: 405, w: 330 }],
+            pills: generateRockPills(7),
+            p1Spawn: { x: 530, y: 365 },
+            p2Spawn: { x: 750, y: 365 }
+          };
+        })(),
+
+        // 8. Twin Floating Half-Pipe Bowls + Flat Roof Block
+        (() => ({
+          id: 8,
+          name: 'HALF-PIPE BOWLS',
+          desc: 'Twin floating cradles + overhead slam block',
+          islands: [],
+          caves: [],
+          openRocks: [],
+          halfPipes: [
+            { cx: 365, cy: 382, r: 185, aStart: 0.08 * Math.PI, aEnd: 1.30 * Math.PI, thickness: 28 },
+            { cx: 915, cy: 382, r: 185, aStart: -0.30 * Math.PI, aEnd: 0.92 * Math.PI, thickness: 28 }
+          ],
+          blocks: [{ x: 640, y: 245, w: 330, h: 42 }],
+          seesaws: [],
+          pills: generateRockPills(8),
+          p1Spawn: { x: 365, y: 525 },
+          p2Spawn: { x: 915, y: 525 }
+        }))(),
+
+        // 9. Twin Floating Islands with Center Seesaw Bridge
+        (() => {
+          const makeSmallIsland = (x0, x1) => {
+            const mid = (x0 + x1) * 0.5;
+            const top = sampleCurveX(x0, x1, 14, (x) => {
+              const t = Math.abs(x - mid) / ((x1 - x0) * 0.5);
+              return 446 + 10 * t * t;
+            });
+            const belly = [
+              { x: x1 + 6, y: 486 },
+              { x: x1 - 45, y: 562 },
+              { x: mid, y: 582 },
+              { x: x0 + 45, y: 562 },
+              { x: x0 - 6, y: 486 }
+            ];
+            return { top, belly, poly: [...top, ...belly] };
+          };
+          return {
+            id: 9,
+            name: 'TWIN ISLANDS BRIDGE',
+            desc: 'Two rock ledges linked by tilting seesaw plank',
+            islands: [makeSmallIsland(155, 456), makeSmallIsland(824, 1125)],
+            caves: [],
+            openRocks: [],
+            halfPipes: [],
+            blocks: [],
+            seesaws: [{ x: 640, y: 452, w: 340 }],
+            pills: generateRockPills(9),
+            p1Spawn: { x: 270, y: 410 },
+            p2Spawn: { x: 1010, y: 410 }
+          };
+        })(),
+
+        // 10. Twin Half-Pipes + Spinning Center Seesaw (Derived: Maps 8 + 3)
+        (() => ({
+          id: 10,
+          name: 'HALF-PIPE SPINNER',
+          desc: 'Cradle jumps onto a live center seesaw bridge',
+          islands: [],
+          caves: [],
+          openRocks: [],
+          halfPipes: [
+            { cx: 355, cy: 382, r: 182, aStart: 0.08 * Math.PI, aEnd: 1.30 * Math.PI, thickness: 28 },
+            { cx: 925, cy: 382, r: 182, aStart: -0.30 * Math.PI, aEnd: 0.92 * Math.PI, thickness: 28 }
+          ],
+          blocks: [],
+          seesaws: [{ x: 640, y: 370, w: 280 }],
+          pills: generateRockPills(10),
+          p1Spawn: { x: 355, y: 522 },
+          p2Spawn: { x: 925, y: 522 }
+        }))(),
+
+        // 11. Enclosed Clover Cave + Twin Seesaw Blades (Derived: Maps 4 + 6)
+        (() => ({
+          id: 11,
+          name: 'CLOVER SPINNER CAVE',
+          desc: 'Clover cavern armed with twin aerial paddles',
+          islands: [],
+          caves: [makeCloverInteriorLoop()],
+          openRocks: [],
+          halfPipes: [],
+          blocks: [],
+          seesaws: [
+            { x: 385, y: 335, w: 195 },
+            { x: 895, y: 335, w: 195 }
+          ],
+          pills: generateRockPills(11),
+          p1Spawn: { x: 270, y: 512 },
+          p2Spawn: { x: 1010, y: 512 }
+        }))(),
+
+        // 12. Double-Decker Seesaw Cavern (Derived: Maps 3 + 7)
+        (() => ({
+          id: 12,
+          name: 'DOUBLE-DECKER DOME',
+          desc: 'Oval dome with two stacked vertical seesaws',
+          islands: [],
+          caves: [makeOvalCapsuleLoop(640, 355, 265, 215)],
+          openRocks: [],
+          halfPipes: [],
+          blocks: [],
+          seesaws: [
+            { x: 640, y: 446, w: 330 },
+            { x: 640, y: 254, w: 265 }
+          ],
+          pills: generateRockPills(12),
+          p1Spawn: { x: 525, y: 406 },
+          p2Spawn: { x: 755, y: 406 }
+        }))(),
+
+        // 13. Floating Caterpillar Island + Ceiling Blocks (Derived: Maps 2 + 8)
+        (() => {
+          const top = sampleCurveX(185, 1095, 42, caterpillar3PeakY);
+          const belly = chaikinSmooth([
+            { x: 1098, y: 472 },
+            { x: 1134, y: 540 },
+            { x: 1090, y: 598 },
+            { x: 960, y: 612 },
+            { x: 640, y: 614 },
+            { x: 320, y: 612 },
+            { x: 190, y: 598 },
+            { x: 146, y: 540 },
+            { x: 182, y: 472 }
+          ], false, 2);
+          return {
+            id: 13,
+            name: 'CATERPILLAR BUMPERS',
+            desc: '3-peak island + overhead rebound rock blocks',
+            islands: [{ top, belly, poly: [...top, ...belly.slice(1, -1)] }],
+            caves: [],
+            openRocks: [],
+            halfPipes: [],
+            blocks: [
+              { x: 640, y: 562, w: 800, h: 80, chamfer: 22, hiddenVisual: true },
+              { x: 430, y: 222, w: 200, h: 36 },
+              { x: 850, y: 222, w: 200, h: 36 }
+            ],
+            seesaws: [],
+            pills: generateRockPills(13),
+            p1Spawn: { x: 240, y: 414 },
+            p2Spawn: { x: 1040, y: 414 }
+          };
+        })(),
+
+        // 14. Triple-Cradle Water Hopper (Derived: Map 8)
+        (() => ({
+          id: 14,
+          name: 'TRIPLE WATER HOPPER',
+          desc: 'Three U-cradles over open water + deflectors',
+          islands: [],
+          caves: [],
+          openRocks: [],
+          halfPipes: [
+            { cx: 265, cy: 380, r: 128, aStart: 0.06 * Math.PI, aEnd: 1.24 * Math.PI, thickness: 28 },
+            { cx: 640, cy: 438, r: 130, aStart: 0.08 * Math.PI, aEnd: 0.92 * Math.PI, thickness: 28 },
+            { cx: 1015, cy: 380, r: 128, aStart: -0.24 * Math.PI, aEnd: 0.94 * Math.PI, thickness: 28 }
+          ],
+          blocks: [
+            { x: 452, y: 215, w: 185, h: 32, angle: -0.22 },
+            { x: 828, y: 215, w: 185, h: 32, angle: 0.22 }
+          ],
+          seesaws: [],
+          pills: generateRockPills(14),
+          p1Spawn: { x: 265, y: 468 },
+          p2Spawn: { x: 1015, y: 468 }
+        }))(),
+
+        // 15. Canyon Overhang + Tilting Valley Floor (Derived: Maps 5 + 6)
+        (() => {
+          const makeSideCliff = (isLeft) => {
+            if (isLeft) {
+              const raw = [
+                { x: 320, y: -18 },
+                ...sampleEllipseArc(320, 265, 180, 240, -Math.PI * 0.52, -Math.PI * 1.22, 14),
+                ...sampleCurveX(185, 340, 8, (x) => lerp(496, 514, (x - 185) / 155))
+              ];
+              const surface = chaikinSmooth(raw, false, 1);
+              const visualPoly = [
+                { x: 320, y: -25 },
+                { x: -25, y: -25 },
+                { x: -25, y: 745 },
+                { x: 332, y: 745 },
+                ...surface.slice().reverse()
+              ];
+              return { surface, visualPoly };
+            }
+            const raw = [
+              ...sampleCurveX(940, 1095, 8, (x) => lerp(514, 496, (x - 940) / 155)),
+              ...sampleEllipseArc(960, 265, 180, 240, 0.22, -Math.PI * 0.48, 14),
+              { x: 960, y: -18 }
+            ];
+            const surface = chaikinSmooth(raw, false, 1);
+            const visualPoly = [
+              { x: 960, y: -25 },
+              { x: 1305, y: -25 },
+              { x: 1305, y: 745 },
+              { x: 948, y: 745 },
+              ...surface
+            ];
+            return { surface, visualPoly };
+          };
+          return {
+            id: 15,
+            name: 'CANYON SEESAW PIT',
+            desc: 'Quarter-pipe cliffs + twin valley seesaw ramps',
+            islands: [],
+            caves: [],
+            openRocks: [makeSideCliff(true), makeSideCliff(false)],
+            halfPipes: [],
+            blocks: [],
+            seesaws: [
+              { x: 492, y: 505, w: 270, angle: 0.08 },
+              { x: 788, y: 505, w: 270, angle: -0.08 }
+            ],
+            pills: generateRockPills(15),
+            p1Spawn: { x: 255, y: 465 },
+            p2Spawn: { x: 1025, y: 465 }
+          };
+        })()
+      ];
+
+      // =========================================================================
+      // 4. MATTER.JS PHYSICS SIMULATION
+      // =========================================================================
+      class PhysicsSimulation {
+        constructor(isHostSide = true) {
+          this.isHostSide = isHostSide;
+          this.Engine = Matter.Engine;
+          this.Bodies = Matter.Bodies;
+          this.Body = Matter.Body;
+          this.Composite = Matter.Composite;
+          this.Constraint = Matter.Constraint;
+          this.Events = Matter.Events;
+
+          this.engine = this.Engine.create({ gravity: { x: 0, y: 1.15 } });
+          this.arenaIndex = 0;
+          this.seesaws = [];
+          this.p1Car = null;
+          this.p2Car = null;
+          this.grounded = { p1R: false, p1F: false, p2R: false, p2F: false };
+
+          this.onHeadKO = null;
+          this.onWaterKO = null;
+          this.onCarBump = null;
+          this._bindEvents();
+        }
+
+        _bindEvents() {
+          this.Events.on(this.engine, 'beforeUpdate', () => {
+            this.grounded.p1R = false;
+            this.grounded.p1F = false;
+            this.grounded.p2R = false;
+            this.grounded.p2F = false;
+          });
+
+          const trackGround = (wheel, car, flagKey, pair) => {
+            this.grounded[flagKey] = true;
+            const sup = pair.collision && pair.collision.supports && pair.collision.supports[0];
+            if (sup && car) {
+              const nx = wheel.position.x - sup.x;
+              const ny = wheel.position.y - sup.y;
+              if (nx * nx + ny * ny > 0.25) {
+                car.groundAngle = Math.atan2(nx, -ny);
+              }
+            }
+          };
+
+          this.Events.on(this.engine, 'collisionActive', (ev) => {
+            for (let i = 0; i < ev.pairs.length; i++) {
+              const pair = ev.pairs[i];
+              const a = pair.bodyA;
+              const b = pair.bodyB;
+              const la = a.label || '';
+              const lb = b.label || '';
+              const solidA = la === 'island' || la === 'seesaw' || la.includes('_p');
+              const solidB = lb === 'island' || lb === 'seesaw' || lb.includes('_p');
+
+              if (la === 'wheel_p1_r' && solidB && !lb.includes('_p1')) trackGround(a, this.p1Car, 'p1R', pair);
+              if (lb === 'wheel_p1_r' && solidA && !la.includes('_p1')) trackGround(b, this.p1Car, 'p1R', pair);
+              if (la === 'wheel_p1_f' && solidB && !lb.includes('_p1')) trackGround(a, this.p1Car, 'p1F', pair);
+              if (lb === 'wheel_p1_f' && solidA && !la.includes('_p1')) trackGround(b, this.p1Car, 'p1F', pair);
+
+              if (la === 'wheel_p2_r' && solidB && !lb.includes('_p2')) trackGround(a, this.p2Car, 'p2R', pair);
+              if (lb === 'wheel_p2_r' && solidA && !la.includes('_p2')) trackGround(b, this.p2Car, 'p2R', pair);
+              if (la === 'wheel_p2_f' && solidB && !lb.includes('_p2')) trackGround(a, this.p2Car, 'p2F', pair);
+              if (lb === 'wheel_p2_f' && solidA && !la.includes('_p2')) trackGround(b, this.p2Car, 'p2F', pair);
+            }
+          });
+
+          this.Events.on(this.engine, 'collisionStart', (ev) => {
+            if (!this.isHostSide) return;
+            for (let i = 0; i < ev.pairs.length; i++) {
+              const pair = ev.pairs[i];
+              const a = pair.bodyA;
+              const b = pair.bodyB;
+              const la = a.label || '';
+              const lb = b.label || '';
+
+              if (la === 'head_p1' || lb === 'head_p1') {
+                const other = la === 'head_p1' ? b : a;
+                const ol = other.label || '';
+                if (ol === 'island' || ol === 'seesaw' || ol.endsWith('_p2') || ol.includes('_p2_')) {
+                  const pt = (pair.collision.supports && pair.collision.supports[0]) || a.position;
+                  if (this.onHeadKO) this.onHeadKO(1, pt);
+                }
+              }
+              if (la === 'head_p2' || lb === 'head_p2') {
+                const other = la === 'head_p2' ? b : a;
+                const ol = other.label || '';
+                if (ol === 'island' || ol === 'seesaw' || ol.endsWith('_p1') || ol.includes('_p1_')) {
+                  const pt = (pair.collision.supports && pair.collision.supports[0]) || b.position;
+                  if (this.onHeadKO) this.onHeadKO(2, pt);
+                }
+              }
+
+              if (
+                (la.startsWith('chassis_p') || la.startsWith('wheel_p')) &&
+                (lb.startsWith('chassis_p') || lb.startsWith('wheel_p') || lb === 'seesaw')
+              ) {
+                const spd = Math.hypot(a.velocity.x - b.velocity.x, a.velocity.y - b.velocity.y);
+                if (spd > 2.5 && this.onCarBump) {
+                  const pt = (pair.collision.supports && pair.collision.supports[0]) || a.position;
+                  this.onCarBump(pt, clamp(spd / 12, 0.2, 1.0));
+                }
+              }
+            }
+          });
+        }
+
+        _addSurfacePolyline(pts, inwardSign = 1, thickness = 34, closeLoop = false) {
+          const count = closeLoop ? pts.length : pts.length - 1;
+          for (let i = 0; i < count; i++) {
+            const p0 = pts[i];
+            const p1 = pts[(i + 1) % pts.length];
+            const dx = p1.x - p0.x;
+            const dy = p1.y - p0.y;
+            const segLen = Math.hypot(dx, dy);
+            if (segLen < 1) continue;
+            const angle = Math.atan2(dy, dx);
+            const nx = -Math.sin(angle) * inwardSign;
+            const ny = Math.cos(angle) * inwardSign;
+            const cx = (p0.x + p1.x) * 0.5 + nx * (thickness * 0.5);
+            const cy = (p0.y + p1.y) * 0.5 + ny * (thickness * 0.5);
+
+            const rect = this.Bodies.rectangle(cx, cy, segLen + 10, thickness, {
+              isStatic: true,
+              angle,
+              chamfer: { radius: 6 },
+              friction: 0.95,
+              restitution: 0.12,
+              label: 'island'
+            });
+            this.Composite.add(this.engine.world, rect);
+          }
+        }
+
+        _addHalfPipeColliders(pipe) {
+          const steps = 18;
+          const pts = sampleArcPoints(pipe.cx, pipe.cy, pipe.r, pipe.aStart, pipe.aEnd, steps);
+          for (let i = 0; i < pts.length - 1; i++) {
+            const p0 = pts[i];
+            const p1 = pts[i + 1];
+            const dx = p1.x - p0.x;
+            const dy = p1.y - p0.y;
+            const segLen = Math.hypot(dx, dy);
+            const angle = Math.atan2(dy, dx);
+            const cx = (p0.x + p1.x) * 0.5;
+            const cy = (p0.y + p1.y) * 0.5;
+            const seg = this.Bodies.rectangle(cx, cy, segLen + 8, pipe.thickness, {
+              isStatic: true,
+              angle,
+              chamfer: { radius: 6 },
+              friction: 0.95,
+              restitution: 0.14,
+              label: 'island'
+            });
+            this.Composite.add(this.engine.world, seg);
+          }
+          // Smooth rounded endcaps so rims never snag wheels
+          for (const endPt of [pts[0], pts[pts.length - 1]]) {
+            const cap = this.Bodies.circle(endPt.x, endPt.y, pipe.thickness * 0.5, {
+              isStatic: true,
+              friction: 0.95,
+              restitution: 0.14,
+              label: 'island'
+            });
+            this.Composite.add(this.engine.world, cap);
+          }
+        }
+
+        _addSeesaw(cfg) {
+          const plank = this.Bodies.rectangle(cfg.x, cfg.y, cfg.w, 28, {
+            density: 0.0038,
+            chamfer: { radius: 14 },
+            friction: 0.95,
+            restitution: 0.15,
+            frictionAir: 0.008,
+            angle: cfg.angle || 0,
+            label: 'seesaw'
+          });
+          const pivot = this.Constraint.create({
+            pointA: { x: cfg.x, y: cfg.y },
+            bodyB: plank,
+            pointB: { x: 0, y: 0 },
+            stiffness: 1.0,
+            length: 0
+          });
+          this.Composite.add(this.engine.world, [plank, pivot]);
+          this.seesaws.push({ body: plank, x: cfg.x, y: cfg.y, w: cfg.w });
+        }
+
+        resetArena(arenaIndex = this.arenaIndex) {
+          this.arenaIndex = ((arenaIndex % ARENAS.length) + ARENAS.length) % ARENAS.length;
+          const arena = ARENAS[this.arenaIndex];
+
+          this.Composite.clear(this.engine.world, false);
+          this.engine.timing.timeScale = 1.0;
+          this.seesaws = [];
+          this.grounded = { p1R: false, p1F: false, p2R: false, p2F: false };
+
+          for (const isl of arena.islands) {
+            this._addSurfacePolyline(isl.top, 1, 34, false);
+            this._addSurfacePolyline(isl.belly, 1, 24, false);
+          }
+
+          for (const caveLoop of arena.caves) {
+            // Winding goes bottom L->R, up right, top R->L, down left -> inwardSign +1 pushes 72px outward INTO outer rock!
+            this._addSurfacePolyline(caveLoop, 1, 72, true);
+            // Outer rock backup walls prevent high-speed tunneling outside enclosed caves
+            this.Composite.add(this.engine.world, [
+              this.Bodies.rectangle(WORLD_W / 2, -50, WORLD_W + 200, 100, { isStatic: true, label: 'island' }),
+              this.Bodies.rectangle(WORLD_W / 2, WORLD_H + 50, WORLD_W + 200, 100, { isStatic: true, label: 'island' }),
+              this.Bodies.rectangle(-50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, label: 'island' }),
+              this.Bodies.rectangle(WORLD_W + 50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, label: 'island' })
+            ]);
+          }
+
+          for (const openRock of arena.openRocks) {
+            this._addSurfacePolyline(openRock.surface, 1, 46, false);
+            this.Composite.add(this.engine.world, [
+              this.Bodies.rectangle(-50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, label: 'island' }),
+              this.Bodies.rectangle(WORLD_W + 50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, label: 'island' }),
+              this.Bodies.rectangle(WORLD_W / 2, WORLD_H + 55, WORLD_W + 200, 100, { isStatic: true, label: 'island' })
+            ]);
+          }
+
+          for (const pipe of arena.halfPipes) {
+            this._addHalfPipeColliders(pipe);
+          }
+
+          for (const blk of arena.blocks) {
+            this.Composite.add(
+              this.engine.world,
+              this.Bodies.rectangle(blk.x, blk.y, blk.w, blk.h, {
+                isStatic: true,
+                angle: blk.angle || 0,
+                chamfer: { radius: blk.chamfer || 4 },
+                friction: 0.95,
+                restitution: 0.2,
+                label: 'island'
+              })
+            );
+          }
+
+          for (const sw of arena.seesaws) {
+            this._addSeesaw(sw);
+          }
+
+          this.p1Car = this._buildRoadster(1, arena.p1Spawn.x, arena.p1Spawn.y);
+          this.p2Car = this._buildRoadster(2, arena.p2Spawn.x, arena.p2Spawn.y);
+        }
+
+        _buildRoadster(playerIndex, x, y) {
+          const facing = playerIndex === 1 ? 1 : -1;
+          const pTag = playerIndex === 1 ? 'p1' : 'p2';
+          const group = this.Body.nextGroup(true);
+
+          const chassis = this.Bodies.rectangle(x, y, CAR_SPEC.width, CAR_SPEC.height, {
+            chamfer: { radius: 7 },
+            density: CAR_SPEC.density,
+            restitution: CAR_SPEC.restitution,
+            friction: CAR_SPEC.friction,
+            frictionAir: 0.008,
+            collisionFilter: { group },
+            label: `chassis_${pTag}`
+          });
+
+          const wheelR = this.Bodies.circle(x - CAR_SPEC.wheelOffsetX, y + CAR_SPEC.wheelOffsetY, CAR_SPEC.wheelRadius, {
+            density: CAR_SPEC.wheelDensity,
+            friction: CAR_SPEC.wheelFriction,
+            restitution: CAR_SPEC.wheelRestitution,
+            frictionAir: 0.006,
+            collisionFilter: { group },
+            label: `wheel_${pTag}_r`
+          });
+
+          const wheelF = this.Bodies.circle(x + CAR_SPEC.wheelOffsetX, y + CAR_SPEC.wheelOffsetY, CAR_SPEC.wheelRadius, {
+            density: CAR_SPEC.wheelDensity,
+            friction: CAR_SPEC.wheelFriction,
+            restitution: CAR_SPEC.wheelRestitution,
+            frictionAir: 0.006,
+            collisionFilter: { group },
+            label: `wheel_${pTag}_f`
+          });
+
+          // Low-seated helmet resting directly on the cockpit collar (localY = -16px)
+          const head = this.Bodies.circle(x, y + CAR_SPEC.headOffsetY, CAR_SPEC.headRadius, {
+            density: CAR_SPEC.headDensity,
+            restitution: CAR_SPEC.headRestitution,
+            friction: 0.3,
+            frictionAir: 0.006,
+            collisionFilter: { group },
+            label: `head_${pTag}`
+          });
+
+          // Elastic spring suspension (stiffness: 0.36, damping: 0.08) + horizontal axle lock arm
+          const suspRVert = this.Constraint.create({
+            bodyA: chassis, pointA: { x: -CAR_SPEC.wheelOffsetX, y: CAR_SPEC.wheelOffsetY },
+            bodyB: wheelR, pointB: { x: 0, y: 0 },
+            length: 0, stiffness: 0.36, damping: 0.08
+          });
+          const suspRArm = this.Constraint.create({
+            bodyA: chassis, pointA: { x: 0, y: CAR_SPEC.wheelOffsetY },
+            bodyB: wheelR, pointB: { x: 0, y: 0 },
+            length: CAR_SPEC.wheelOffsetX, stiffness: 0.72, damping: 0.14
+          });
+
+          const suspFVert = this.Constraint.create({
+            bodyA: chassis, pointA: { x: CAR_SPEC.wheelOffsetX, y: CAR_SPEC.wheelOffsetY },
+            bodyB: wheelF, pointB: { x: 0, y: 0 },
+            length: 0, stiffness: 0.36, damping: 0.08
+          });
+          const suspFArm = this.Constraint.create({
+            bodyA: chassis, pointA: { x: 0, y: CAR_SPEC.wheelOffsetY },
+            bodyB: wheelF, pointB: { x: 0, y: 0 },
+            length: CAR_SPEC.wheelOffsetX, stiffness: 0.72, damping: 0.14
+          });
+
+          // 3 triangulated neck constraints locking helmet snugly to seat collar
+          const neckSpine = this.Constraint.create({
+            bodyA: chassis, pointA: { x: 0, y: -2 },
+            bodyB: head, pointB: { x: 0, y: 0 },
+            stiffness: 0.92, damping: 0.12
+          });
+          const neckL = this.Constraint.create({
+            bodyA: chassis, pointA: { x: -16, y: -2 },
+            bodyB: head, pointB: { x: 0, y: 0 },
+            stiffness: 0.75, damping: 0.12
+          });
+          const neckR = this.Constraint.create({
+            bodyA: chassis, pointA: { x: 16, y: -2 },
+            bodyB: head, pointB: { x: 0, y: 0 },
+            stiffness: 0.75, damping: 0.12
+          });
+
+          this.Composite.add(this.engine.world, [
+            chassis, wheelR, wheelF, head,
+            suspRVert, suspRArm, suspFVert, suspFArm,
+            neckSpine, neckL, neckR
+          ]);
+
+          return {
+            playerIndex,
+            isRedPlayer: playerIndex === 1,
+            facing,
+            chassis,
+            wheelR,
+            wheelF,
+            head,
+            headConstraints: [neckSpine, neckL, neckR],
+            headSevered: false,
+            dead: false,
+            airTicks: 0,
+            groundAngle: 0,
+            driving: false
+          };
+        }
+
+        popHelmet(playerIndex, impactPt) {
+          const car = playerIndex === 1 ? this.p1Car : this.p2Car;
+          if (!car || car.headSevered) return;
+          car.headSevered = true;
+          car.dead = true;
+
+          for (const c of car.headConstraints) {
+            this.Composite.remove(this.engine.world, c);
+          }
+          car.headConstraints = [];
+          car.head.collisionFilter.group = 0;
+
+          const dx = car.head.position.x - (impactPt ? impactPt.x : car.chassis.position.x);
+          const dy = car.head.position.y - (impactPt ? impactPt.y : car.chassis.position.y);
+          const len = Math.hypot(dx, dy) || 1;
+          this.Body.setVelocity(car.head, {
+            x: (dx / len) * 7.5 + (Math.random() - 0.5) * 3,
+            y: -7.5 - Math.random() * 2.5
+          });
+          this.Body.setAngularVelocity(car.head, (Math.random() > 0.5 ? 1 : -1) * 0.28);
+        }
+
+        _applyCarControl(car, inputL, inputR, gR, gF) {
+          if (!car || car.dead) {
+            if (car) car.driving = false;
+            return;
+          }
+          const groundedCount = (gR ? 1 : 0) + (gF ? 1 : 0);
+          car.airTicks = groundedCount === 0 ? car.airTicks + 1 : 0;
+
+          const dir = (inputR ? 1 : 0) - (inputL ? 1 : 0);
+          car.driving = dir !== 0;
+
+          // 1. Grounded Wheel Spin, Slope Force & Subtle Elastic Wheelie Lift (PD Governor)
+          if (groundedCount > 0 && dir !== 0) {
+            const targetSpin = dir * CAR_SPEC.maxWheelSpin;
+            this.Body.setAngularVelocity(car.wheelR, targetSpin);
+            this.Body.setAngularVelocity(car.wheelF, targetSpin);
+
+            const cosA = Math.cos(car.chassis.angle);
+            const sinA = Math.sin(car.chassis.angle);
+            this.Body.applyForce(car.chassis, car.chassis.position, {
+              x: dir * CAR_SPEC.slopeAssistForce * cosA,
+              y: dir * CAR_SPEC.slopeAssistForce * sinA
+            });
+
+            // Elastic PD wheelie pitch relative to ground slope (~0.24 rad lift of leading wheels)
+            const relativeAngle = normalizeAngle(car.chassis.angle - car.groundAngle);
+            const targetWheelieAngle = -dir * CAR_SPEC.wheelieAngle;
+            const pdTorque = clamp(
+              (targetWheelieAngle - relativeAngle) * 0.0022 - car.chassis.angularVelocity * 0.009,
+              -0.0028,
+              0.0028
+            );
+            // Apply scaled to Matter chassis angular impulse (torque/inertia scaled cleanly for 0.19.0 responsiveness)
+            const nextAv = clamp(car.chassis.angularVelocity + pdTorque * 4.6, -0.095, 0.095);
+            this.Body.setAngularVelocity(car.chassis, nextAv);
+          }
+
+          // 2. Snappy Mid-Air Flip Control & Immediate Damping on Release
+          const relTilt = Math.abs(normalizeAngle(car.chassis.angle - car.groundAngle));
+          if (groundedCount === 0 && (car.airTicks >= 4 || relTilt > 0.45)) {
+            if (dir !== 0) {
+              this.Body.setAngularVelocity(
+                car.chassis,
+                lerp(car.chassis.angularVelocity, dir * CAR_SPEC.airTargetSpin, 0.18)
+              );
+            } else {
+              this.Body.setAngularVelocity(car.chassis, car.chassis.angularVelocity * CAR_SPEC.airSpinDamping);
+            }
+          } else if (groundedCount === 1 && relTilt > 0.58 && dir !== 0) {
+            this.Body.setAngularVelocity(
+              car.chassis,
+              lerp(car.chassis.angularVelocity, dir * (CAR_SPEC.airTargetSpin * 0.8), 0.14)
+            );
+          }
+        }
+
+        step(p1Input, p2Input, canControl) {
+          if (canControl) {
+            this._applyCarControl(this.p1Car, p1Input.l, p1Input.r, this.grounded.p1R, this.grounded.p1F);
+            this._applyCarControl(this.p2Car, p2Input.l, p2Input.r, this.grounded.p2R, this.grounded.p2F);
+          }
+
+          this.Engine.update(this.engine, FIXED_DT);
+
+          for (const sw of this.seesaws) {
+            this.Body.setAngularVelocity(sw.body, sw.body.angularVelocity * 0.985);
+          }
+
+          if (this.isHostSide) {
+            const checkWater = (car, idx) => {
+              if (!car || car.dead) return;
+              if (car.head.position.y > WATER_HAZARD_Y || car.chassis.position.y > WATER_HAZARD_Y) {
+                if (this.onWaterKO) this.onWaterKO(idx, { x: car.chassis.position.x, y: WATER_HAZARD_Y });
+              }
+            };
+            checkWater(this.p1Car, 1);
+            checkWater(this.p2Car, 2);
+          }
+        }
+      }
+
+      // =========================================================================
+      // 5. FLAT-VECTOR CARTOON RENDERER & EXHAUST PUFFS
+      // =========================================================================
+      function drawRoundedRectPath(ctx, x, y, w, h, r) {
+        const rad = Math.min(r, w * 0.5, h * 0.5);
+        ctx.moveTo(x + rad, y);
+        ctx.lineTo(x + w - rad, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+        ctx.lineTo(x + w, y + h - rad);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
+        ctx.lineTo(x + rad, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
+        ctx.lineTo(x, y + rad);
+        ctx.quadraticCurveTo(x, y, x + rad, y);
+        ctx.closePath();
+      }
+
+      function tracePointLoop(path, pts, closed = true) {
+        if (!pts.length) return;
+        path.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) path.lineTo(pts[i].x, pts[i].y);
+        if (closed) path.closePath();
+      }
+
+      function drawRoadster(ctx, carState, isRedPlayer) {
+        const colors = isRedPlayer ? PALETTE.red : PALETTE.blue;
+        const { facing, chassis, wheelR, wheelF, head, headSevered } = carState;
+
+        // 1. Seated Charcoal Torso & 9px Neck Bridge (Drawn BEHIND chassis rim so helmet attaches snugly)
+        const sinC = Math.sin(chassis.angle);
+        const cosC = Math.cos(chassis.angle);
+        const collarX = chassis.position.x - sinC * -4;
+        const collarY = chassis.position.y + cosC * -4;
+
+        if (!headSevered) {
+          ctx.save();
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          // Dynamic 9px neck bridge connecting collar to live head center
+          ctx.strokeStyle = PALETTE.ink;
+          ctx.lineWidth = 15;
+          ctx.beginPath();
+          ctx.moveTo(collarX, collarY);
+          ctx.lineTo(head.position.x, head.position.y);
+          ctx.stroke();
+
+          ctx.strokeStyle = PALETTE.charcoal;
+          ctx.lineWidth = 9;
+          ctx.beginPath();
+          ctx.moveTo(collarX, collarY);
+          ctx.lineTo(head.position.x, head.position.y);
+          ctx.stroke();
+
+          // Seated driver shoulders inside cockpit cutout
+          ctx.translate(chassis.position.x, chassis.position.y);
+          ctx.rotate(chassis.angle);
+          ctx.fillStyle = PALETTE.charcoal;
+          ctx.strokeStyle = PALETTE.ink;
+          ctx.lineWidth = 3.5;
+          ctx.beginPath();
+          ctx.ellipse(0, -4, 13, 10, 0, Math.PI, 0);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // 2. Helmet Head (11.5px radius, flat color, 3.5px ink outline, dark rounded front visor)
+        ctx.save();
+        ctx.translate(head.position.x, head.position.y);
+        ctx.rotate(head.angle);
+        ctx.fillStyle = colors.helmet;
+        ctx.strokeStyle = PALETTE.ink;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, CAR_SPEC.headRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Rounded front visor cutout
+        ctx.fillStyle = PALETTE.charcoal;
+        ctx.beginPath();
+        ctx.arc(facing * 5.2, -0.5, 5.2, -0.55 * Math.PI, 0.55 * Math.PI, facing < 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        // 3. Chassis Roadster Body (90x26), Tailpipe, Stripe, Windshield Post & Wheel Wells
+        ctx.save();
+        ctx.translate(chassis.position.x, chassis.position.y);
+        ctx.rotate(chassis.angle);
+        ctx.scale(facing, 1);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        // Rear Exhaust Tailpipe Stub protruding backward-upward from rear bumper
+        ctx.fillStyle = PALETTE.charcoal;
+        ctx.strokeStyle = PALETTE.ink;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-40, 2);
+        ctx.lineTo(-50, -3);
+        ctx.lineTo(-49, 4);
+        ctx.lineTo(-39, 7);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Windshield Post (Small angled dark-outlined post in front of driver cockpit)
+        ctx.fillStyle = PALETTE.white;
+        ctx.strokeStyle = PALETTE.ink;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(15, -10);
+        ctx.lineTo(12, -21);
+        ctx.lineTo(17, -21);
+        ctx.lineTo(20, -10);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Main Roadster Convertible Silhouette (90 x 26)
+        ctx.beginPath();
+        ctx.moveTo(-38, 12);
+        ctx.lineTo(38, 12);
+        ctx.quadraticCurveTo(46, 12, 46, 2);
+        ctx.quadraticCurveTo(46, -10, 32, -11);
+        ctx.lineTo(17, -11);
+        ctx.quadraticCurveTo(10, -2, 0, -2);
+        ctx.quadraticCurveTo(-10, -2, -16, -12);
+        ctx.lineTo(-34, -12);
+        ctx.quadraticCurveTo(-45, -11, -45, 2);
+        ctx.quadraticCurveTo(-45, 12, -38, 12);
+        ctx.closePath();
+
+        ctx.fillStyle = colors.body;
+        ctx.fill();
+
+        // Clip interior stripe & lower lip
+        ctx.save();
+        ctx.clip();
+        ctx.fillStyle = colors.lip;
+        ctx.fillRect(-48, 6, 96, 8);
+        ctx.fillStyle = PALETTE.stripeGold;
+        ctx.fillRect(-46, -1, 92, 5.5);
+        ctx.restore();
+
+        ctx.strokeStyle = PALETTE.ink;
+        ctx.lineWidth = 3.5;
+        ctx.stroke();
+
+        // Dark Wheel-Well Cutout Arches
+        for (const wx of [-CAR_SPEC.wheelOffsetX, CAR_SPEC.wheelOffsetX]) {
+          ctx.fillStyle = PALETTE.ink;
+          ctx.beginPath();
+          ctx.arc(wx, 13, CAR_SPEC.wheelRadius + 3.5, Math.PI, 0);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+
+        // 4. Tires, Colored Rims & White Center Axle Dots
+        for (const w of [wheelR, wheelF]) {
+          ctx.save();
+          ctx.translate(w.position.x, w.position.y);
+          ctx.rotate(w.angle);
+          ctx.fillStyle = PALETTE.ink;
+          ctx.beginPath();
+          ctx.arc(0, 0, CAR_SPEC.wheelRadius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = colors.rim;
+          ctx.beginPath();
+          ctx.arc(0, 0, 7.6, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = PALETTE.white;
+          ctx.beginPath();
+          ctx.arc(0, 0, 3.4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      const SKYLINE_BUILDINGS = [
+        { x: -10, w: 120, h: 255, back: true, cols: 3, rows: 7 },
+        { x: 35, w: 110, h: 215, back: false, cols: 3, rows: 6 },
+        { x: 162, w: 165, h: 318, back: true, cols: 4, rows: 9 },
+        { x: 255, w: 145, h: 235, back: false, cols: 3, rows: 6 },
+        { x: 348, w: 125, h: 265, back: true, cols: 3, rows: 7 },
+        { x: 782, w: 145, h: 278, back: true, cols: 3, rows: 8 },
+        { x: 878, w: 155, h: 225, back: false, cols: 4, rows: 6 },
+        { x: 1005, w: 170, h: 305, back: true, cols: 4, rows: 9 },
+        { x: 1135, w: 155, h: 245, back: false, cols: 4, rows: 7 }
+      ];
+
+      class CanvasRenderer {
+        constructor(canvas) {
+          this.canvas = canvas;
+          this.ctx = canvas.getContext('2d');
+          this.dpr = 1;
+          this.smoke = [];
+          this.splashes = [];
+          this.popStar = null;
+          this.tickCount = 0;
+          this.resize();
+        }
+
+        resize() {
+          this.dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+          this.canvas.width = Math.round(WORLD_W * this.dpr);
+          this.canvas.height = Math.round(WORLD_H * this.dpr);
+        }
+
+        clearEffects() {
+          this.smoke = [];
+          this.splashes = [];
+          this.popStar = null;
+        }
+
+        spawnExhaustPuff(carState) {
+          if (!carState || carState.dead) return;
+          const a = carState.chassis.angle;
+          const cos = Math.cos(a);
+          const sin = Math.sin(a);
+          const lx = -49 * carState.facing;
+          const ly = -1;
+          const px = carState.chassis.position.x + lx * cos - ly * sin;
+          const py = carState.chassis.position.y + lx * sin + ly * cos;
+          this.smoke.push({
+            x: px,
+            y: py,
+            vx: -carState.facing * (0.9 + Math.random() * 0.9) + (Math.random() - 0.5) * 0.4,
+            vy: -0.6 - Math.random() * 0.8,
+            r: 4,
+            life: 1.0
+          });
+        }
+
+        spawnWaterSplash(x) {
+          for (let i = 0; i < 8; i++) {
+            const ang = -Math.PI * 0.15 - Math.random() * Math.PI * 0.7;
+            const spd = 4 + Math.random() * 5.5;
+            this.splashes.push({
+              x, y: WATER_CREST_Y,
+              vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
+              r: 5 + Math.random() * 5, life: 1.0
+            });
+          }
+        }
+
+        spawnBonkPop(x, y, color) {
+          this.popStar = { x, y, color, life: 1.0 };
+        }
+
+        updateEffects(dtScale = 1, sim = null) {
+          this.tickCount++;
+          if (sim) {
+            for (const car of [sim.p1Car, sim.p2Car]) {
+              if (!car || car.dead) continue;
+              const cadence = car.driving ? 4 : 26;
+              if (this.tickCount % cadence === 0) this.spawnExhaustPuff(car);
+            }
+          }
+
+          for (let i = this.smoke.length - 1; i >= 0; i--) {
+            const s = this.smoke[i];
+            s.x += s.vx * dtScale;
+            s.y += s.vy * dtScale;
+            s.r = lerp(s.r, 11, 0.08 * dtScale);
+            s.life -= 0.042 * dtScale; // ~400ms lifetime
+            if (s.life <= 0) this.smoke.splice(i, 1);
+          }
+
+          for (let i = this.splashes.length - 1; i >= 0; i--) {
+            const d = this.splashes[i];
+            d.vy += 0.35 * dtScale;
+            d.x += d.vx * dtScale;
+            d.y += d.vy * dtScale;
+            d.life -= 0.03 * dtScale;
+            if (d.life <= 0) this.splashes.splice(i, 1);
+          }
+
+          if (this.popStar) {
+            this.popStar.life -= 0.045 * dtScale;
+            if (this.popStar.life <= 0) this.popStar = null;
+          }
+        }
+
+        _drawSkyAndCity(ctx) {
+          // Two-Tone Pastel Sunset Sky
+          ctx.fillStyle = PALETTE.skyPeach;
+          ctx.fillRect(0, 0, WORLD_W, 338);
+          ctx.fillStyle = PALETTE.horizonMauve;
+          ctx.fillRect(0, 338, WORLD_W, WORLD_H - 338);
+
+          // Center Pale Cream Sun Glow Block tucked cleanly along horizon
+          ctx.fillStyle = PALETTE.sunCream;
+          ctx.fillRect(545, 315, 190, 145);
+
+          // Flat Back & Front City Skyline Silhouettes + Window Grids (zero outlines)
+          for (const backPass of [true, false]) {
+            for (const b of SKYLINE_BUILDINGS) {
+              if (b.back !== backPass) continue;
+              const topY = WATER_CREST_Y - b.h;
+              ctx.fillStyle = b.back ? PALETTE.cityBack : PALETTE.cityFront;
+              ctx.fillRect(b.x, topY, b.w, b.h + 4);
+
+              ctx.fillStyle = PALETTE.cityWindow;
+              const padX = 16;
+              const gapX = 9;
+              const winW = (b.w - padX * 2 - gapX * (b.cols - 1)) / b.cols;
+              const winH = 9;
+              const rowStep = 22;
+              for (let r = 0; r < b.rows; r++) {
+                const wy = topY + 18 + r * rowStep;
+                if (wy + winH > WATER_CREST_Y - 12) break;
+                for (let c = 0; c < b.cols; c++) {
+                  ctx.fillRect(b.x + padX + c * (winW + gapX), wy, winW, winH);
+                }
+              }
+            }
+          }
+        }
+
+        _fillRockAndClipPills(ctx, path, fillRule, pills) {
+          ctx.fillStyle = PALETTE.rockFill;
+          ctx.fill(path, fillRule);
+          ctx.save();
+          ctx.clip(path, fillRule);
+          ctx.fillStyle = PALETTE.rockPill;
+          for (const p of pills) {
+            ctx.beginPath();
+            drawRoundedRectPath(ctx, p.x, p.y, p.w, p.h, p.h * 0.5);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
+        _drawArenaTerrain(ctx, sim) {
+          const arena = ARENAS[sim.arenaIndex];
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+
+          // Floating Islands
+          for (const isl of arena.islands) {
+            const path = new Path2D();
+            tracePointLoop(path, isl.poly, true);
+            this._fillRockAndClipPills(ctx, path, 'nonzero', arena.pills);
+            ctx.strokeStyle = PALETTE.ink;
+            ctx.lineWidth = 4.5;
+            ctx.stroke(path);
+          }
+
+          // Enclosed Cave Interiors (single seamless evenodd cutout)
+          for (const caveLoop of arena.caves) {
+            const fillPath = new Path2D();
+            fillPath.rect(-25, -25, WORLD_W + 50, WORLD_H + 50);
+            tracePointLoop(fillPath, caveLoop, true);
+            this._fillRockAndClipPills(ctx, fillPath, 'evenodd', arena.pills);
+
+            const rimPath = new Path2D();
+            tracePointLoop(rimPath, caveLoop, true);
+            ctx.strokeStyle = PALETTE.ink;
+            ctx.lineWidth = 4.5;
+            ctx.stroke(rimPath);
+          }
+
+          // Open-Skylight Cavern Arches & Canyons
+          for (const openRock of arena.openRocks) {
+            const fillPath = new Path2D();
+            tracePointLoop(fillPath, openRock.visualPoly, true);
+            this._fillRockAndClipPills(ctx, fillPath, 'nonzero', arena.pills);
+
+            const rimPath = new Path2D();
+            tracePointLoop(rimPath, openRock.surface, false);
+            ctx.strokeStyle = PALETTE.ink;
+            ctx.lineWidth = 4.5;
+            ctx.stroke(rimPath);
+          }
+
+          // Thin U/C Half-Pipe Bowls with mathematically exact rounded semicircle endcaps
+          for (const pipe of arena.halfPipes) {
+            ctx.save();
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = PALETTE.ink;
+            ctx.lineWidth = pipe.thickness + 9;
+            ctx.beginPath();
+            ctx.arc(pipe.cx, pipe.cy, pipe.r, pipe.aStart, pipe.aEnd, false);
+            ctx.stroke();
+
+            ctx.strokeStyle = PALETTE.rockFill;
+            ctx.lineWidth = pipe.thickness;
+            ctx.beginPath();
+            ctx.arc(pipe.cx, pipe.cy, pipe.r, pipe.aStart, pipe.aEnd, false);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Overhead / Deflector Rock Blocks
+          for (const blk of arena.blocks) {
+            if (blk.hiddenVisual) continue;
+            ctx.save();
+            ctx.translate(blk.x, blk.y);
+            ctx.rotate(blk.angle || 0);
+            ctx.fillStyle = PALETTE.rockFill;
+            ctx.strokeStyle = PALETTE.ink;
+            ctx.lineWidth = 4.5;
+            ctx.beginPath();
+            drawRoundedRectPath(ctx, -blk.w * 0.5, -blk.h * 0.5, blk.w, blk.h, blk.chamfer || 4);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Dynamic Wooden Seesaws + Center Dark Slate Pivot Pins (r=11px, no outline)
+          for (const sw of sim.seesaws) {
+            ctx.save();
+            ctx.translate(sw.body.position.x, sw.body.position.y);
+            ctx.rotate(sw.body.angle);
+            ctx.fillStyle = PALETTE.plankFill;
+            ctx.strokeStyle = PALETTE.ink;
+            ctx.lineWidth = 4.5;
+            ctx.beginPath();
+            drawRoundedRectPath(ctx, -sw.w * 0.5, -14, sw.w, 28, 14);
+            ctx.fill();
+            ctx.stroke();
+
+            // Solid #3A3E42 circular center pivot pin (radius 11px, no outline)
+            ctx.fillStyle = PALETTE.rockPill;
+            ctx.beginPath();
+            ctx.arc(0, 0, 11, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+
+        _drawWaterWaves(ctx, timeMs) {
+          const waveY = (x, offset) => WATER_CREST_Y + Math.sin((x / 55) * Math.PI * 2 + timeMs * 0.0045 + offset) * 6;
+
+          ctx.fillStyle = PALETTE.waterTop;
+          ctx.beginPath();
+          ctx.moveTo(0, WORLD_H);
+          for (let x = 0; x <= WORLD_W; x += 4) ctx.lineTo(x, waveY(x, 0) - 2);
+          ctx.lineTo(WORLD_W, WORLD_H);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = PALETTE.waterDeep;
+          ctx.beginPath();
+          ctx.moveTo(0, WORLD_H);
+          for (let x = 0; x <= WORLD_W; x += 4) ctx.lineTo(x, waveY(x, 1.8) + 16);
+          ctx.lineTo(WORLD_W, WORLD_H);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        _drawEffects(ctx, bannerText) {
+          // Flat white exhaust puffs
+          for (const s of this.smoke) {
+            ctx.fillStyle = `rgba(245, 245, 250, ${(s.life * 0.72).toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Water splash droplets
+          for (const d of this.splashes) {
+            ctx.fillStyle = PALETTE.waterTop;
+            ctx.strokeStyle = PALETTE.ink;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(d.x, d.y, d.r * d.life, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+
+          // Cartoon KO Bonk Star
+          if (this.popStar) {
+            const { x, y, life } = this.popStar;
+            const s = (1.3 - life * 0.4) * 32;
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.fillStyle = PALETTE.stripeGold;
+            ctx.strokeStyle = PALETTE.ink;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            for (let i = 0; i < 12; i++) {
+              const rad = i % 2 === 0 ? s : s * 0.48;
+              const ang = (i / 12) * Math.PI * 2;
+              if (i === 0) ctx.moveTo(Math.cos(ang) * rad, Math.sin(ang) * rad);
+              else ctx.lineTo(Math.cos(ang) * rad, Math.sin(ang) * rad);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          if (bannerText) {
+            ctx.save();
+            ctx.font = '800 54px "Fredoka", "Rubik", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.lineWidth = 10;
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = PALETTE.ink;
+            ctx.strokeText(bannerText, WORLD_W * 0.5, 138);
+            ctx.fillStyle = PALETTE.white;
+            ctx.fillText(bannerText, WORLD_W * 0.5, 138);
+            ctx.restore();
+          }
+        }
+
+        render(sim, bannerText = '') {
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.scale(this.dpr, this.dpr);
+
+          this._drawSkyAndCity(ctx);
+          this._drawArenaTerrain(ctx, sim);
+          if (sim.p1Car) drawRoadster(ctx, sim.p1Car, true);
+          if (sim.p2Car) drawRoadster(ctx, sim.p2Car, false);
+          this._drawWaterWaves(ctx, performance.now());
+          this._drawEffects(ctx, bannerText);
+
+          ctx.restore();
+        }
+      }
+
+      // =========================================================================
+      // 6. SMART AI OPPONENT
+      // =========================================================================
+      class SmartAI {
+        constructor() {
+          this.flipBias = 0;
+          this.decisionTick = 0;
+        }
+
+        decide(sim, aiIsP1 = false) {
+          const me = aiIsP1 ? sim.p1Car : sim.p2Car;
+          const opp = aiIsP1 ? sim.p2Car : sim.p1Car;
+          if (!me || !opp || me.dead) return { l: false, r: false };
+
+          this.decisionTick++;
+          const mx = me.chassis.position.x;
+          const my = me.chassis.position.y;
+          const ox = opp.chassis.position.x;
+          const oy = opp.chassis.position.y;
+          const angle = normalizeAngle(me.chassis.angle);
+          const gx = me.playerIndex === 1 ? sim.grounded.p1R || sim.grounded.p1F : sim.grounded.p2R || sim.grounded.p2F;
+
+          // Edge safety near water chasm
+          if (mx < 220 && me.chassis.velocity.x < 0) return { l: false, r: true };
+          if (mx > 1060 && me.chassis.velocity.x > 0) return { l: true, r: false };
+
+          if (!gx && my < 480) {
+            if (this.decisionTick % 24 === 0) this.flipBias = Math.random();
+            if (Math.abs(angle) > 0.65) return angle > 0 ? { l: true, r: false } : { l: false, r: true };
+            if (Math.abs(ox - mx) < 160 && this.flipBias < 0.55) {
+              return ox < mx ? { l: true, r: false } : { l: false, r: true };
+            }
+            return { l: false, r: false };
+          }
+
+          if (Math.abs(angle) > 1.35) return angle > 0 ? { l: true, r: false } : { l: false, r: true };
+
+          if (ox < mx - 35) return { l: true, r: false };
+          if (ox > mx + 35) return { l: false, r: true };
+          return oy < my ? { l: me.facing > 0, r: me.facing < 0 } : { l: ox < mx, r: ox >= mx };
+        }
+      }
+
+      // =========================================================================
+      // 7. MULTI-TOUCH & KEYBOARD INPUT MANAGER
+      // =========================================================================
+      class InputManager {
+        constructor(sound) {
+          this.sound = sound;
+          this.state = { p1_l: false, p1_r: false, p2_l: false, p2_r: false };
+          this.touches = new Map();
+          this.singleLayout = localStorage.getItem('crashahead_1p_layout') || 'split';
+          this.mode = 'menu';
+
+          this.dom = {
+            root: document.getElementById('touch-controls'),
+            groupP1: document.getElementById('group-p1'),
+            groupP2: document.getElementById('group-p2'),
+            p1L: document.getElementById('pad-p1-l'),
+            p1R: document.getElementById('pad-p1-r'),
+            p2L: document.getElementById('pad-p2-l'),
+            p2R: document.getElementById('pad-p2-r')
+          };
+
+          this._bindKeyboard();
+          this._bindMultiTouch();
+          this.setMode('menu');
+        }
+
+        _bindKeyboard() {
+          window.addEventListener('keydown', (e) => {
+            if (['ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+              if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+              e.preventDefault();
+            }
+            this.sound.unlock();
+            if (e.code === 'KeyA') this.state.p1_l = true;
+            if (e.code === 'KeyD') this.state.p1_r = true;
+            if (e.code === 'ArrowLeft') this.state.p2_l = true;
+            if (e.code === 'ArrowRight') this.state.p2_r = true;
+            this._syncVisuals();
+          });
+
+          window.addEventListener('keyup', (e) => {
+            if (e.code === 'KeyA') this.state.p1_l = false;
+            if (e.code === 'KeyD') this.state.p1_r = false;
+            if (e.code === 'ArrowLeft') this.state.p2_l = false;
+            if (e.code === 'ArrowRight') this.state.p2_r = false;
+            this._syncVisuals();
+          });
+        }
+
+        _bindMultiTouch() {
+          const pads = [
+            { el: this.dom.p1L, key: 'p1_l' },
+            { el: this.dom.p1R, key: 'p1_r' },
+            { el: this.dom.p2L, key: 'p2_l' },
+            { el: this.dom.p2R, key: 'p2_r' }
+          ];
+
+          const zoneForPoint = (x, y) => {
+            for (const p of pads) {
+              if (p.el.offsetParent === null) continue;
+              const r = p.el.getBoundingClientRect();
+              if (x >= r.left - 8 && x <= r.right + 8 && y >= r.top - 8 && y <= r.bottom + 8) return p.key;
+            }
+            return null;
+          };
+
+          const recomputeFromTouches = () => {
+            const held = { p1_l: false, p1_r: false, p2_l: false, p2_r: false };
+            for (const k of this.touches.values()) if (k) held[k] = true;
+            Object.assign(this.state, held);
+            this._syncVisuals();
+          };
+
+          const onStartOrMove = (e) => {
+            if (this.mode === 'menu') return;
+            this.sound.unlock();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+              const t = e.changedTouches[i];
+              this.touches.set(t.identifier, zoneForPoint(t.clientX, t.clientY));
+            }
+            recomputeFromTouches();
+            if (e.cancelable) e.preventDefault();
+          };
+
+          const onEnd = (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+              this.touches.delete(e.changedTouches[i].identifier);
+            }
+            recomputeFromTouches();
+            if (e.cancelable && this.mode !== 'menu') e.preventDefault();
+          };
+
+          this.dom.root.addEventListener('touchstart', onStartOrMove, { passive: false });
+          this.dom.root.addEventListener('touchmove', onStartOrMove, { passive: false });
+          window.addEventListener('touchend', onEnd, { passive: false });
+          window.addEventListener('touchcancel', onEnd, { passive: false });
+
+          for (const p of pads) {
+            p.el.addEventListener('mousedown', (e) => {
+              e.preventDefault();
+              this.sound.unlock();
+              this.state[p.key] = true;
+              this._syncVisuals();
+            });
+            window.addEventListener('mouseup', () => {
+              if (this.state[p.key]) {
+                this.state[p.key] = false;
+                this._syncVisuals();
+              }
+            });
+          }
+        }
+
+        _syncVisuals() {
+          this.dom.p1L.classList.toggle('pressed', this.state.p1_l);
+          this.dom.p1R.classList.toggle('pressed', this.state.p1_r);
+          this.dom.p2L.classList.toggle('pressed', this.state.p2_l);
+          this.dom.p2R.classList.toggle('pressed', this.state.p2_r);
+        }
+
+        setSingleLayout(layout) {
+          this.singleLayout = layout === 'grouped' ? 'grouped' : 'split';
+          localStorage.setItem('crashahead_1p_layout', this.singleLayout);
+          this._applyLayout();
+          return this.singleLayout;
+        }
+
+        setMode(mode) {
+          this.mode = mode;
+          this.touches.clear();
+          this.state = { p1_l: false, p1_r: false, p2_l: false, p2_r: false };
+          this._syncVisuals();
+          this._applyLayout();
+        }
+
+        _applyLayout() {
+          const { root, groupP1, groupP2, p1L, p1R, p2L, p2R } = this.dom;
+          root.classList.remove('mode-1p-split');
+          p1L.classList.remove('pad-left-btn');
+          p1R.classList.remove('pad-right-btn');
+          p2L.classList.remove('pad-left-btn');
+          p2R.classList.remove('pad-right-btn');
+
+          if (this.mode === 'menu') {
+            root.classList.add('hidden');
+            return;
+          }
+          root.classList.remove('hidden');
+
+          if (this.mode === 'local') {
+            groupP1.classList.remove('hidden');
+            groupP2.classList.remove('hidden');
+          } else if (this.mode === 'online_client') {
+            groupP1.classList.add('hidden');
+            groupP2.classList.remove('hidden');
+            if (this.singleLayout === 'split') {
+              root.classList.add('mode-1p-split');
+              p2L.classList.add('pad-left-btn');
+              p2R.classList.add('pad-right-btn');
+            }
+          } else {
+            groupP1.classList.remove('hidden');
+            groupP2.classList.add('hidden');
+            if (this.singleLayout === 'split') {
+              root.classList.add('mode-1p-split');
+              p1L.classList.add('pad-left-btn');
+              p1R.classList.add('pad-right-btn');
+            }
+          }
+        }
+
+        getP1() {
+          if (this.mode === 'ai' || this.mode === 'online_host') {
+            return { l: this.state.p1_l || this.state.p2_l, r: this.state.p1_r || this.state.p2_r };
+          }
+          return { l: this.state.p1_l, r: this.state.p1_r };
+        }
+
+        getP2() {
+          if (this.mode === 'online_client') {
+            return { l: this.state.p1_l || this.state.p2_l, r: this.state.p1_r || this.state.p2_r };
+          }
+          return { l: this.state.p2_l, r: this.state.p2_r };
+        }
+      }
+
+      // =========================================================================
+      // 8. PEERJS P2P NETWORK MANAGER (60Hz AUTHORITATIVE SYNC + INTERPOLATION)
+      // =========================================================================
+      const BODY_KEYS = [
+        ['p1Car', 'chassis', 'c1'], ['p1Car', 'wheelR', 'w1r'], ['p1Car', 'wheelF', 'w1f'], ['p1Car', 'head', 'h1'],
+        ['p2Car', 'chassis', 'c2'], ['p2Car', 'wheelR', 'w2r'], ['p2Car', 'wheelF', 'w2f'], ['p2Car', 'head', 'h2']
+      ];
+
+      function generateRoomCode() {
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        let code = '';
+        for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+        return `CRSH-${code}`;
+      }
+
+      class NetworkManager {
+        constructor(callbacks) {
+          this.cb = callbacks;
+          this.peer = null;
+          this.conn = null;
+          this.role = null;
+          this.roomCode = '';
+          this.pingMs = 0;
+          this.pingTimer = null;
+          this.remoteInput = { l: false, r: false };
+          this.lastInputSent = { l: false, r: false };
+          this.snapshotBuffer = [];
+          this.interpDelayMs = 50;
+          this.lastSeq = 0;
+        }
+
+        destroy() {
+          if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
+          if (this.conn) { try { this.conn.close(); } catch (_) {} this.conn = null; }
+          if (this.peer) { try { this.peer.destroy(); } catch (_) {} this.peer = null; }
+          this.role = null;
+          this.snapshotBuffer = [];
+          this.remoteInput = { l: false, r: false };
+        }
+
+        _initPeer(peerId, onReady) {
+          this.destroy();
+          if (typeof Peer === 'undefined') {
+            this.cb.onStatus('PeerJS CDN failed to load.', 'error');
+            return;
+          }
+          const opts = {
+            debug: 0,
+            config: {
+              iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+              ]
+            }
+          };
+          this.peer = peerId ? new Peer(peerId, opts) : new Peer(opts);
+          this.peer.on('open', (id) => onReady(id));
+          this.peer.on('error', (err) => {
+            if (err && err.type === 'unavailable-id' && this.role === 'host') {
+              this.hostRoom();
+              return;
+            }
+            const msg = (err && err.type === 'peer-unavailable')
+              ? 'Room not found or Host disconnected.'
+              : `Connection error: ${(err && (err.type || err.message)) || 'unknown'}`;
+            this.cb.onStatus(msg, 'error');
+          });
+        }
+
+        hostRoom() {
+          this.role = 'host';
+          this.roomCode = generateRoomCode();
+          this.cb.onRoomCode(this.roomCode);
+          this.cb.onStatus('Opening room...', 'neutral');
+          this._initPeer(PEER_PREFIX + this.roomCode, () => {
+            this.role = 'host';
+            this.cb.onStatus(`Hosting ${this.roomCode} — waiting for player`, 'neutral');
+            this.peer.on('connection', (conn) => {
+              if (this.conn) { conn.close(); return; }
+              this._attachConnection(conn);
+            });
+          });
+        }
+
+        joinRoom(codeInput) {
+          const clean = codeInput.trim().toUpperCase();
+          if (!clean) {
+            this.cb.onStatus('Enter a room code first.', 'error');
+            return;
+          }
+          const normalized = clean.startsWith('CRSH-') ? clean : `CRSH-${clean}`;
+          this.roomCode = normalized;
+          this.role = 'client';
+          this.cb.onStatus(`Connecting to ${normalized}...`, 'neutral');
+          this._initPeer(null, () => {
+            this.role = 'client';
+            const conn = this.peer.connect(PEER_PREFIX + normalized, { serialization: 'json', reliable: false });
+            this._attachConnection(conn);
+          });
+        }
+
+        _attachConnection(conn) {
+          this.conn = conn;
+          conn.on('open', () => {
+            this.cb.onStatus('Connected!', 'connected');
+            this.cb.onConnected(this.role);
+            this._startHeartbeat();
+          });
+          conn.on('data', (msg) => this._handleMessage(msg));
+          conn.on('close', () => {
+            this.destroy();
+            this.cb.onDisconnected('Opponent disconnected.');
+          });
+          conn.on('error', () => {
+            this.destroy();
+            this.cb.onDisconnected('Peer connection lost.');
+          });
+        }
+
+        _startHeartbeat() {
+          if (this.pingTimer) clearInterval(this.pingTimer);
+          this.pingTimer = setInterval(() => {
+            if (this.conn && this.conn.open) this.conn.send({ t: 'ping', ts: performance.now() });
+          }, 1500);
+        }
+
+        _handleMessage(msg) {
+          if (!msg || typeof msg !== 'object') return;
+          switch (msg.t) {
+            case 'ping':
+              if (this.conn && this.conn.open) this.conn.send({ t: 'pong', ts: msg.ts });
+              break;
+            case 'pong':
+              this.pingMs = Math.max(1, Math.round(performance.now() - msg.ts));
+              this.cb.onPing(this.pingMs);
+              break;
+            case 'input':
+              this.remoteInput = { l: !!msg.l, r: !!msg.r };
+              break;
+            case 'match_start':
+              this.snapshotBuffer = [];
+              this.lastSeq = 0;
+              this.cb.onMatchStart(msg.ai || 0);
+              break;
+            case 'snap':
+              if (msg.sq <= this.lastSeq) return;
+              this.lastSeq = msg.sq;
+              msg.rx = performance.now();
+              this.snapshotBuffer.push(msg);
+              if (this.snapshotBuffer.length > 24) this.snapshotBuffer.shift();
+              this.cb.onSnapshotState(msg);
+              break;
+            case 'evt':
+              this.cb.onGameEvent(msg);
+              break;
+            case 'rematch':
+              this.cb.onRematchSignal();
+              break;
+          }
+        }
+
+        sendInputIfChanged(inp) {
+          if (!this.conn || !this.conn.open) return;
+          const l = !!inp.l;
+          const r = !!inp.r;
+          if (l !== this.lastInputSent.l || r !== this.lastInputSent.r) {
+            this.lastInputSent = { l, r };
+            this.conn.send({ t: 'input', l, r });
+          }
+        }
+
+        sendMatchStart(arenaIndex) {
+          if (this.conn && this.conn.open) this.conn.send({ t: 'match_start', ai: arenaIndex });
+        }
+
+        sendEvent(kind, data = {}) {
+          if (this.conn && this.conn.open) this.conn.send({ t: 'evt', kind, ...data });
+        }
+
+        sendRematch() {
+          if (this.conn && this.conn.open) this.conn.send({ t: 'rematch' });
+        }
+
+        sendHostSnapshot(sim, meta) {
+          if (!this.conn || !this.conn.open) return;
+          this.lastSeq++;
+          const pack = (b) => ({
+            x: Math.round(b.position.x * 10) / 10,
+            y: Math.round(b.position.y * 10) / 10,
+            a: Math.round(b.angle * 1000) / 1000
+          });
+          const payload = {
+            t: 'snap',
+            sq: this.lastSeq,
+            ai: sim.arenaIndex,
+            sc: meta.scores,
+            rn: meta.roundNumber,
+            ph: meta.phase,
+            bt: meta.bannerText,
+            d1: sim.p1Car.dead ? 1 : 0,
+            d2: sim.p2Car.dead ? 1 : 0,
+            dr1: sim.p1Car.driving ? 1 : 0,
+            dr2: sim.p2Car.driving ? 1 : 0,
+            sw: sim.seesaws.map((s) => ({ a: Math.round(s.body.angle * 1000) / 1000 }))
+          };
+          for (const [carKey, bodyKey, shortKey] of BODY_KEYS) {
+            payload[shortKey] = pack(sim[carKey][bodyKey]);
+          }
+          this.conn.send(payload);
+        }
+
+        applyInterpolatedFrame(sim) {
+          if (this.snapshotBuffer.length === 0) return;
+          const renderTime = performance.now() - this.interpDelayMs;
+          while (this.snapshotBuffer.length >= 2 && this.snapshotBuffer[1].rx <= renderTime) {
+            this.snapshotBuffer.shift();
+          }
+          const s0 = this.snapshotBuffer[0];
+          const s1 = this.snapshotBuffer[1];
+          const alpha = s1 && s1.rx > s0.rx ? clamp((renderTime - s0.rx) / (s1.rx - s0.rx), 0, 1) : 0;
+
+          if (sim.p1Car) sim.p1Car.driving = !!(s1 ? s1.dr1 : s0.dr1);
+          if (sim.p2Car) sim.p2Car.driving = !!(s1 ? s1.dr2 : s0.dr2);
+
+          for (const [carKey, bodyKey, shortKey] of BODY_KEYS) {
+            const body = sim[carKey] && sim[carKey][bodyKey];
+            if (!body) continue;
+            const a = s0[shortKey];
+            const b = s1 ? s1[shortKey] : a;
+            if (!a || !b) continue;
+            Matter.Body.setPosition(body, { x: lerp(a.x, b.x, alpha), y: lerp(a.y, b.y, alpha) });
+            Matter.Body.setAngle(body, lerpAngle(a.a, b.a, alpha));
+          }
+
+          if (s0.sw && sim.seesaws.length === s0.sw.length) {
+            for (let i = 0; i < sim.seesaws.length; i++) {
+              const a0 = s0.sw[i].a;
+              const a1 = s1 && s1.sw && s1.sw[i] ? s1.sw[i].a : a0;
+              Matter.Body.setAngle(sim.seesaws[i].body, lerpAngle(a0, a1, alpha));
+            }
+          }
+        }
+      }
+
+      // =========================================================================
+      // 9. GAME ORCHESTRATOR
+      // =========================================================================
+      class CrashAheadGame {
+        constructor() {
+          this.sound = new SoundFX();
+          this.canvas = document.getElementById('game-canvas');
+          this.renderer = new CanvasRenderer(this.canvas);
+          this.input = new InputManager(this.sound);
+          this.ai = new SmartAI();
+          this.sim = new PhysicsSimulation(true);
+
+          this.mode = 'attract'; // 'attract' | 'ai' | 'local' | 'online_host' | 'online_client'
+          this.phase = 'MENU';   // 'MENU' | 'FIGHT' | 'KO' | 'MATCH_OVER'
+          this.scores = [0, 0];
+          this.roundNumber = 1;
+          this.bannerText = '';
+          this.selectedArenaIdx = -1; // -1 = ALL 15 MAPS (RANDOM ROTATION), 0..14 = locked specific map
+          this.attractMapTicks = 0;
+
+          this.koPending = false;
+          this.koWindowMs = 0;
+          this.koTimerMs = 0;
+          this.koPendingRound = 0;
+          this._pendingAward = 0;
+
+          this.p1Input = { l: false, r: false };
+          this.p2Input = { l: false, r: false };
+          this.localRematchWant = false;
+          this.remoteRematchWant = false;
+
+          this._cacheDOM();
+          this._bindSimCallbacks();
+          this._initNetwork();
+          this._bindUI();
+
+          window.addEventListener('resize', () => this.renderer.resize());
+          window.addEventListener('orientationchange', () => setTimeout(() => this.renderer.resize(), 120));
+
+          this._checkUrlAutoJoin();
+          this._startAttractMode();
+          this._startMainLoop();
+        }
+
+        _cacheDOM() {
+          this.dom = {
+            scorePill: document.getElementById('score-pill'),
+            scoreP1: document.getElementById('score-p1'),
+            scoreP2: document.getElementById('score-p2'),
+            pingTag: document.getElementById('online-ping-tag'),
+            btnExit: document.getElementById('btn-exit'),
+
+            menuOverlay: document.getElementById('menu-overlay'),
+            onlineOverlay: document.getElementById('online-overlay'),
+            victoryOverlay: document.getElementById('victory-overlay'),
+
+            mapTitle: document.getElementById('map-picker-title'),
+            mapSub: document.getElementById('map-picker-sub'),
+            btnCtrlToggle: document.getElementById('btn-ctrl-toggle'),
+            btnMute: document.getElementById('btn-mute'),
+            iconSoundOn: document.getElementById('icon-sound-on'),
+            iconSoundOff: document.getElementById('icon-sound-off'),
+
+            tabHost: document.getElementById('tab-host'),
+            tabJoin: document.getElementById('tab-join'),
+            panelHost: document.getElementById('panel-host'),
+            panelJoin: document.getElementById('panel-join'),
+            hostRoomCode: document.getElementById('host-room-code'),
+            joinCodeInput: document.getElementById('join-code-input'),
+            onlineStatus: document.getElementById('online-status'),
+            onlineStatusText: document.getElementById('online-status-text'),
+            onlineLobbyPing: document.getElementById('online-lobby-ping'),
+            btnOnlineStart: document.getElementById('btn-online-start'),
+
+            victoryTitle: document.getElementById('victory-title'),
+            victoryScore: document.getElementById('victory-score'),
+            victoryNote: document.getElementById('victory-note'),
+            btnRematch: document.getElementById('btn-rematch')
+          };
+        }
+
+        _pickArenaIndex(previousIndex = -1) {
+          if (this.selectedArenaIdx >= 0) return this.selectedArenaIdx;
+          let idx = Math.floor(Math.random() * ARENAS.length);
+          if (ARENAS.length > 1 && idx === previousIndex) {
+            idx = (idx + 1 + Math.floor(Math.random() * (ARENAS.length - 1))) % ARENAS.length;
+          }
+          return idx;
+        }
+
+        _updateMapPickerUI() {
+          if (this.selectedArenaIdx < 0) {
+            this.dom.mapTitle.textContent = 'ALL 15 MAPS (RANDOM ROTATION)';
+            this.dom.mapSub.textContent = 'Rotates every round • Tap < > to pick Map 1–15';
+          } else {
+            const a = ARENAS[this.selectedArenaIdx];
+            this.dom.mapTitle.textContent = `MAP ${a.id}/15: ${a.name}`;
+            this.dom.mapSub.textContent = a.desc;
+          }
+        }
+
+        _bindSimCallbacks() {
+          const handleRoundKO = (loserIdx, pt, isWater) => {
+            if (this.mode === 'attract') {
+              if (!this.koPending) {
+                this.koPending = true;
+                if (!isWater) this.sim.popHelmet(loserIdx, pt);
+                else {
+                  const c = loserIdx === 1 ? this.sim.p1Car : this.sim.p2Car;
+                  if (c) c.dead = true;
+                }
+                this.koTimerMs = 900;
+              }
+              return;
+            }
+            if (this.phase !== 'FIGHT') return;
+
+            if (!isWater) {
+              this.sim.popHelmet(loserIdx, pt);
+              this.renderer.spawnBonkPop(pt.x, pt.y, loserIdx === 1 ? PALETTE.red.body : PALETTE.blue.body);
+              this.sound.playBonk();
+              if (this.mode === 'online_host') {
+                this.net.sendEvent('bonk', { x: Math.round(pt.x), y: Math.round(pt.y), p: loserIdx });
+              }
+            } else {
+              const c = loserIdx === 1 ? this.sim.p1Car : this.sim.p2Car;
+              if (c) c.dead = true;
+              this.renderer.spawnWaterSplash(pt.x);
+              this.sound.playSplash();
+              if (this.mode === 'online_host') {
+                this.net.sendEvent('splash', { x: Math.round(pt.x) });
+              }
+            }
+
+            Haptics.ko();
+
+            if (!this.koPending) {
+              this.koPending = true;
+              this.koWindowMs = DOUBLE_KO_WINDOW_MS;
+              this._pendingAward = loserIdx === 1 ? 2 : 1;
+            } else if (this._pendingAward !== 0 && this._pendingAward !== (loserIdx === 1 ? 2 : 1)) {
+              this._pendingAward = 0; // Double KO within 100ms
+            }
+          };
+
+          this.sim.onHeadKO = (loserIdx, pt) => handleRoundKO(loserIdx, pt, false);
+          this.sim.onWaterKO = (loserIdx, pt) => handleRoundKO(loserIdx, pt, true);
+          this.sim.onCarBump = (_pt, norm) => {
+            if (this.mode === 'attract') return;
+            this.sound.playBump(norm);
+            if (norm > 0.4) Haptics.bump();
+            if (this.mode === 'online_host') this.net.sendEvent('bump', { n: Math.round(norm * 100) / 100 });
+          };
+        }
+
+        _initNetwork() {
+          this.net = new NetworkManager({
+            onRoomCode: (code) => { this.dom.hostRoomCode.textContent = code; },
+            onStatus: (text, cls) => {
+              this.dom.onlineStatusText.textContent = text;
+              this.dom.onlineStatus.className = `status-pill ${cls}`;
+            },
+            onConnected: (role) => {
+              this.dom.onlineStatusText.textContent = role === 'host' ? 'Player 2 Connected!' : 'Connected to Host!';
+              this.dom.onlineStatus.className = 'status-pill connected';
+              this.dom.btnOnlineStart.disabled = role !== 'host';
+              this.dom.btnOnlineStart.textContent = role === 'host' ? 'START MATCH!' : 'WAITING FOR HOST...';
+            },
+            onPing: (ms) => {
+              this.dom.onlineLobbyPing.textContent = `${ms}ms`;
+              this.dom.pingTag.textContent = `${ms}ms`;
+            },
+            onMatchStart: (arenaIdx) => {
+              this.startMatch('online_client', arenaIdx);
+            },
+            onSnapshotState: (snap) => {
+              if (this.mode !== 'online_client') return;
+              if (snap.rn !== this.roundNumber || snap.ai !== this.sim.arenaIndex) {
+                this.roundNumber = snap.rn;
+                this.koPendingRound = 0;
+                this.sim.resetArena(snap.ai || 0);
+                this.renderer.clearEffects();
+              }
+              if (snap.sc[0] !== this.scores[0] || snap.sc[1] !== this.scores[1]) {
+                this.scores = [snap.sc[0], snap.sc[1]];
+                this._updateScoreUI();
+              }
+              const staleFight = this.koPendingRound === snap.rn && snap.ph === 'FIGHT';
+              if (!staleFight) this.phase = snap.ph;
+              if (snap.ph === 'KO') this.koPendingRound = snap.rn;
+              this.bannerText = snap.bt || '';
+              if (this.sim.p1Car) this.sim.p1Car.dead = !!snap.d1;
+              if (this.sim.p2Car) this.sim.p2Car.dead = !!snap.d2;
+            },
+            onGameEvent: (msg) => {
+              if (msg.kind === 'bump') {
+                this.sound.playBump(msg.n || 0.5);
+                if (msg.n > 0.4) Haptics.bump();
+              } else if (msg.kind === 'bonk') {
+                this.koPendingRound = this.roundNumber;
+                this.phase = 'KO';
+                this.bannerText = 'BONK!';
+                this.renderer.spawnBonkPop(msg.x, msg.y, msg.p === 1 ? PALETTE.red.body : PALETTE.blue.body);
+                this.sound.playBonk();
+                Haptics.ko();
+              } else if (msg.kind === 'splash') {
+                this.koPendingRound = this.roundNumber;
+                this.phase = 'KO';
+                this.bannerText = 'SPLASH!';
+                this.renderer.spawnWaterSplash(msg.x);
+                this.sound.playSplash();
+                Haptics.ko();
+              } else if (msg.kind === 'match_over') {
+                this.scores = msg.scores;
+                this._updateScoreUI();
+                this._showVictory();
+              } else if (msg.kind === 'rematch_start') {
+                this.startMatch('online_client', msg.ai || 0);
+              }
+            },
+            onRematchSignal: () => {
+              this.remoteRematchWant = true;
+              if (this.mode === 'online_host') {
+                if (this.localRematchWant) this._triggerOnlineRematch();
+                else this.dom.victoryNote.textContent = 'Opponent wants a rematch!';
+              } else {
+                this.dom.victoryNote.textContent = 'Host wants a rematch!';
+              }
+            },
+            onDisconnected: (reason) => {
+              this.input.setMode('menu');
+              this.sound.updateEngine(false, 0, 0);
+              this.dom.scorePill.classList.add('hidden');
+              this.dom.btnExit.classList.add('hidden');
+              this.dom.victoryOverlay.classList.add('hidden');
+              this.dom.onlineOverlay.classList.remove('hidden');
+              this.dom.onlineStatusText.textContent = reason;
+              this.dom.onlineStatus.className = 'status-pill error';
+              this.dom.btnOnlineStart.disabled = true;
+              this.dom.btnOnlineStart.textContent = 'WAITING FOR OPPONENT...';
+            }
+          });
+        }
+
+        _bindUI() {
+          document.getElementById('force-landscape-btn').addEventListener('click', () => {
+            document.body.classList.add('force-landscape');
+            setTimeout(() => this.renderer.resize(), 60);
+          });
+
+          this.dom.btnMute.addEventListener('click', () => {
+            this.sound.unlock();
+            this.sound.setMuted(!this.sound.muted);
+            this._updateSoundUI();
+            this.sound.playClick();
+          });
+          this._updateSoundUI();
+
+          document.getElementById('btn-fullscreen').addEventListener('click', () => {
+            this.sound.unlock();
+            this.sound.playClick();
+            const docEl = document.documentElement;
+            if (!document.fullscreenElement) {
+              if (docEl.requestFullscreen) docEl.requestFullscreen().catch(() => {});
+            } else if (document.exitFullscreen) {
+              document.exitFullscreen().catch(() => {});
+            }
+          });
+
+          // Map Selector Pill cycling (-1 = Random Rotation, 0..14 = Specific Map 1..15)
+          const stepMap = (delta) => {
+            this.sound.unlock();
+            this.sound.playClick();
+            const total = ARENAS.length + 1; // -1, 0 .. 14
+            const cur = this.selectedArenaIdx + 1;
+            const next = ((cur + delta) % total + total) % total;
+            this.selectedArenaIdx = next - 1;
+            this._updateMapPickerUI();
+            if (this.mode === 'attract') {
+              const previewIdx = this.selectedArenaIdx >= 0 ? this.selectedArenaIdx : 0;
+              this.sim.resetArena(previewIdx);
+              this.renderer.clearEffects();
+            }
+          };
+          document.getElementById('btn-map-prev').addEventListener('click', () => stepMap(-1));
+          document.getElementById('btn-map-next').addEventListener('click', () => stepMap(1));
+          document.getElementById('btn-map-cycle').addEventListener('click', () => stepMap(1));
+          this._updateMapPickerUI();
+
+          const syncCtrlLabel = () => {
+            this.dom.btnCtrlToggle.textContent =
+              this.input.singleLayout === 'split' ? '1P TOUCH: SPLIT THUMBS' : '1P TOUCH: SIDE PAIR';
+          };
+          syncCtrlLabel();
+          this.dom.btnCtrlToggle.addEventListener('click', () => {
+            this.sound.unlock();
+            this.sound.playClick();
+            this.input.setSingleLayout(this.input.singleLayout === 'split' ? 'grouped' : 'split');
+            syncCtrlLabel();
+          });
+
+          document.getElementById('btn-mode-local').addEventListener('click', () => {
+            this.sound.unlock(); this.sound.playClick(); this.startMatch('local');
+          });
+          document.getElementById('btn-mode-ai').addEventListener('click', () => {
+            this.sound.unlock(); this.sound.playClick(); this.startMatch('ai');
+          });
+          document.getElementById('btn-mode-online').addEventListener('click', () => {
+            this.sound.unlock(); this.sound.playClick(); this._openOnlineModal('host');
+          });
+
+          document.getElementById('btn-online-back').addEventListener('click', () => {
+            this.sound.playClick();
+            this.net.destroy();
+            this.dom.onlineOverlay.classList.add('hidden');
+            this.dom.menuOverlay.classList.remove('hidden');
+          });
+
+          this.dom.tabHost.addEventListener('click', () => { this.sound.playClick(); this._switchOnlineTab('host'); });
+          this.dom.tabJoin.addEventListener('click', () => { this.sound.playClick(); this._switchOnlineTab('join'); });
+
+          document.getElementById('btn-copy-code').addEventListener('click', (e) => {
+            this.sound.playClick();
+            this._copyWithFeedback(this.dom.hostRoomCode.textContent, e.currentTarget, 'COPY CODE');
+          });
+          document.getElementById('btn-copy-link').addEventListener('click', (e) => {
+            this.sound.playClick();
+            const url = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(this.dom.hostRoomCode.textContent)}`;
+            this._copyWithFeedback(url, e.currentTarget, 'COPY LINK');
+          });
+
+          document.getElementById('btn-join-connect').addEventListener('click', () => {
+            this.sound.unlock(); this.sound.playClick();
+            this.net.joinRoom(this.dom.joinCodeInput.value);
+          });
+          this.dom.joinCodeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('btn-join-connect').click();
+          });
+
+          this.dom.btnOnlineStart.addEventListener('click', () => {
+            if (this.net.role !== 'host') return;
+            this.sound.unlock();
+            this.sound.playClick();
+            const arenaIdx = this._pickArenaIndex(-1);
+            this.net.sendMatchStart(arenaIdx);
+            this.startMatch('online_host', arenaIdx);
+          });
+
+          this.dom.btnExit.addEventListener('click', () => {
+            this.sound.playClick();
+            this.net.destroy();
+            this._startAttractMode();
+          });
+
+          this.dom.btnRematch.addEventListener('click', () => {
+            this.sound.unlock();
+            this.sound.playClick();
+            if (this.mode === 'online_host' || this.mode === 'online_client') {
+              this.localRematchWant = true;
+              this.net.sendRematch();
+              this.dom.btnRematch.disabled = true;
+              this.dom.btnRematch.textContent = 'WAITING...';
+              if (this.mode === 'online_host' && this.remoteRematchWant) this._triggerOnlineRematch();
+            } else {
+              this.dom.victoryOverlay.classList.add('hidden');
+              this.startMatch(this.mode);
+            }
+          });
+
+          document.getElementById('btn-victory-menu').addEventListener('click', () => {
+            this.sound.playClick();
+            this.net.destroy();
+            this._startAttractMode();
+          });
+        }
+
+        _copyWithFeedback(text, btn, originalText) {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+              btn.textContent = 'COPIED!';
+              setTimeout(() => { btn.textContent = originalText; }, 1200);
+            }).catch(() => {});
+          }
+        }
+
+        _updateSoundUI() {
+          this.dom.iconSoundOn.classList.toggle('hidden', this.sound.muted);
+          this.dom.iconSoundOff.classList.toggle('hidden', !this.sound.muted);
+        }
+
+        _openOnlineModal(tab) {
+          this.dom.menuOverlay.classList.add('hidden');
+          this.dom.onlineOverlay.classList.remove('hidden');
+          this._switchOnlineTab(tab);
+        }
+
+        _switchOnlineTab(tab) {
+          this.dom.tabHost.classList.toggle('active', tab === 'host');
+          this.dom.tabJoin.classList.toggle('active', tab === 'join');
+          this.dom.panelHost.classList.toggle('hidden', tab !== 'host');
+          this.dom.panelJoin.classList.toggle('hidden', tab !== 'join');
+          this.dom.btnOnlineStart.disabled = true;
+          this.dom.btnOnlineStart.textContent = tab === 'host' ? 'WAITING FOR OPPONENT...' : 'WAITING FOR HOST...';
+          this.dom.onlineLobbyPing.textContent = '';
+
+          if (tab === 'host') {
+            this.net.hostRoom();
+          } else {
+            this.net.destroy();
+            this.dom.onlineStatusText.textContent = 'Enter friend room code to join.';
+            this.dom.onlineStatus.className = 'status-pill';
+            setTimeout(() => this.dom.joinCodeInput.focus(), 80);
+          }
+        }
+
+        _checkUrlAutoJoin() {
+          const room = new URLSearchParams(window.location.search).get('room');
+          if (!room) return;
+          this._openOnlineModal('join');
+          this.dom.joinCodeInput.value = room.toUpperCase();
+          setTimeout(() => this.net.joinRoom(room), 300);
+        }
+
+        _startAttractMode() {
+          this.mode = 'attract';
+          this.phase = 'MENU';
+          this.scores = [0, 0];
+          this.bannerText = '';
+          this.koPending = false;
+          this.input.setMode('menu');
+          this.sound.updateEngine(false, 0, 0);
+
+          this.dom.scorePill.classList.add('hidden');
+          this.dom.btnExit.classList.add('hidden');
+          this.dom.pingTag.classList.add('hidden');
+          this.dom.victoryOverlay.classList.add('hidden');
+          this.dom.onlineOverlay.classList.add('hidden');
+          this.dom.menuOverlay.classList.remove('hidden');
+
+          this.sim.isHostSide = true;
+          const previewIdx = this.selectedArenaIdx >= 0 ? this.selectedArenaIdx : 0;
+          this.sim.resetArena(previewIdx);
+          this.renderer.clearEffects();
+        }
+
+        startMatch(mode, explicitArenaIdx = null) {
+          this.mode = mode;
+          this.scores = [0, 0];
+          this.roundNumber = 1;
+          this.koPendingRound = 0;
+          this.localRematchWant = false;
+          this.remoteRematchWant = false;
+
+          this.dom.menuOverlay.classList.add('hidden');
+          this.dom.onlineOverlay.classList.add('hidden');
+          this.dom.victoryOverlay.classList.add('hidden');
+          this.dom.scorePill.classList.remove('hidden');
+          this.dom.btnExit.classList.remove('hidden');
+          this.dom.pingTag.classList.toggle('hidden', mode !== 'online_host' && mode !== 'online_client');
+
+          this.sim.isHostSide = mode !== 'online_client';
+          this.input.setMode(mode);
+          this._updateScoreUI();
+
+          const startIdx = explicitArenaIdx !== null ? explicitArenaIdx : this._pickArenaIndex(-1);
+          this._resetRound(startIdx);
+        }
+
+        _triggerOnlineRematch() {
+          const arenaIdx = this._pickArenaIndex(this.sim.arenaIndex);
+          this.net.sendEvent('rematch_start', { ai: arenaIdx });
+          this.startMatch('online_host', arenaIdx);
+        }
+
+        _resetRound(explicitArenaIdx = null) {
+          this.phase = 'FIGHT';
+          this.bannerText = '';
+          this.koPending = false;
+          this.koWindowMs = 0;
+          this.koTimerMs = 0;
+          this._pendingAward = 0;
+          this.p1Input = { l: false, r: false };
+          this.p2Input = { l: false, r: false };
+
+          const nextIdx = explicitArenaIdx !== null ? explicitArenaIdx : this._pickArenaIndex(this.sim.arenaIndex);
+          this.sim.resetArena(nextIdx);
+          this.renderer.clearEffects();
+        }
+
+        _updateScoreUI() {
+          this.dom.scoreP1.textContent = String(this.scores[0]);
+          this.dom.scoreP2.textContent = String(this.scores[1]);
+        }
+
+        _showVictory() {
+          this.phase = 'MATCH_OVER';
+          this.sound.updateEngine(false, 0, 0);
+          this.sound.playVictory();
+          this.input.setMode('menu');
+          this.dom.victoryTitle.textContent = this.scores[0] >= WIN_SCORE ? 'RED WINS!' : 'BLUE WINS!';
+          this.dom.victoryScore.textContent = `${this.scores[0]} • ${this.scores[1]}`;
+          this.dom.victoryNote.textContent = '';
+          this.dom.btnRematch.disabled = false;
+          this.dom.btnRematch.textContent = 'PLAY AGAIN';
+          this.dom.victoryOverlay.classList.remove('hidden');
+        }
+
+        _stepAttractTick() {
+          if (this.koPending) {
+            this.sim.step({ l: false, r: false }, { l: false, r: false }, false);
+            this.koTimerMs -= FIXED_DT;
+            if (this.koTimerMs <= 0) {
+              this.koPending = false;
+              const nextIdx = this.selectedArenaIdx >= 0
+                ? this.selectedArenaIdx
+                : (this.sim.arenaIndex + 1) % ARENAS.length;
+              this.sim.resetArena(nextIdx);
+              this.renderer.clearEffects();
+            }
+          } else {
+            this.attractMapTicks++;
+            if (this.attractMapTicks > 540 && this.selectedArenaIdx < 0) {
+              this.attractMapTicks = 0;
+              this.sim.resetArena((this.sim.arenaIndex + 1) % ARENAS.length);
+              this.renderer.clearEffects();
+            }
+            this.sim.step(this.ai.decide(this.sim, true), this.ai.decide(this.sim, false), true);
+          }
+        }
+
+        _stepAuthoritativeTick() {
+          if (this.phase === 'MATCH_OVER') return;
+
+          if (this.koPending && this.koWindowMs > 0) {
+            this.koWindowMs -= FIXED_DT;
+            if (this.koWindowMs <= 0) {
+              this.phase = 'KO';
+              this.koTimerMs = KO_FREEZE_MS;
+              this.sim.engine.timing.timeScale = 0.25;
+              this.bannerText = this._pendingAward === 0 ? 'DRAW!' : 'BONK!';
+            }
+          }
+
+          if (this.phase === 'KO') {
+            this.sim.step({ l: false, r: false }, { l: false, r: false }, false);
+            this.koTimerMs -= FIXED_DT;
+            if (this.koTimerMs <= 0) {
+              if (this._pendingAward === 1) this.scores[0]++;
+              else if (this._pendingAward === 2) this.scores[1]++;
+              this._updateScoreUI();
+
+              if (this.scores[0] >= WIN_SCORE || this.scores[1] >= WIN_SCORE) {
+                if (this.mode === 'online_host') this.net.sendEvent('match_over', { scores: this.scores });
+                this._showVictory();
+                return;
+              }
+              this.roundNumber++;
+              this._resetRound();
+            }
+          } else {
+            this.p1Input = this.input.getP1();
+            if (this.mode === 'ai') this.p2Input = this.ai.decide(this.sim, false);
+            else if (this.mode === 'local') this.p2Input = this.input.getP2();
+            else if (this.mode === 'online_host') this.p2Input = this.net.remoteInput;
+
+            this.sim.step(this.p1Input, this.p2Input, true);
+          }
+
+          if (this.mode === 'online_host') {
+            this.net.sendHostSnapshot(this.sim, {
+              scores: this.scores,
+              roundNumber: this.roundNumber,
+              phase: this.phase,
+              bannerText: this.bannerText
+            });
+          }
+        }
+
+        _updateAudio() {
+          if (this.mode === 'attract' || this.phase !== 'FIGHT') {
+            this.sound.updateEngine(false, 0, 0);
+            return;
+          }
+          const t1 = (this.p1Input.l || this.p1Input.r) ? 1 : 0;
+          const t2 = (this.p2Input.l || this.p2Input.r) ? 1 : 0;
+          const throttle = this.mode === 'online_client'
+            ? ((this.input.state.p1_l || this.input.state.p1_r || this.input.state.p2_l || this.input.state.p2_r) ? 1 : 0)
+            : Math.max(t1, t2 * 0.65);
+          let spd = 0;
+          if (this.sim.p1Car) spd = Math.max(spd, Math.abs(this.sim.p1Car.wheelF.angularVelocity));
+          if (this.sim.p2Car) spd = Math.max(spd, Math.abs(this.sim.p2Car.wheelF.angularVelocity));
+          this.sound.updateEngine(true, throttle, clamp(spd / CAR_SPEC.maxWheelSpin, 0, 1));
+        }
+
+        _startMainLoop() {
+          let last = performance.now();
+          let acc = 0;
+
+          const loop = (now) => {
+            const elapsed = Math.min(100, now - last);
+            last = now;
+
+            if (this.mode === 'online_client') {
+              this.net.sendInputIfChanged(this.input.getP2());
+              this.net.applyInterpolatedFrame(this.sim);
+            } else {
+              acc += elapsed;
+              while (acc >= FIXED_DT) {
+                if (this.mode === 'attract') this._stepAttractTick();
+                else this._stepAuthoritativeTick();
+                acc -= FIXED_DT;
+              }
+            }
+
+            this.renderer.updateEffects(elapsed / FIXED_DT, this.sim);
+            this._updateAudio();
+            this.renderer.render(this.sim, this.bannerText);
+            requestAnimationFrame(loop);
+          };
+          requestAnimationFrame(loop);
+        }
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        if (typeof Matter === 'undefined') {
+          document.body.innerHTML = '<div style="padding:32px;text-align:center;"><h2>Matter.js Failed to Load</h2><p>Check your connection and refresh.</p></div>';
+          return;
+        }
+        window.__crashAheadGame = new CrashAheadGame();
+        window.__crashAheadArenas = ARENAS;
+      });
+    })();
+  </script>
+</body>
+</html>
