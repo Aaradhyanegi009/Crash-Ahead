@@ -113,22 +113,24 @@ function makeOvalCapsuleLoop(cx = 640, cy = 355, halfStraight = 265, r = 215) {
 }
 
 function makeCavernArchOpenWalls(floorFn, lipXLeft = 405, lipXRight = 875) {
+  // Fully curved side walls: overhanging upper arc flows straight into one tall
+  // quarter-pipe that meets the floor tangentially (no straight vertical sections).
   const xWallL = lipXLeft - 250;
   const xWallR = lipXRight + 250;
-  const rCurve = 112;
-  const yCurve = 102;
-  const xFloorL = xWallL + rCurve;
-  const xFloorR = xWallR - rCurve;
-  const yFloorL = floorFn(xFloorL);
-  const yFloorR = floorFn(xFloorR);
+  const yWallMid = 285;
+  const rxPipe = 165;
+  const xFloorL = xWallL + rxPipe;
+  const xFloorR = xWallR - rxPipe;
+  const ryPipeL = floorFn(xFloorL) - yWallMid;
+  const ryPipeR = floorFn(xFloorR) - yWallMid;
 
   const raw = [];
   raw.push({ x: lipXLeft, y: -18 });
-  raw.push(...sampleEllipseArc(lipXLeft, 285, 250, 215, -Math.PI * 0.52, -Math.PI, 12));
-  raw.push(...sampleEllipseArc(xFloorL, yFloorL - yCurve, rCurve, yCurve, Math.PI, Math.PI * 0.52, 10));
-  raw.push(...sampleCurveX(xFloorL, xFloorR, 28, floorFn));
-  raw.push(...sampleEllipseArc(xFloorR, yFloorR - yCurve, rCurve, yCurve, Math.PI * 0.48, 0, 10));
-  raw.push(...sampleEllipseArc(lipXRight, 285, 250, 215, 0, -Math.PI * 0.48, 12));
+  raw.push(...sampleEllipseArc(lipXLeft, yWallMid, 250, 215, -Math.PI * 0.52, -Math.PI, 12));
+  raw.push(...sampleEllipseArc(xFloorL, yWallMid, rxPipe, ryPipeL, Math.PI, Math.PI * 0.5, 16).slice(1));
+  raw.push(...sampleCurveX(xFloorL, xFloorR, 28, floorFn).slice(1, -1));
+  raw.push(...sampleEllipseArc(xFloorR, yWallMid, rxPipe, ryPipeR, Math.PI * 0.5, 0, 16));
+  raw.push(...sampleEllipseArc(lipXRight, yWallMid, 250, 215, 0, -Math.PI * 0.48, 12).slice(1));
   raw.push({ x: lipXRight, y: -18 });
   const surface = chaikinSmooth(raw, false, 2);
 
@@ -145,13 +147,26 @@ function makeCavernArchOpenWalls(floorFn, lipXLeft = 405, lipXRight = 875) {
 }
 
 function makeCanyonWallPair(floorFn, lipXLeft = 325, lipXRight = 955) {
+  // Overhanging C-shaped cliffs whose lower half is a continuous quarter-pipe
+  // landing tangentially on the canyon floor (no straight wall segments).
+  const xWallL = 135;
+  const xWallR = 1145;
+  const yWallMid = 265;
+  const rxPipe = 170;
+  const xFloorL = xWallL + rxPipe;
+  const xFloorR = xWallR - rxPipe;
+  const ryPipeL = floorFn(xFloorL) - yWallMid;
+  const ryPipeR = floorFn(xFloorR) - yWallMid;
+
   const raw = [];
   raw.push({ x: lipXLeft, y: -18 });
-  raw.push(...sampleEllipseArc(320, 265, 185, 240, -Math.PI * 0.52, -Math.PI * 1.20, 14));
-  raw.push(...sampleCurveX(185, 1095, 32, floorFn));
-  raw.push(...sampleEllipseArc(960, 265, 185, 240, 0.20, -Math.PI * 0.48, 14));
+  raw.push(...sampleEllipseArc(320, yWallMid, 185, 240, -Math.PI * 0.52, -Math.PI, 12));
+  raw.push(...sampleEllipseArc(xFloorL, yWallMid, rxPipe, ryPipeL, Math.PI, Math.PI * 0.5, 16).slice(1));
+  raw.push(...sampleCurveX(xFloorL, xFloorR, 32, floorFn).slice(1, -1));
+  raw.push(...sampleEllipseArc(xFloorR, yWallMid, rxPipe, ryPipeR, Math.PI * 0.5, 0, 16));
+  raw.push(...sampleEllipseArc(960, yWallMid, 185, 240, 0, -Math.PI * 0.48, 12).slice(1));
   raw.push({ x: lipXRight, y: -18 });
-  const surface = chaikinSmooth(raw, false, 1);
+  const surface = chaikinSmooth(raw, false, 2);
 
   const visualPoly = [
     { x: lipXLeft, y: -25 },

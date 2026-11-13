@@ -1,8 +1,28 @@
 import { PEER_PREFIX } from '../config/constants.js';
 import { BODY_KEYS } from '../physics/vehicleController.js';
+import { MqttRelayLink, RELAY_BROKERS } from './mqttRelay.js';
 
 const BC_LOBBY_CHANNEL = 'unfair-crash-ahead-lobby';
 const BC_ROOM_PREFIX = 'unfair-crash-ahead-room-';
+const RELAY_TOPIC_ROOT = 'unfair-crash-ahead/v2/';
+const PEER_SILENCE_TIMEOUT_MS = 15000;
+const JOIN_TIMEOUT_MS = 18000;
+
+// Public STUN servers (Google + Cloudflare + Twilio) for direct WebRTC hole punching.
+// When a direct path is impossible (symmetric NAT / CGNAT / mobile data / firewalls),
+// the game automatically falls back to the secure WebSocket internet relay (mqttRelay.js).
+const ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: ['stun:stun2.l.google.com:19302', 'stun:stun3.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:global.stun.twilio.com:3478' }
+];
+
+function randomHex(nBytes) {
+  const bytes = new Uint8Array(nBytes);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 export function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -49,6 +69,20 @@ export class NetworkManager {
     this.localPeerReady = false;
     this.connectedFired = false;
 
+    // Internet relay fallback (works across any two networks)
+    this.relayId = randomHex(6);
+    this.relayLinks = [];
+    this.relayLink = null;
+    this.relayPeerId = null;
+    this.relayPeerReady = false;
+    this.p2pPeerRid = null;
+    this.relayHelloTimer = null;
+    this.relayPickTimer = null;
+    this.relayCandidates = [];
+    this.relayPendingPeer = null;
+    this.lastRelaySnapAt = 0;
+    this.lastRemoteAt = 0;
+
     this.remoteInput = { seq: 0, l: false, r: false, holdMs: 0 };
     this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
     this.inputSeq = 0;
@@ -81,7 +115,18 @@ export class NetworkManager {
   }
 
   isConnected() {
-    return !!(this.localPeerReady || (this.conn && this.conn.open));
+    return !!(this.localPeerReady || (this.conn && this.conn.open) || this.relayPeerReady);
+  }
+
+  transportName() {
+    if (this.localPeerReady) return 'local';
+    if (this.conn && this.conn.open) return 'p2p';
+    if (this.relayPeerReady) return 'relay';
+    return 'none';
+  }
+
+  _relayAlive() {
+    return this.relayPeerReady || this.relayLinks.some((l) => !l.closed);
   }
 
   _sendRaw(msg) {
@@ -97,7 +142,163 @@ export class NetworkManager {
         return true;
       } catch (_) {}
     }
+    if (this.relayPeerReady && this.relayLink && !this.relayLink.closed) {
+      return this.relayLink.publish(this._relayPeerTopic(), { f: this.relayId, k: 'd', p: msg });
+    }
     return false;
+  }
+
+  // ---------- Internet relay (MQTT over WSS) ----------
+  _relayBase() {
+    return RELAY_TOPIC_ROOT + this.roomCode;
+  }
+
+  _relayPeerTopic() {
+    return this.role === 'host'
+      ? `${this._relayBase()}/c/${this.relayPeerId}`
+      : `${this._relayBase()}/h`;
+  }
+
+  _startRelay() {
+    this._stopRelay(false);
+    if (typeof WebSocket === 'undefined' || !this.roomCode) return;
+    const role = this.role;
+    const myTopic = role === 'host' ? `${this._relayBase()}/h` : `${this._relayBase()}/c/${this.relayId}`;
+    for (const url of RELAY_BROKERS) {
+      const link = new MqttRelayLink(url, `uca${this.relayId}${role === 'host' ? 'h' : 'c'}`, {
+        onReady: (l) => this._onRelayReady(l),
+        onMessage: (topic, msg, l) => this._onRelayMessage(msg, l),
+        onClose: (l) => this._onRelayClosed(l)
+      });
+      this.relayLinks.push(link);
+      link.connect([myTopic]);
+    }
+    if (role === 'client') {
+      if (this.relayHelloTimer) clearInterval(this.relayHelloTimer);
+      this.relayHelloTimer = setInterval(() => {
+        if (this.relayPeerReady) { clearInterval(this.relayHelloTimer); this.relayHelloTimer = null; return; }
+        for (const l of this.relayLinks) {
+          if (l.ready) l.publish(`${this._relayBase()}/h`, { f: this.relayId, k: 'hello' });
+        }
+      }, 900);
+    }
+  }
+
+  _stopRelay(sendBye) {
+    if (this.relayHelloTimer) { clearInterval(this.relayHelloTimer); this.relayHelloTimer = null; }
+    if (this.relayPickTimer) { clearTimeout(this.relayPickTimer); this.relayPickTimer = null; }
+    this.relayCandidates = [];
+    this.relayPendingPeer = null;
+    if (sendBye && this.relayPeerReady && this.relayLink && this.relayPeerId) {
+      try { this.relayLink.publish(this._relayPeerTopic(), { f: this.relayId, k: 'bye' }); } catch (_) {}
+    }
+    const links = this.relayLinks;
+    this.relayLinks = [];
+    for (const l of links) { l.onClose = null; l.close(); }
+    this.relayLink = null;
+    this.relayPeerId = null;
+    this.relayPeerReady = false;
+  }
+
+  _onRelayReady(link) {
+    if (this.role === 'host') {
+      if (!this.isConnected()) {
+        this.cb.onStatus(`Hosting ${this.roomCode} — waiting for player`, 'neutral', false);
+      }
+    } else if (!this.relayPeerReady) {
+      link.publish(`${this._relayBase()}/h`, { f: this.relayId, k: 'hello' });
+    }
+  }
+
+  _lockRelayLink(link) {
+    this.relayLink = link;
+    for (const l of this.relayLinks) {
+      if (l !== link) { l.onClose = null; l.close(); }
+    }
+    this.relayLinks = [link];
+  }
+
+  _onRelayMessage(msg, link) {
+    if (!msg || typeof msg !== 'object' || !msg.f || msg.f === this.relayId) return;
+
+    if (this.role === 'host') {
+      if (msg.k === 'hello') {
+        if (this.relayPeerReady) {
+          if (msg.f === this.relayPeerId && link === this.relayLink) {
+            link.publish(this._relayPeerTopic(), { f: this.relayId, k: 'welcome' });
+          } else if (msg.f !== this.relayPeerId) {
+            link.publish(`${this._relayBase()}/c/${msg.f}`, { f: this.relayId, k: 'busy' });
+          }
+          return;
+        }
+        if (this.isConnected() && msg.f !== this.p2pPeerRid) {
+          link.publish(`${this._relayBase()}/c/${msg.f}`, { f: this.relayId, k: 'busy' });
+          return;
+        }
+        // Collect hellos for a short window, then lock onto the most preferred broker
+        if (this.relayPendingPeer && this.relayPendingPeer !== msg.f) return;
+        this.relayPendingPeer = msg.f;
+        if (!this.relayCandidates.includes(link)) this.relayCandidates.push(link);
+        if (!this.relayPickTimer) {
+          this.relayPickTimer = setTimeout(() => {
+            this.relayPickTimer = null;
+            const cands = this.relayCandidates.filter((l) => !l.closed);
+            this.relayCandidates = [];
+            const peer = this.relayPendingPeer;
+            this.relayPendingPeer = null;
+            if (!cands.length || this.relayPeerReady || this.role !== 'host') return;
+            if (this.isConnected() && peer !== this.p2pPeerRid) return;
+            cands.sort((a, b) => RELAY_BROKERS.indexOf(a.url) - RELAY_BROKERS.indexOf(b.url));
+            const best = cands[0];
+            this.relayPeerId = peer;
+            this._lockRelayLink(best);
+            this.relayPeerReady = true;
+            best.publish(this._relayPeerTopic(), { f: this.relayId, k: 'welcome' });
+            this._markConnected();
+          }, 700);
+        }
+        return;
+      }
+    } else if (msg.k === 'welcome') {
+      if (this.relayPeerReady) return;
+      this.relayPeerId = msg.f;
+      this._lockRelayLink(link);
+      this.relayPeerReady = true;
+      if (this.relayHelloTimer) { clearInterval(this.relayHelloTimer); this.relayHelloTimer = null; }
+      this._markConnected();
+      return;
+    } else if (msg.k === 'busy') {
+      if (!this.isConnected()) {
+        if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
+        this._stopRelay(false);
+        this.cb.onStatus('That room already has 2 players.', 'error', true);
+      }
+      return;
+    }
+
+    if (!this.relayPeerReady || msg.f !== this.relayPeerId) return;
+    if (msg.k === 'd') {
+      this._handleMessage(msg.p);
+    } else if (msg.k === 'bye') {
+      this.relayPeerReady = false;
+      if (!this.isConnected()) {
+        this.destroy();
+        this.cb.onDisconnected('Opponent disconnected.');
+      }
+    }
+  }
+
+  _onRelayClosed(link) {
+    this.relayLinks = this.relayLinks.filter((l) => l !== link);
+    if (link === this.relayLink) {
+      const wasReady = this.relayPeerReady;
+      this.relayLink = null;
+      this.relayPeerReady = false;
+      if (wasReady && !this.isConnected()) {
+        this.destroy();
+        this.cb.onDisconnected('Internet relay connection lost.');
+      }
+    }
   }
 
   resetPredictionState() {
@@ -131,12 +332,14 @@ export class NetworkManager {
     if (this.reliableTimer) { clearInterval(this.reliableTimer); this.reliableTimer = null; }
     if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
     this._closeLocalRoom();
+    this._stopRelay(true);
     const oldConn = this.conn;
     this.conn = null;
     if (oldConn) { try { oldConn.close(); } catch (_) {} }
     if (this.peer) { try { this.peer.destroy(); } catch (_) {} this.peer = null; }
     this.role = null;
     this.connectedFired = false;
+    this.p2pPeerRid = null;
     this.pendingReliable.clear();
     this.seenEids.clear();
     this.resetPredictionState();
@@ -185,7 +388,10 @@ export class NetworkManager {
     if (this.lobbyTimer) { clearInterval(this.lobbyTimer); this.lobbyTimer = null; }
     if (this.connectedFired) return;
     this.connectedFired = true;
-    this.cb.onStatus('Connected!', 'connected', false);
+    this.lastRemoteAt = performance.now();
+    const via = this.transportName();
+    const label = via === 'relay' ? ' (internet relay)' : via === 'p2p' ? ' (direct P2P)' : '';
+    this.cb.onStatus(`Connected!${label}`, 'connected', false);
     this.cb.onConnected(this.role);
     this._startTimers();
   }
@@ -198,29 +404,16 @@ export class NetworkManager {
     this.roomCode = prevCode;
     this._openLocalChannel(prevCode, prevRole);
 
+    // Internet relay runs in parallel with WebRTC: whichever connects first wins,
+    // and a later direct P2P DataChannel automatically takes over sending.
+    this._startRelay();
+
     const PeerCtor = window.Peer;
-    if (typeof PeerCtor === 'undefined') {
-      if (!this.localPeerReady) {
-        this.cb.onStatus('PeerJS CDN failed to load.', 'error', true);
-      }
-      return;
-    }
+    if (typeof PeerCtor === 'undefined') return; // relay-only mode
 
     const opts = {
       debug: 0,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-          { urls: 'stun:openrelay.metered.ca:80' },
-          { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-        ]
-      }
+      config: { iceServers: ICE_SERVERS }
     };
     this.peer = peerId ? new PeerCtor(peerId, opts) : new PeerCtor(opts);
     this.peer.on('open', (id) => onReady(id));
@@ -235,6 +428,8 @@ export class NetworkManager {
         this.hostRoom();
         return;
       }
+      // Direct P2P unavailable (signaling blocked / host unreachable): keep waiting on the relay
+      if (this._relayAlive()) return;
       if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
       const msg = (err && err.type === 'peer-unavailable')
         ? 'Room not found or Host disconnected.'
@@ -283,30 +478,38 @@ export class NetworkManager {
     this._initPeer(null, () => {
       this.role = 'client';
       if (this.localPeerReady) return;
-      const conn = this.peer.connect(PEER_PREFIX + normalized, { serialization: 'json', reliable: true });
+      const conn = this.peer.connect(PEER_PREFIX + normalized, { serialization: 'json', reliable: true, metadata: { rid: this.relayId } });
       this._attachConnection(conn);
-      if (this.dialTimer) clearTimeout(this.dialTimer);
-      this.dialTimer = setTimeout(() => {
-        if (!this.isConnected()) {
-          this.cb.onStatus('Connection timed out. Tap Retry or check code.', 'error', true);
-        }
-      }, 12000);
     });
+    if (this.dialTimer) clearTimeout(this.dialTimer);
+    this.dialTimer = setTimeout(() => {
+      this.dialTimer = null;
+      if (!this.isConnected()) {
+        this._stopRelay(false);
+        if (this.peer) { try { this.peer.destroy(); } catch (_) {} this.peer = null; }
+        this.cb.onStatus('Room not found. Check the code and make sure the host is waiting.', 'error', true);
+      }
+    }, JOIN_TIMEOUT_MS);
   }
 
   _attachConnection(conn) {
     this.conn = conn;
+    if (this.role === 'host' && conn.metadata && conn.metadata.rid) this.p2pPeerRid = conn.metadata.rid;
     conn.on('open', () => {
       if (this.conn !== conn) return;
       if (this.localPeerReady) {
         try { conn.close(); } catch (_) {}
         return;
       }
+      if (this.connectedFired && this.relayPeerReady) {
+        this.cb.onStatus('Connected! (upgraded to direct P2P)', 'connected', false);
+      }
       this._markConnected();
     });
     conn.on('iceStateChanged', (state) => {
       if (this.conn !== conn) return;
       if (state === 'failed' && !this.isConnected()) {
+        if (this._relayAlive()) return; // relay fallback will carry the match
         if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
         this.cb.onStatus('WebRTC connection failed. Tap Retry.', 'error', true);
       }
@@ -317,11 +520,13 @@ export class NetworkManager {
     });
     conn.on('close', () => {
       if (this.conn !== conn || this.localPeerReady) return;
+      if (this.relayPeerReady) { this.conn = null; return; } // keep playing over relay
       this.destroy();
       this.cb.onDisconnected('Opponent disconnected.');
     });
     conn.on('error', () => {
       if (this.conn !== conn || this.localPeerReady) return;
+      if (this.relayPeerReady) { this.conn = null; return; }
       this.destroy();
       this.cb.onDisconnected('Peer connection lost.');
     });
@@ -330,7 +535,13 @@ export class NetworkManager {
   _startTimers() {
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = setInterval(() => {
-      if (this.isConnected()) this._sendRaw({ t: 'ping', ts: performance.now() });
+      if (!this.isConnected()) return;
+      if (!this.localPeerReady && performance.now() - this.lastRemoteAt > PEER_SILENCE_TIMEOUT_MS) {
+        this.destroy();
+        this.cb.onDisconnected('Opponent connection lost.');
+        return;
+      }
+      this._sendRaw({ t: 'ping', ts: performance.now() });
     }, 1500);
 
     if (this.reliableTimer) clearInterval(this.reliableTimer);
@@ -361,6 +572,7 @@ export class NetworkManager {
 
   _handleMessage(msg) {
     if (!msg || typeof msg !== 'object') return;
+    this.lastRemoteAt = performance.now();
     if (typeof msg._eid === 'number') {
       if (this.isConnected()) this._sendRaw({ t: 'ack', eid: msg._eid });
       if (this.seenEids.has(msg._eid)) return;
@@ -424,7 +636,9 @@ export class NetworkManager {
     if (this.isConnected()) {
       this.inputSendTick++;
       const changed = l !== this.lastInputSent.l || r !== this.lastInputSent.r;
-      if (changed || l || r || this.inputSendTick % 4 === 0) {
+      const relayOnly = this.transportName() === 'relay';
+      const heldSend = (l || r) && (!relayOnly || this.inputSendTick % 2 === 0);
+      if (changed || heldSend || this.inputSendTick % 4 === 0) {
         this.lastInputSent = { l, r };
         this._sendRaw({ t: 'input', seq, l, r, holdMs });
       }
@@ -492,9 +706,16 @@ export class NetworkManager {
 
   sendHostSnapshot(sim, meta) {
     if (!this.isConnected()) return;
-    if (!this.localPeerReady && this.conn) {
+    const via = this.transportName();
+    if (via === 'p2p') {
       const dc = this.conn.dataChannel || this.conn._dc;
       if (dc && dc.bufferedAmount > 32768) return;
+    } else if (via === 'relay') {
+      // ~20Hz over the internet relay to stay well within public broker limits
+      const now = performance.now();
+      if (now - this.lastRelaySnapAt < 45) return;
+      if (this.relayLink && this.relayLink.bufferedAmount() > 65536) return;
+      this.lastRelaySnapAt = now;
     }
     this._sendRaw(this.buildHostSnapshot(sim, meta));
   }
