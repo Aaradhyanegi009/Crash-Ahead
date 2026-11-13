@@ -93,10 +93,11 @@ export class VehiclePhysicsController {
     return false;
   }
 
-  detectGroundState(car, wheelContacts, driveBodies) {
+  detectGroundState(car, wheelContacts, driveBodies, elapsedMs = 0) {
     const angle = car.chassis.angle;
     const carDown = { x: -Math.sin(angle), y: Math.cos(angle) };
     const carUp = { x: Math.sin(angle), y: -Math.cos(angle) };
+    const jumpDetaching = (car.justJumpedUntilMs ?? -99999) > elapsedMs;
 
     const checkWheel = (wheel, wheelRadius, contact) => {
       if (contact && contact.count > 0) {
@@ -105,13 +106,17 @@ export class VehiclePhysicsController {
           const nx = contact.nx / len;
           const ny = contact.ny / len;
           const upDot = nx * carUp.x + ny * carUp.y;
+          const velAway = wheel.velocity.x * nx + wheel.velocity.y * ny;
+          if (jumpDetaching && velAway > 2.0) {
+            return { grounded: false, nx: 0, ny: 0, upDot: 0, isBackside: false };
+          }
           if (upDot > 0.24) {
             return { grounded: true, nx, ny, upDot, isBackside: Boolean(contact.isBackside && !contact.hasFront) };
           }
         }
       }
       const velUp = wheel.velocity.x * carUp.x + wheel.velocity.y * carUp.y;
-      if (car.isAirborne && velUp > 1.4) {
+      if ((car.isAirborne || jumpDetaching) && velUp > 1.4) {
         return { grounded: false, nx: 0, ny: 0, upDot: 0, isBackside: false };
       }
       const rayNormal = this._probeWheelRay(wheel, wheelRadius, carDown, driveBodies, car.groundNormal, !car.isAirborne);
@@ -170,6 +175,8 @@ export class VehiclePhysicsController {
       const angDelta = normalizeAngle(car.groundAngle - (car.lastGroundAngle ?? car.groundAngle));
       car.curveRate = lerp(car.curveRate || 0, Math.abs(angDelta), 0.35);
       car.lastGroundAngle = car.groundAngle;
+      car.lastGroundNormal = { x: targetNx, y: targetNy };
+      car.lastGroundedAtMs = elapsedMs;
       car.airTicks = 0;
     } else {
       car.airTicks += 1;
@@ -297,7 +304,7 @@ export class VehiclePhysicsController {
     }
   }
 
-  updateVehicle(car, inputCmd, wheelContacts, driveBodies) {
+  updateVehicle(car, inputCmd, wheelContacts, driveBodies, elapsedMs = 0) {
     if (!car || car.dead) {
       if (car) {
         car.driving = false;
@@ -309,7 +316,8 @@ export class VehiclePhysicsController {
 
     const inputL = !!(inputCmd && inputCmd.l);
     const inputR = !!(inputCmd && inputCmd.r);
-    const ground = this.detectGroundState(car, wheelContacts, driveBodies);
+    const ground = this.detectGroundState(car, wheelContacts, driveBodies, elapsedMs);
+    const jumpDetaching = (car.justJumpedUntilMs ?? -99999) > elapsedMs;
     const worldDir = (inputR ? 1 : 0) - (inputL ? 1 : 0);
     car.driving = worldDir !== 0;
 
@@ -515,7 +523,7 @@ export class VehiclePhysicsController {
       (car.curveRate || 0) > 0.007 ||
       Math.abs(ground.normal.x) > 0.12
     );
-    if (!onOpenWingTip && onCurvedTrack && vAlong > 0.45) {
+    if (!jumpDetaching && !onOpenWingTip && onCurvedTrack && vAlong > 0.45) {
       const speedNorm = clamp(Math.abs(vAlong) / maxSpeed, 0.25, 1.0);
       const slopeGrip = clamp((ground.normal.y + 1.0) * 1.65, 0, 1.45);
       const curveGrip = clamp((car.curveRate || 0) * 24, 0, 0.72);
@@ -533,6 +541,18 @@ export class VehiclePhysicsController {
         const liftedWheel = ground.rearGrounded ? car.wheelF : car.wheelR;
         this.Body.applyForce(liftedWheel, liftedWheel.position, { x: sx * 0.40, y: sy * 0.40 });
       }
+    }
+
+    // Subtle magnetic suction along -N_surface on overhanging cave walls & ceilings (N_surface.y > 0) while holding Drive
+    if (!jumpDetaching && !ground.isBackside && ground.normal.y > 0.02 && car.driving) {
+      const overhangBlend = clamp(ground.normal.y / 0.35, 0.30, 1.0);
+      const massAdhesionScale = clamp(totalMass / 15.3403, 0.48, 1.35);
+      const suctionPerBody = VEHICLE_PHYSICS.CEILING_SUCTION_FORCE * overhangBlend * massAdhesionScale;
+      const sxC = -ground.normal.x * suctionPerBody;
+      const syC = -ground.normal.y * suctionPerBody;
+      this.Body.applyForce(car.chassis, car.chassis.position, { x: sxC * 1.4, y: syC * 1.4 });
+      this.Body.applyForce(car.wheelR, car.wheelR.position, { x: sxC * 0.85, y: syC * 0.85 });
+      this.Body.applyForce(car.wheelF, car.wheelF.position, { x: sxC * 0.85, y: syC * 0.85 });
     }
 
     if (isReverse) {

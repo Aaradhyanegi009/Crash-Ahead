@@ -173,12 +173,42 @@ export class SoundFX {
   playJump() {
     if (this.muted || !this.ctx) return;
     const t = this.ctx.currentTime;
+
+    // Snappy pneumatic air-valve puff
+    const airDur = 0.065;
+    const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * airDur), this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let lfsr = 0x51A7B3D9;
+    for (let i = 0; i < data.length; i++) {
+      lfsr ^= lfsr << 13;
+      lfsr ^= lfsr >>> 17;
+      lfsr ^= lfsr << 5;
+      const norm = ((lfsr >>> 0) / 4294967295) * 2 - 1;
+      data[i] = norm * Math.exp(-i / (data.length * 0.35));
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buf;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(1100, t);
+    bp.frequency.exponentialRampToValueAtTime(2600, t + airDur);
+    bp.Q.value = 1.6;
+    const nGain = this.ctx.createGain();
+    nGain.gain.setValueAtTime(0.11, t);
+    nGain.gain.exponentialRampToValueAtTime(0.001, t + airDur);
+    noise.connect(bp);
+    bp.connect(nGain);
+    nGain.connect(this.ctx.destination);
+    noise.start(t);
+
+    // Pneumatic piston spring hop chirp
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = 'triangle';
-    osc.frequency.setValueAtTime(190, t);
-    osc.frequency.exponentialRampToValueAtTime(510, t + 0.14);
-    gain.gain.setValueAtTime(0.16, t);
+    osc.frequency.setValueAtTime(165, t);
+    osc.frequency.exponentialRampToValueAtTime(590, t + 0.085);
+    osc.frequency.exponentialRampToValueAtTime(420, t + 0.145);
+    gain.gain.setValueAtTime(0.18, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
     osc.connect(gain);
     gain.connect(this.ctx.destination);

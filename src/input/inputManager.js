@@ -5,6 +5,11 @@ export class InputManager {
     this.pressTimes = { p1_l: 0, p1_r: 0, p1_jump: 0, p2_l: 0, p2_r: 0, p2_jump: 0 };
     this.heldCodes = new Map();
     this.activePointers = new Map();
+    this.chordWindowMs = 65;
+    this.chordState = {
+      p1: { wasBoth: false, pulseUntil: 0 },
+      p2: { wasBoth: false, pulseUntil: 0 }
+    };
     this.singleLayout = localStorage.getItem('crashahead_1p_layout') || 'split';
     this.mode = 'menu';
 
@@ -71,12 +76,27 @@ export class InputManager {
 
     Object.assign(this.state, next);
     Object.assign(this.pressTimes, earliest);
+
+    const now = performance.now();
+    const updateChord = (slot, lHeld, rHeld) => {
+      const cs = this.chordState[slot];
+      const bothHeld = lHeld && rHeld;
+      if (bothHeld && !cs.wasBoth) {
+        cs.pulseUntil = now + this.chordWindowMs;
+      }
+      cs.wasBoth = bothHeld;
+    };
+    updateChord('p1', next.p1_l, next.p1_r);
+    updateChord('p2', next.p2_l, next.p2_r);
+
     this._syncVisuals();
   }
 
   _clearAllInputs() {
     this.heldCodes.clear();
     this.activePointers.clear();
+    this.chordState.p1 = { wasBoth: false, pulseUntil: 0 };
+    this.chordState.p2 = { wasBoth: false, pulseUntil: 0 };
     this._recomputeState();
   }
 
@@ -265,17 +285,19 @@ export class InputManager {
     if (this.mode === 'ai' || this.mode === 'online_host') {
       const l = this.state.p1_l || this.state.p2_l;
       const r = this.state.p1_r || this.state.p2_r;
-      const jump = this.state.p1_jump || this.state.p2_jump;
+      const chordJump = now <= this.chordState.p1.pulseUntil || now <= this.chordState.p2.pulseUntil;
+      const jump = this.state.p1_jump || this.state.p2_jump || chordJump;
       const lHoldMs = Math.max(this._getHoldMsFor('p1_l', now), this._getHoldMsFor('p2_l', now));
       const rHoldMs = Math.max(this._getHoldMsFor('p1_r', now), this._getHoldMsFor('p2_r', now));
-      return { l, r, jump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
+      return { l, r, jump, chordJump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
     }
     const l = this.state.p1_l;
     const r = this.state.p1_r;
-    const jump = this.state.p1_jump;
+    const chordJump = now <= this.chordState.p1.pulseUntil;
+    const jump = this.state.p1_jump || chordJump;
     const lHoldMs = this._getHoldMsFor('p1_l', now);
     const rHoldMs = this._getHoldMsFor('p1_r', now);
-    return { l, r, jump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
+    return { l, r, jump, chordJump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
   }
 
   getP2() {
@@ -283,16 +305,18 @@ export class InputManager {
     if (this.mode === 'online_client') {
       const l = this.state.p1_l || this.state.p2_l;
       const r = this.state.p1_r || this.state.p2_r;
-      const jump = this.state.p1_jump || this.state.p2_jump;
+      const chordJump = now <= this.chordState.p1.pulseUntil || now <= this.chordState.p2.pulseUntil;
+      const jump = this.state.p1_jump || this.state.p2_jump || chordJump;
       const lHoldMs = Math.max(this._getHoldMsFor('p1_l', now), this._getHoldMsFor('p2_l', now));
       const rHoldMs = Math.max(this._getHoldMsFor('p1_r', now), this._getHoldMsFor('p2_r', now));
-      return { l, r, jump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
+      return { l, r, jump, chordJump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
     }
     const l = this.state.p2_l;
     const r = this.state.p2_r;
-    const jump = this.state.p2_jump;
+    const chordJump = now <= this.chordState.p2.pulseUntil;
+    const jump = this.state.p2_jump || chordJump;
     const lHoldMs = this._getHoldMsFor('p2_l', now);
     const rHoldMs = this._getHoldMsFor('p2_r', now);
-    return { l, r, jump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
+    return { l, r, jump, chordJump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
   }
 }

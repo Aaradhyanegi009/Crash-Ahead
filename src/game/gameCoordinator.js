@@ -142,10 +142,20 @@ export class CrashAheadGame {
     };
     this.sim.onJump = (idx, pt) => {
       if (this.mode === 'online_client' && idx !== 2) return;
-      this.renderer.spawnJumpBurst(pt.x, pt.y);
+      this.renderer.spawnJumpBurst(pt);
       if (this.mode !== 'attract') this.sound.playJump();
       if (this.mode === 'online_host') {
-        this.net.sendEvent('jump', { p: idx, x: Math.round(pt.x), y: Math.round(pt.y) });
+        this.net.sendEvent('jump', {
+          p: idx,
+          x: Math.round(pt.x),
+          y: Math.round(pt.y),
+          jx: Math.round((pt.jx ?? 0) * 100) / 100,
+          jy: Math.round((pt.jy ?? -1) * 100) / 100,
+          wrx: Math.round(pt.wrx ?? pt.x),
+          wry: Math.round(pt.wry ?? pt.y),
+          wfx: Math.round(pt.wfx ?? pt.x),
+          wfy: Math.round(pt.wfy ?? pt.y)
+        });
       }
     };
     this.sim.onRagdollSplash = (x, crestY) => {
@@ -253,7 +263,8 @@ export class CrashAheadGame {
           Haptics.ko();
         } else if (msg.kind === 'jump') {
           if (msg.p === 1) {
-            this.renderer.spawnJumpBurst(msg.x, msg.y);
+            if (this.sim.p1Car) this.sim.p1Car.jumpSquashAtMs = this.sim.roundElapsedMs;
+            this.renderer.spawnJumpBurst(msg);
             this.sound.playJump();
           }
         } else if (msg.kind === 'match_over') {

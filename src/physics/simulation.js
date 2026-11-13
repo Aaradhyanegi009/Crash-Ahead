@@ -830,6 +830,11 @@ export class PhysicsSimulation {
       curveRate: 0,
       lastGroundAngle: 0,
       groundNormal: { x: 0, y: -1 },
+      lastGroundNormal: { x: 0, y: -1 },
+      lastGroundedAtMs: -99999,
+      justJumpedUntilMs: -99999,
+      jumpSquashAtMs: -99999,
+      lastJumpDir: { x: 0, y: -1 },
       driving: false,
       speedScale: 1.0,
       accelScale: 1.0,
@@ -858,50 +863,103 @@ export class PhysicsSimulation {
     return Math.max(0, cooldownMs - elapsedSince);
   }
 
-  triggerJump(car, chaseDir = 0) {
+  triggerRelativeJump(car, chaseDir = 0) {
     if (!car || car.dead || car.jumpDisabled) return false;
     const cooldownMs = car.jumpCooldownMs || JUMP_COOLDOWN_MS;
     if (this.roundElapsedMs - car.lastJumpAtMs < cooldownMs) return false;
-    if (car.isAirborne && car.airTicks > 8) return false;
 
-    const gn = car.groundNormal || { x: 0, y: -1 };
-    const steepWall = Math.abs(gn.x) > 0.50 && gn.y < 0.30;
-    const dxBoost = steepWall
-      ? (gn.x * 4.2 + chaseDir * 0.5)
-      : (chaseDir * VEHICLE_PHYSICS.JUMP_FWD_BOOST);
-    const maxVx = Math.max(10.8, VEHICLE_PHYSICS.MAX_FORWARD_SPEED * (car.speedScale || 1.0) + VEHICLE_PHYSICS.JUMP_FWD_BOOST + 0.5);
+    const lastG = typeof car.lastGroundedAtMs === 'number' ? car.lastGroundedAtMs : -99999;
+    const coyoteElapsed = this.roundElapsedMs - lastG;
+    const withinCoyote = coyoteElapsed >= 0 && coyoteElapsed <= VEHICLE_PHYSICS.JUMP_COYOTE_MS;
+    if (car.isAirborne && !withinCoyote) return false;
+
+    // Car-local "Roof" direction away from wheels: V_roof = (sin(theta), -cos(theta))
+    const theta = car.chassis.angle;
+    const rx = Math.sin(theta);
+    const ry = -Math.cos(theta);
+
+    // Strictly follow V_roof when mid-air without fresh contact OR when wheels face up (inverted / ceiling)
+    const wheelsFacingUp = ry > 0.25;
+    const surfN = car.lastGroundNormal;
+    const hasSurfaceNormal =
+      !wheelsFacingUp &&
+      (withinCoyote || !car.isAirborne) &&
+      surfN &&
+      Number.isFinite(surfN.x) &&
+      Number.isFinite(surfN.y) &&
+      (rx * surfN.x + ry * surfN.y) > 0.1;
+
+    let jx = rx;
+    let jy = ry;
+    if (hasSurfaceNormal) {
+      const bx = VEHICLE_PHYSICS.JUMP_ROOF_WEIGHT * rx + VEHICLE_PHYSICS.JUMP_NORMAL_WEIGHT * surfN.x;
+      const by = VEHICLE_PHYSICS.JUMP_ROOF_WEIGHT * ry + VEHICLE_PHYSICS.JUMP_NORMAL_WEIGHT * surfN.y;
+      const bLen = Math.hypot(bx, by);
+      if (bLen > 0.001) {
+        jx = bx / bLen;
+        jy = by / bLen;
+      }
+    }
+
+    // Preserve driving momentum perpendicular to J while replacing normal velocity with jumpSpeed * J
+    const tx = -jy;
+    const ty = jx;
+    const spdScale = car.speedScale || 1.0;
+    const jumpSpeed = VEHICLE_PHYSICS.JUMP_SPEED * (0.96 + 0.04 * spdScale);
+    const baseVx = car.chassis.velocity.x;
+    const baseVy = car.chassis.velocity.y;
+    let vTan = baseVx * tx + baseVy * ty;
+
+    if (chaseDir !== 0 && !wheelsFacingUp && Math.abs(vTan) < 5.5) {
+      vTan += chaseDir * tx * 0.9;
+    }
+    const maxTan = Math.max(VEHICLE_PHYSICS.MAX_FORWARD_SPEED * spdScale + 1.2, Math.abs(vTan));
+    vTan = clamp(vTan, -maxTan, maxTan);
+
+    const launchVx = vTan * tx + jumpSpeed * jx;
+    const launchVy = vTan * ty + jumpSpeed * jy;
+
+    // Apply synchronously to entire composite so suspension springs and driver neck do not snap on takeoff
     const bodies = [car.chassis, car.wheelR, car.wheelF, car.head];
     for (const b of bodies) {
-      const targetVy = clamp(
-        b.velocity.y - VEHICLE_PHYSICS.JUMP_IMPULSE_VY,
-        -VEHICLE_PHYSICS.JUMP_MAX_VY,
-        -VEHICLE_PHYSICS.JUMP_MIN_VY
-      );
-      this.Body.setVelocity(b, {
-        x: clamp(b.velocity.x + dxBoost, -maxVx, maxVx),
-        y: targetVy
-      });
+      if (!b) continue;
+      this.Body.setVelocity(b, { x: launchVx, y: launchVy });
     }
+
     car.lastJumpAtMs = this.roundElapsedMs;
+    car.lastGroundedAtMs = -99999;
+    car.justJumpedUntilMs = this.roundElapsedMs + VEHICLE_PHYSICS.JUMP_DETACH_MS;
+    car.jumpSquashAtMs = this.roundElapsedMs;
+    car.lastJumpDir = { x: jx, y: jy };
     car.isAirborne = true;
-    car.airTicks = Math.max(car.airTicks, 2);
+    car.airTicks = Math.max(car.airTicks, 1);
+
     if (car.driverState) {
       car.driverState.armLVel -= 0.35;
       car.driverState.armRVel -= 0.40;
       car.driverState.leanVel -= car.facing * 0.22;
     }
     if (this.onJump) {
-      const wy = car.spec ? car.spec.wheelOffsetY : CAR_SPEC.wheelOffsetY;
       this.onJump(car.playerIndex, {
         x: car.chassis.position.x,
-        y: car.chassis.position.y + wy + 6
+        y: car.chassis.position.y,
+        jx,
+        jy,
+        wrx: car.wheelR ? car.wheelR.position.x : car.chassis.position.x,
+        wry: car.wheelR ? car.wheelR.position.y : car.chassis.position.y,
+        wfx: car.wheelF ? car.wheelF.position.x : car.chassis.position.x,
+        wfy: car.wheelF ? car.wheelF.position.y : car.chassis.position.y
       });
     }
     return true;
   }
 
+  triggerJump(car, chaseDir = 0) {
+    return this.triggerRelativeJump(car, chaseDir);
+  }
+
   triggerBotJump(car, chaseDir = 0) {
-    return this.triggerJump(car, chaseDir);
+    return this.triggerRelativeJump(car, chaseDir);
   }
 
   _forEachRenderBody(fn) {
@@ -1025,12 +1083,14 @@ export class PhysicsSimulation {
       if (typeof snap.hm1 === 'number') this.p1Car.accelHoldMs = snap.hm1;
       if (typeof snap.ad1 === 'number') this.p1Car.accelDir = snap.ad1;
       if (typeof snap.lj1 === 'number') this.p1Car.lastJumpAtMs = snap.lj1;
+      if (typeof snap.lg1 === 'number') this.p1Car.lastGroundedAtMs = snap.lg1;
     }
     if (this.p2Car) {
       this.p2Car.driving = !!snap.dr2;
       if (typeof snap.hm2 === 'number') this.p2Car.accelHoldMs = snap.hm2;
       if (typeof snap.ad2 === 'number') this.p2Car.accelDir = snap.ad2;
       if (typeof snap.lj2 === 'number') this.p2Car.lastJumpAtMs = snap.lj2;
+      if (typeof snap.lg2 === 'number') this.p2Car.lastGroundedAtMs = snap.lg2;
     }
     if (typeof snap.rt === 'number') this.roundElapsedMs = snap.rt;
     if (typeof snap.wy === 'number') {
@@ -1232,7 +1292,6 @@ export class PhysicsSimulation {
   }
 
   _updateRisingWater() {
-    this.roundElapsedMs += FIXED_DT;
     if (this.roundElapsedMs >= WATER_RISE.DELAY_MS) {
       this.waterRising = true;
       const stepPx = (WATER_RISE.SPEED_PX_PER_SEC * FIXED_DT) / 1000;
@@ -1283,20 +1342,23 @@ export class PhysicsSimulation {
     const activeP1 = canControl ? (p1Input || empty) : empty;
     const activeP2 = canControl ? (p2Input || empty) : empty;
 
-    if (canControl && updateWater) {
-      this._updateRisingWater();
+    if (canControl) {
+      this.roundElapsedMs += FIXED_DT;
+      if (updateWater) {
+        this._updateRisingWater();
+      }
     }
 
-    const g1 = this.vehicleController.updateVehicle(this.p1Car, activeP1, this.wheelContacts.p1, this.driveSurfaces);
-    const g2 = this.vehicleController.updateVehicle(this.p2Car, activeP2, this.wheelContacts.p2, this.driveSurfaces);
+    const g1 = this.vehicleController.updateVehicle(this.p1Car, activeP1, this.wheelContacts.p1, this.driveSurfaces, this.roundElapsedMs);
+    const g2 = this.vehicleController.updateVehicle(this.p2Car, activeP2, this.wheelContacts.p2, this.driveSurfaces, this.roundElapsedMs);
 
     if (canControl && activeP1.jump && this.p1Car && !this.p1Car.dead && !this.p1Car.jumpDisabled) {
-      const chaseDir1 = activeP1.r ? 1 : (activeP1.l ? -1 : 0);
-      this.triggerJump(this.p1Car, chaseDir1);
+      const chaseDir1 = (activeP1.r ? 1 : 0) - (activeP1.l ? 1 : 0);
+      this.triggerRelativeJump(this.p1Car, chaseDir1);
     }
     if (canControl && activeP2.jump && this.p2Car && !this.p2Car.dead && !this.p2Car.jumpDisabled) {
-      const chaseDir2 = activeP2.r ? 1 : (activeP2.l ? -1 : 0);
-      this.triggerJump(this.p2Car, chaseDir2);
+      const chaseDir2 = (activeP2.r ? 1 : 0) - (activeP2.l ? 1 : 0);
+      this.triggerRelativeJump(this.p2Car, chaseDir2);
     }
 
     this.grounded.p1R = g1.rearGrounded;

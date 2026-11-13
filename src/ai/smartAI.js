@@ -264,8 +264,16 @@ export class SmartAI {
     // Tactical winning jump evaluation (purposeful head-dunk, vault dodge, bridge leap, or self-save)
     // Never jumps upward underneath overhead blocks (e.g. Map 8 center deck), arches, seesaws, or low cave ceilings!
     const isDeath = profile.aggression >= 4.8;
+    const isInverted = Math.cos(angle) < -0.3;
     const evaluateJump = () => {
-      if (!canJump || blockedOverhead) return false;
+      if (!canJump) return false;
+      const leadCeiling = isDeath ? 8 : 7;
+      const ceilingAlignDx = Math.abs((ox + ovx * leadCeiling) - (mx + mvx * leadCeiling));
+      // Inverted relative downward slam from cave ceiling onto opponent below
+      if (isInverted && gx && oy > my + 22 && ceilingAlignDx < (isDeath ? 132 : 112)) {
+        return true;
+      }
+      if (blockedOverhead) return false;
       const dxAbs = Math.abs(ox - mx);
       const closingToMe = ovx * (mx > ox ? 1 : -1);
       const uprightLimit = isDeath ? 0.56 : 0.44;
@@ -287,7 +295,7 @@ export class SmartAI {
       if (gx && Math.abs(angle) > 1.15) return true;
       if (gx && my > sim.waterCrestY - 76) return true;
 
-      // 2) Intentional seesaw-bridge gap leap (Maps 9 & 10)
+      // 2) Intentional seesaw-bridge / rotating mill gap leap (Maps 9, 10, 14) & wall vault
       if (arena.seesaws && arena.seesaws.some((s) => s.isBridge)) {
         for (const br of arena.seesaws) {
           if (!br.isBridge) continue;
@@ -297,6 +305,12 @@ export class SmartAI {
             return true;
           }
         }
+      }
+      if (arena.id === 14 && gx && dxAbs > 85 && Math.abs(640 - mx) > 105 && Math.abs(640 - mx) < 185 && (ox - mx) * mvx > 2.2) {
+        return true;
+      }
+      if (gx && !isInverted && Math.abs(angle) > 0.68 && (ox - mx) * Math.sin(angle) > 45 && oy >= my - 45 && dxAbs < 280) {
+        return true;
       }
 
       if (!gx || !safeAttack) return false;
@@ -461,8 +475,9 @@ export class SmartAI {
 
     if (profile.smartPathing && canClimbHigh) {
       if (this.commitTicks > 0 && this.commitMode === 'climb') {
+        const hasCaveCeiling = !!(arena.caves && arena.caves.length > 0);
         const reachedTopTarget = my <= oy + 26 && Math.abs(mx - ox) < 275 && (ox - mx) * mvx >= -0.3;
-        const maxClimbAng = arena.id === 13 ? 1.12 : (oppElevated ? 1.92 : 1.18);
+        const maxClimbAng = arena.id === 13 ? 1.12 : (hasCaveCeiling && gx ? 3.2 : (oppElevated ? 1.92 : 1.18));
         const rimAbort = arena.id === 13 && (mx < 285 || mx > 995);
         const tooSteepOrAir = Math.abs(angle) > maxClimbAng || (!gx && my < 320 && Math.abs(angle) > 1.15) || rimAbort;
         const oppDroppedToFloor = oy > 465 && my > 440 && this.pattern !== 'highground';
@@ -532,6 +547,16 @@ export class SmartAI {
         return emit(pd > 0 ? this._moveRight() : this._moveLeft());
       }
       return emit({ l: false, r: false, jump: false });
+    }
+
+    // Inverted on enclosed cave ceiling while wheels grip rock: stalk toward opponent & slam DOWN!
+    const onCaveCeiling = gx && isInverted && arena.caves && arena.caves.length > 0 && me.groundNormal && me.groundNormal.y > 0.15;
+    if (onCaveCeiling && oy > my - 20) {
+      const slamJump = evaluateJump();
+      const ceilTx = -me.groundNormal.y;
+      const wantWorldDir = ox >= mx ? 1 : -1;
+      const driveCmdDir = wantWorldDir * (ceilTx >= 0 ? 1 : -1);
+      return emit(driveCmdDir < 0 ? this._moveLeft(slamJump) : this._moveRight(slamJump));
     }
 
     // Inverted/turtled recovery on ground

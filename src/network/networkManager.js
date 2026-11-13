@@ -56,6 +56,7 @@ function encodeWireMsg(msg) {
       if (b) arr.push(b[0], b[1], b[2], b[3], b[4], b[5]);
       else arr.push(0, 0, 0, 0, 0, 0);
     }
+    arr.push(msg.lg1 ?? -99999, msg.lg2 ?? -99999);
     return arr;
   }
   if (msg.t === 'ping') {
@@ -103,6 +104,10 @@ function decodeWireMsg(raw) {
       snap[BODY_KEYS[i][2]] = [
         raw[idx++], raw[idx++], raw[idx++], raw[idx++], raw[idx++], raw[idx++]
       ];
+    }
+    if (raw.length >= idx + 2) {
+      snap.lg1 = raw[idx++];
+      snap.lg2 = raw[idx++];
     }
     return snap;
   }
@@ -1357,6 +1362,8 @@ export class NetworkManager {
       ad2: sim.p2Car.accelDir || 0,
       lj1: Math.round(sim.p1Car.lastJumpAtMs || -99999),
       lj2: Math.round(sim.p2Car.lastJumpAtMs || -99999),
+      lg1: Math.round(sim.p1Car.lastGroundedAtMs ?? -99999),
+      lg2: Math.round(sim.p2Car.lastGroundedAtMs ?? -99999),
       sw: sim.seesaws.map((s) => [
         Math.round(s.body.angle * 1000) / 1000,
         Math.round(s.body.angularVelocity * 1000) / 1000

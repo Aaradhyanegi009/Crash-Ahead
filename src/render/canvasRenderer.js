@@ -108,17 +108,30 @@ export class CanvasRenderer {
     this.popStar = { x, y, color, life: 1.0 };
   }
 
-  spawnJumpBurst(x, y) {
+  spawnJumpBurst(payload, yLegacy = null) {
+    const data = typeof payload === 'number'
+      ? { x: payload, y: yLegacy ?? 360, jx: 0, jy: -1 }
+      : (payload || { x: 640, y: 360, jx: 0, jy: -1 });
+    const jLen = Math.hypot(data.jx || 0, data.jy || -1) || 1;
+    const jx = (data.jx ?? 0) / jLen;
+    const jy = (data.jy ?? -1) / jLen;
+    const baseAng = Math.atan2(-jy, -jx);
+
     for (let i = 0; i < 6; i++) {
-      const ang = -Math.PI * (0.15 + (i / 5) * 0.7);
-      const spd = 2.4 + (i % 2) * 1.4;
+      const useFront = i >= 3;
+      const wx = useFront ? (data.wfx ?? (data.x + 18)) : (data.wrx ?? (data.x - 18));
+      const wy = useFront ? (data.wfy ?? data.y) : (data.wry ?? data.y);
+      const lane = (i % 3) - 1;
+      const ang = baseAng + lane * 0.42;
+      const spd = 2.0 + (i % 2) * 1.15;
       this.smoke.push({
-        x: x + (i - 2.5) * 6,
-        y,
+        x: wx - jx * 4 + lane * (-jy * 3),
+        y: wy - jy * 4 + lane * (jx * 3),
         vx: Math.cos(ang) * spd,
-        vy: Math.sin(ang) * spd * 0.65,
-        r: 5.5,
-        life: 0.95
+        vy: Math.sin(ang) * spd,
+        r: 4.5,
+        life: 0.96,
+        isRing: true
       });
     }
   }
@@ -137,7 +150,7 @@ export class CanvasRenderer {
       const s = this.smoke[i];
       s.x += s.vx * dtScale;
       s.y += s.vy * dtScale;
-      s.r = lerp(s.r, 10, 0.08 * dtScale);
+      s.r = lerp(s.r, s.isRing ? 13 : 10, 0.08 * dtScale);
       s.life -= 0.042 * dtScale;
       if (s.life <= 0) this.smoke.splice(i, 1);
     }
@@ -336,10 +349,21 @@ export class CanvasRenderer {
 
   _drawEffects(ctx, bannerText) {
     for (const s of this.smoke) {
-      ctx.fillStyle = `rgba(245, 245, 250, ${(s.life * 0.72).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-      ctx.fill();
+      if (s.isRing) {
+        const a = Math.max(0, s.life * 0.85);
+        ctx.fillStyle = `rgba(255, 255, 255, ${(a * 0.28).toFixed(3)})`;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${a.toFixed(3)})`;
+        ctx.lineWidth = Math.max(1.2, 2.8 * s.life);
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = `rgba(245, 245, 250, ${(s.life * 0.72).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     for (const d of this.splashes) {
@@ -399,8 +423,8 @@ export class CanvasRenderer {
 
     this._drawSkyAndCity(ctx);
     this._drawArenaTerrain(ctx, sim);
-    if (sim.p1Car) drawVehicle(ctx, sim.p1Car, true);
-    if (sim.p2Car) drawVehicle(ctx, sim.p2Car, false);
+    if (sim.p1Car) drawVehicle(ctx, sim.p1Car, true, sim.roundElapsedMs);
+    if (sim.p2Car) drawVehicle(ctx, sim.p2Car, false, sim.roundElapsedMs);
     if (sim.ragdolls) {
       for (const rag of sim.ragdolls) drawRagdoll(ctx, rag);
     }

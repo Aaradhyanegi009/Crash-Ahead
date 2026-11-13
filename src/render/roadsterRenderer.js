@@ -788,9 +788,9 @@ function drawTankBody(ctx, colors) {
   }
 }
 
-function drawWheel(ctx, wheel, radius, colors, style = 'roadster') {
+function drawWheel(ctx, wheel, radius, colors, style = 'roadster', offsetX = 0, offsetY = 0) {
   ctx.save();
-  ctx.translate(wheel.position.x, wheel.position.y);
+  ctx.translate(wheel.position.x + offsetX, wheel.position.y + offsetY);
   ctx.rotate(wheel.angle);
 
   if (style === 'jcb') {
@@ -878,11 +878,61 @@ function drawWheel(ctx, wheel, radius, colors, style = 'roadster') {
   ctx.restore();
 }
 
-export function drawVehicle(ctx, carState, isRedPlayer) {
+export function drawVehicle(ctx, carState, isRedPlayer, roundElapsedMs = 0) {
   const colors = isRedPlayer ? PALETTE.red : PALETTE.blue;
   const spec = carState.spec || CAR_MODELS[carState.model] || CAR_SPEC;
   const model = spec.id || 'roadster';
   const { facing, chassis, wheelR, wheelF, head, headSevered } = carState;
+
+  // 80ms suspension strut compression -> smooth spring expansion on relative jump takeoff
+  let wheelLift = 0;
+  let chassisDrop = 0;
+  if (typeof carState.jumpSquashAtMs === 'number' && roundElapsedMs >= carState.jumpSquashAtMs) {
+    const dtJump = roundElapsedMs - carState.jumpSquashAtMs;
+    if (dtJump <= 80) {
+      const compress = 0.45 + 0.55 * Math.sin((dtJump / 80) * Math.PI);
+      wheelLift = compress * 4.2 * CAR_SCALE;
+      chassisDrop = compress * 2.0 * CAR_SCALE;
+    } else if (dtJump <= 185) {
+      const u = (dtJump - 80) / 105;
+      const curve = (1 - u) * 0.45 - Math.sin(u * Math.PI) * 0.28;
+      wheelLift = curve * 4.2 * CAR_SCALE;
+      chassisDrop = curve * 2.0 * CAR_SCALE;
+    }
+  }
+  const cosA = Math.cos(chassis.angle);
+  const sinA = Math.sin(chassis.angle);
+  const carUpX = sinA;
+  const carUpY = -cosA;
+  const wheelOffX = carUpX * wheelLift;
+  const wheelOffY = carUpY * wheelLift;
+
+  // 0. Mechanical Suspension Struts connecting chassis mounts to wheel hubs
+  const mountLocalY = 2 * CAR_SCALE - CENTER_OF_MASS_OFFSET;
+  const drawStrut = (mxLocal, wheel) => {
+    if (!wheel) return;
+    const ax = chassis.position.x + mxLocal * cosA - mountLocalY * sinA - carUpX * chassisDrop;
+    const ay = chassis.position.y + mxLocal * sinA + mountLocalY * cosA - carUpY * chassisDrop;
+    const wx = wheel.position.x + wheelOffX;
+    const wy = wheel.position.y + wheelOffY;
+    ctx.save();
+    ctx.strokeStyle = PALETTE.ink;
+    ctx.lineWidth = 4.2 * CAR_SCALE;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(wx, wy);
+    ctx.stroke();
+    ctx.strokeStyle = '#9aa5b1';
+    ctx.lineWidth = 1.8 * CAR_SCALE;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo((ax + wx) * 0.5, (ay + wy) * 0.5);
+    ctx.stroke();
+    ctx.restore();
+  };
+  drawStrut(-spec.wheelOffsetX, wheelR);
+  drawStrut(spec.wheelOffsetX, wheelF);
 
   // 1. Seated Charcoal Torso, Expressive Flailing Arms & Elastic Neck
   drawDriverAndNeck(ctx, carState, colors, spec);
@@ -894,7 +944,7 @@ export function drawVehicle(ctx, carState, isRedPlayer) {
 
   // 3. Model-specific Vehicle Chassis Body
   ctx.save();
-  ctx.translate(chassis.position.x, chassis.position.y);
+  ctx.translate(chassis.position.x - carUpX * chassisDrop, chassis.position.y - carUpY * chassisDrop);
   ctx.rotate(chassis.angle);
   ctx.translate(0, -CENTER_OF_MASS_OFFSET);
   ctx.scale(facing * CAR_SCALE, CAR_SCALE);
@@ -917,8 +967,8 @@ export function drawVehicle(ctx, carState, isRedPlayer) {
   // 4. Tires, Colored/Hubbed Rims & Lug Detail
   const radR = carState.wheelRadiusR || spec.wheelRadiusR || spec.wheelRadius;
   const radF = carState.wheelRadiusF || spec.wheelRadiusF || spec.wheelRadius;
-  drawWheel(ctx, wheelR, radR, colors, model);
-  drawWheel(ctx, wheelF, radF, colors, model);
+  drawWheel(ctx, wheelR, radR, colors, model, wheelOffX, wheelOffY);
+  drawWheel(ctx, wheelF, radF, colors, model, wheelOffX, wheelOffY);
 }
 
 export const drawRoadster = drawVehicle;
