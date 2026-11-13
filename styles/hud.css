@@ -1,0 +1,206 @@
+/* Top-Center White Score Half-Pill & Bottom-Center White EXIT Half-Pill */
+.hud-pill {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--white);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.top-pill {
+  top: 0;
+  padding: 6px 26px 9px;
+  border-radius: 0 0 36px 36px;
+  gap: 10px;
+  font-size: clamp(22px, 4vw, 32px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  border: 4px solid var(--ink);
+  border-top: none;
+  pointer-events: none;
+}
+
+.score-red { color: var(--red); }
+.score-sep { color: var(--slate); font-size: 0.78em; }
+.score-blue { color: var(--blue); }
+
+.ping-tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--slate);
+  background: #EEF1F4;
+  padding: 2px 7px;
+  border-radius: 999px;
+  margin-left: 2px;
+}
+
+.water-alert-pill {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 19;
+  padding: 4px 14px;
+  border-radius: 999px;
+  border: 3.5px solid var(--ink);
+  background: var(--blue);
+  color: var(--white);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.water-alert-pill.soon {
+  background: var(--yellow);
+  color: var(--ink);
+}
+
+.bottom-pill {
+  bottom: 0;
+  padding: 10px 30px 7px;
+  border-radius: 36px 36px 0 0;
+  border: 4px solid var(--ink);
+  border-bottom: none;
+  font-family: inherit;
+  font-size: clamp(14px, 2.2vw, 18px);
+  font-weight: 800;
+  color: var(--slate);
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.bottom-pill:active {
+  background: #F0F2F4;
+}
+
+/* Circular Tactile Cartoon Arrow Controls */
+#touch-controls {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 25;
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+
+.btn-pair {
+  position: fixed;
+  bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  display: flex;
+  gap: 18px;
+  pointer-events: none;
+}
+
+.left-pair { left: max(26px, env(safe-area-inset-left, 0px)); }
+.right-pair { right: max(26px, env(safe-area-inset-right, 0px)); }
+
+.circle-pad {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  border: 5px solid var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  outline: none;
+  box-shadow: inset 0 -7px 0 rgba(0, 0, 0, 0.22);
+  transition: transform 0.06s ease;
+}
+
+.pad-red { background: var(--red); }
+.pad-blue { background: var(--blue); }
+
+.circle-pad svg {
+  width: 38px;
+  height: 38px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 6.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.pad-tag {
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--white);
+  color: var(--ink);
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  line-height: 1.15;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+#touch-controls.mode-2p .pad-tag {
+  display: none;
+}
+
+.circle-pad.pressed {
+  transform: translateY(3px) scale(0.94);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* Split-Thumbs 1P Layout: Left button on bottom-left, Right button on bottom-right */
+#touch-controls.mode-1p-split .btn-pair {
+  display: contents;
+}
+
+#touch-controls.mode-1p-split .pad-left-btn {
+  position: fixed;
+  bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  left: max(26px, env(safe-area-inset-left, 0px));
+  pointer-events: auto;
+}
+
+#touch-controls.mode-1p-split .pad-right-btn {
+  position: fixed;
+  bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  right: max(26px, env(safe-area-inset-right, 0px));
+  pointer-events: auto;
+}
+
+@media (max-height: 460px), (max-width: 760px) {
+  .btn-pair {
+    bottom: 14px;
+    gap: 14px;
+  }
+  .left-pair { left: 16px; }
+  .right-pair { right: 16px; }
+  #touch-controls.mode-1p-split .pad-left-btn {
+    bottom: 14px;
+    left: 16px;
+  }
+  #touch-controls.mode-1p-split .pad-right-btn {
+    bottom: 14px;
+    right: 16px;
+  }
+  .circle-pad {
+    width: 68px;
+    height: 68px;
+    border-width: 4.5px;
+  }
+  .circle-pad svg {
+    width: 32px;
+    height: 32px;
+  }
+}

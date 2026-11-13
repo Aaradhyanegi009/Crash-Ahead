@@ -1,0 +1,118 @@
+:root {
+  --sky-peach: #FAD6BE;
+  --ink: #111111;
+  --red: #F25C54;
+  --red-dark: #C93B33;
+  --blue: #00B4FF;
+  --blue-dark: #0082B8;
+  --yellow: #F7B538;
+  --yellow-dark: #D4921C;
+  --slate: #3A3E42;
+  --white: #FFFFFF;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--sky-peach);
+  font-family: 'Fredoka', 'Rubik', system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Full-Bleed Responsive 16:9 Stage */
+#stage {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sky-peach);
+  overflow: hidden;
+}
+
+#game-canvas {
+  display: block;
+  aspect-ratio: 16 / 9;
+  width: min(100vw, calc(100vh * 16 / 9));
+  height: min(100vh, calc(100vw * 9 / 16));
+  width: min(100vw, calc(100dvh * 16 / 9));
+  height: min(100dvh, calc(100vw * 9 / 16));
+  touch-action: none;
+}
+
+/* Portrait Orientation Enforcement */
+#rotate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--sky-peach);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.rotate-card {
+  width: min(360px, 90vw);
+  background: var(--white);
+  border: 5px solid var(--ink);
+  border-radius: 26px;
+  padding: 24px 20px;
+  text-align: center;
+  box-shadow: 0 8px 0 var(--ink);
+}
+
+.rotate-card h2 {
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.rotate-card p {
+  font-size: 14px;
+  font-weight: 600;
+  color: #5A5F66;
+  margin-bottom: 16px;
+}
+
+.phone-icon-anim {
+  width: 44px;
+  height: 70px;
+  margin: 0 auto 14px;
+  border: 4px solid var(--ink);
+  border-radius: 10px;
+  background: var(--blue);
+  animation: tilt-phone 1.6s ease-in-out infinite;
+}
+
+@keyframes tilt-phone {
+  0%, 20% { transform: rotate(0deg); }
+  50%, 75% { transform: rotate(-90deg); }
+  100% { transform: rotate(0deg); }
+}
+
+@media (orientation: portrait) and (max-width: 900px) {
+  body:not(.force-landscape) #rotate-overlay {
+    display: flex;
+  }
+}
