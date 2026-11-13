@@ -1,6 +1,9 @@
 import { PEER_PREFIX } from '../config/constants.js';
 import { BODY_KEYS } from '../physics/vehicleController.js';
 
+const BC_LOBBY_CHANNEL = 'unfair-crash-ahead-lobby';
+const BC_ROOM_PREFIX = 'unfair-crash-ahead-room-';
+
 export function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = new Uint8Array(4);
@@ -8,6 +11,24 @@ export function generateRoomCode() {
   let code = '';
   for (let i = 0; i < 4; i++) code += chars[bytes[i] % chars.length];
   return `CRSH-${code}`;
+}
+
+export function normalizeRoomCode(codeInput) {
+  let raw = (codeInput || '').trim();
+  if (!raw) return '';
+  if (raw.includes('room=')) {
+    try {
+      raw = new URL(raw).searchParams.get('room') || raw;
+    } catch (_) {
+      const m = raw.match(/room=([A-Za-z0-9-]+)/i);
+      if (m) raw = m[1];
+    }
+  }
+  const clean = raw.toUpperCase().replace(/\s+/g, '');
+  if (!clean) return '';
+  if (clean.startsWith('CRSH-')) return clean;
+  if (/^[A-Z0-9]{4}$/.test(clean)) return `CRSH-${clean}`;
+  return clean.replace(/^CRSH-?/, 'CRSH-');
 }
 
 export class NetworkManager {
@@ -21,6 +42,12 @@ export class NetworkManager {
     this.pingTimer = null;
     this.reliableTimer = null;
     this.dialTimer = null;
+    this.lobbyTimer = null;
+
+    this.localChan = null;
+    this.lobbyChan = null;
+    this.localPeerReady = false;
+    this.connectedFired = false;
 
     this.remoteInput = { seq: 0, l: false, r: false, holdMs: 0 };
     this.lastHostP1Input = { l: false, r: false, holdMs: 0 };
@@ -34,6 +61,43 @@ export class NetworkManager {
     this.nextEvtId = 0;
     this.pendingReliable = new Map();
     this.seenEids = new Set();
+    this._initLobbyChannel();
+  }
+
+  _initLobbyChannel() {
+    if (typeof BroadcastChannel === 'undefined') return;
+    try {
+      this.lobbyChan = new BroadcastChannel(BC_LOBBY_CHANNEL);
+      this.lobbyChan.onmessage = (ev) => {
+        const msg = ev.data;
+        if (!msg || !msg.code) return;
+        if (msg.type === 'host_open' && this.role !== 'host') {
+          if (this.cb.onLocalRoomDiscovered) this.cb.onLocalRoomDiscovered(msg.code);
+        }
+      };
+    } catch (_) {
+      this.lobbyChan = null;
+    }
+  }
+
+  isConnected() {
+    return !!(this.localPeerReady || (this.conn && this.conn.open));
+  }
+
+  _sendRaw(msg) {
+    if (this.localPeerReady && this.localChan) {
+      try {
+        this.localChan.postMessage({ _from: this.role, payload: msg });
+        return true;
+      } catch (_) {}
+    }
+    if (this.conn && this.conn.open) {
+      try {
+        this.conn.send(msg);
+        return true;
+      } catch (_) {}
+    }
+    return false;
   }
 
   resetPredictionState() {
@@ -47,18 +111,83 @@ export class NetworkManager {
     this.lastSeq = 0;
   }
 
+  _closeLocalRoom() {
+    if (this.lobbyTimer) { clearInterval(this.lobbyTimer); this.lobbyTimer = null; }
+    if (this.role === 'host' && this.roomCode && this.lobbyChan) {
+      try { this.lobbyChan.postMessage({ type: 'host_closed', code: this.roomCode }); } catch (_) {}
+    }
+    if (this.localChan) {
+      if (this.localPeerReady) {
+        try { this.localChan.postMessage({ _from: this.role, payload: { t: '_bc_bye' } }); } catch (_) {}
+      }
+      try { this.localChan.close(); } catch (_) {}
+      this.localChan = null;
+    }
+    this.localPeerReady = false;
+  }
+
   destroy() {
     if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
     if (this.reliableTimer) { clearInterval(this.reliableTimer); this.reliableTimer = null; }
     if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
+    this._closeLocalRoom();
     const oldConn = this.conn;
     this.conn = null;
     if (oldConn) { try { oldConn.close(); } catch (_) {} }
     if (this.peer) { try { this.peer.destroy(); } catch (_) {} this.peer = null; }
     this.role = null;
+    this.connectedFired = false;
     this.pendingReliable.clear();
     this.seenEids.clear();
     this.resetPredictionState();
+  }
+
+  _openLocalChannel(roomCode, role) {
+    if (typeof BroadcastChannel === 'undefined' || !roomCode) return;
+    try {
+      this.localChan = new BroadcastChannel(BC_ROOM_PREFIX + roomCode);
+      this.localChan.onmessage = (ev) => {
+        const pkt = ev.data;
+        if (!pkt || pkt._from === role || !pkt.payload) return;
+        const msg = pkt.payload;
+        if (msg.t === '_bc_hello') {
+          this.localPeerReady = true;
+          if (role === 'host') {
+            this.localChan.postMessage({ _from: 'host', payload: { t: '_bc_ack' } });
+          }
+          this._markConnected();
+          return;
+        }
+        if (msg.t === '_bc_ack') {
+          this.localPeerReady = true;
+          this._markConnected();
+          return;
+        }
+        if (msg.t === '_bc_bye') {
+          if (this.localPeerReady) {
+            this.destroy();
+            this.cb.onDisconnected('Opponent disconnected.');
+          }
+          return;
+        }
+        this._handleMessage(msg);
+      };
+      if (role === 'client') {
+        this.localChan.postMessage({ _from: 'client', payload: { t: '_bc_hello' } });
+      }
+    } catch (_) {
+      this.localChan = null;
+    }
+  }
+
+  _markConnected() {
+    if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
+    if (this.lobbyTimer) { clearInterval(this.lobbyTimer); this.lobbyTimer = null; }
+    if (this.connectedFired) return;
+    this.connectedFired = true;
+    this.cb.onStatus('Connected!', 'connected', false);
+    this.cb.onConnected(this.role);
+    this._startTimers();
   }
 
   _initPeer(peerId, onReady) {
@@ -67,10 +196,13 @@ export class NetworkManager {
     this.destroy();
     this.role = prevRole;
     this.roomCode = prevCode;
+    this._openLocalChannel(prevCode, prevRole);
 
     const PeerCtor = window.Peer;
     if (typeof PeerCtor === 'undefined') {
-      this.cb.onStatus('PeerJS CDN failed to load.', 'error', true);
+      if (!this.localPeerReady) {
+        this.cb.onStatus('PeerJS CDN failed to load.', 'error', true);
+      }
       return;
     }
 
@@ -93,11 +225,12 @@ export class NetworkManager {
     this.peer = peerId ? new PeerCtor(peerId, opts) : new PeerCtor(opts);
     this.peer.on('open', (id) => onReady(id));
     this.peer.on('disconnected', () => {
-      if (this.peer && !this.peer.destroyed && !this.conn) {
+      if (this.peer && !this.peer.destroyed && !this.isConnected()) {
         try { this.peer.reconnect(); } catch (_) {}
       }
     });
     this.peer.on('error', (err) => {
+      if (this.localPeerReady || this.isConnected()) return;
       if (err && err.type === 'unavailable-id' && this.role === 'host') {
         this.hostRoom();
         return;
@@ -117,8 +250,21 @@ export class NetworkManager {
     this.cb.onStatus('Opening room...', 'neutral', false);
     this._initPeer(PEER_PREFIX + this.roomCode, () => {
       this.role = 'host';
-      this.cb.onStatus(`Hosting ${this.roomCode} — waiting for player`, 'neutral', false);
+      if (this.lobbyChan) {
+        const announce = () => {
+          if (this.role === 'host' && !this.isConnected()) {
+            try { this.lobbyChan.postMessage({ type: 'host_open', code: this.roomCode }); } catch (_) {}
+          }
+        };
+        announce();
+        if (this.lobbyTimer) clearInterval(this.lobbyTimer);
+        this.lobbyTimer = setInterval(announce, 1500);
+      }
+      if (!this.isConnected()) {
+        this.cb.onStatus(`Hosting ${this.roomCode} — waiting for player`, 'neutral', false);
+      }
       this.peer.on('connection', (conn) => {
+        if (this.localPeerReady) { conn.close(); return; }
         if (this.conn && this.conn.open) { conn.close(); return; }
         this._attachConnection(conn);
       });
@@ -126,26 +272,22 @@ export class NetworkManager {
   }
 
   joinRoom(codeInput) {
-    let raw = (codeInput || '').trim();
-    if (raw.includes('room=')) {
-      try { raw = new URL(raw).searchParams.get('room') || raw; } catch (_) {}
-    }
-    const clean = raw.toUpperCase();
-    if (!clean) {
-      this.cb.onStatus('Enter a room code first.', 'error', false);
+    const normalized = normalizeRoomCode(codeInput);
+    if (!normalized || normalized.length < 6) {
+      this.cb.onStatus('Enter a valid 4-letter code (or link).', 'error', false);
       return;
     }
-    const normalized = clean.startsWith('CRSH-') ? clean : `CRSH-${clean}`;
     this.roomCode = normalized;
     this.role = 'client';
     this.cb.onStatus(`Connecting to ${normalized}...`, 'neutral', false);
     this._initPeer(null, () => {
       this.role = 'client';
-      const conn = this.peer.connect(PEER_PREFIX + normalized, { serialization: 'json', reliable: false });
+      if (this.localPeerReady) return;
+      const conn = this.peer.connect(PEER_PREFIX + normalized, { serialization: 'json', reliable: true });
       this._attachConnection(conn);
       if (this.dialTimer) clearTimeout(this.dialTimer);
       this.dialTimer = setTimeout(() => {
-        if (!this.conn || !this.conn.open) {
+        if (!this.isConnected()) {
           this.cb.onStatus('Connection timed out. Tap Retry or check code.', 'error', true);
         }
       }, 12000);
@@ -156,29 +298,30 @@ export class NetworkManager {
     this.conn = conn;
     conn.on('open', () => {
       if (this.conn !== conn) return;
-      if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
-      this.cb.onStatus('Connected!', 'connected', false);
-      this.cb.onConnected(this.role);
-      this._startTimers();
+      if (this.localPeerReady) {
+        try { conn.close(); } catch (_) {}
+        return;
+      }
+      this._markConnected();
     });
     conn.on('iceStateChanged', (state) => {
       if (this.conn !== conn) return;
-      if (state === 'failed' && !conn.open) {
+      if (state === 'failed' && !this.isConnected()) {
         if (this.dialTimer) { clearTimeout(this.dialTimer); this.dialTimer = null; }
         this.cb.onStatus('WebRTC connection failed. Tap Retry.', 'error', true);
       }
     });
     conn.on('data', (msg) => {
-      if (this.conn !== conn) return;
+      if (this.conn !== conn || this.localPeerReady) return;
       this._handleMessage(msg);
     });
     conn.on('close', () => {
-      if (this.conn !== conn) return;
+      if (this.conn !== conn || this.localPeerReady) return;
       this.destroy();
       this.cb.onDisconnected('Opponent disconnected.');
     });
     conn.on('error', () => {
-      if (this.conn !== conn) return;
+      if (this.conn !== conn || this.localPeerReady) return;
       this.destroy();
       this.cb.onDisconnected('Peer connection lost.');
     });
@@ -187,12 +330,12 @@ export class NetworkManager {
   _startTimers() {
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = setInterval(() => {
-      if (this.conn && this.conn.open) this.conn.send({ t: 'ping', ts: performance.now() });
+      if (this.isConnected()) this._sendRaw({ t: 'ping', ts: performance.now() });
     }, 1500);
 
     if (this.reliableTimer) clearInterval(this.reliableTimer);
     this.reliableTimer = setInterval(() => {
-      if (!this.conn || !this.conn.open || this.pendingReliable.size === 0) return;
+      if (!this.isConnected() || this.pendingReliable.size === 0) return;
       const now = performance.now();
       for (const [eid, entry] of this.pendingReliable.entries()) {
         if (entry.attempts >= 30) {
@@ -202,24 +345,24 @@ export class NetworkManager {
         if (now - entry.lastSent >= 110) {
           entry.lastSent = now;
           entry.attempts += 1;
-          this.conn.send(entry.msg);
+          this._sendRaw(entry.msg);
         }
       }
     }, 120);
   }
 
   sendReliable(type, payload = {}) {
-    if (!this.conn || !this.conn.open) return;
+    if (!this.isConnected()) return;
     const eid = ++this.nextEvtId;
     const msg = { t: type, _eid: eid, ...payload };
     this.pendingReliable.set(eid, { msg, lastSent: performance.now(), attempts: 1 });
-    this.conn.send(msg);
+    this._sendRaw(msg);
   }
 
   _handleMessage(msg) {
     if (!msg || typeof msg !== 'object') return;
     if (typeof msg._eid === 'number') {
-      if (this.conn && this.conn.open) this.conn.send({ t: 'ack', eid: msg._eid });
+      if (this.isConnected()) this._sendRaw({ t: 'ack', eid: msg._eid });
       if (this.seenEids.has(msg._eid)) return;
       this.seenEids.add(msg._eid);
       if (this.seenEids.size > 64) {
@@ -233,7 +376,7 @@ export class NetworkManager {
         this.pendingReliable.delete(msg.eid);
         break;
       case 'ping':
-        if (this.conn && this.conn.open) this.conn.send({ t: 'pong', ts: msg.ts });
+        if (this.isConnected()) this._sendRaw({ t: 'pong', ts: msg.ts });
         break;
       case 'pong':
         this.pingMs = Math.max(1, Math.round(performance.now() - msg.ts));
@@ -250,10 +393,14 @@ export class NetworkManager {
         this.resetPredictionState();
         this.cb.onMatchStart(msg.ai || 0);
         break;
+      case 'request_start':
+        if (this.role === 'host' && this.cb.onStartRequested) this.cb.onStartRequested();
+        break;
       case 'snap':
         if (msg.sq <= this.lastSeq) return;
         this.lastSeq = msg.sq;
         this.pendingSnapshot = msg;
+        if (this.cb.onSnapshotPacket) this.cb.onSnapshotPacket(msg);
         break;
       case 'evt':
         if (msg.kind === 'rematch_start') this.resetPredictionState();
@@ -274,12 +421,12 @@ export class NetworkManager {
     this.pendingInputs.push(cmd);
     if (this.pendingInputs.length > 90) this.pendingInputs.shift();
 
-    if (this.conn && this.conn.open) {
+    if (this.isConnected()) {
       this.inputSendTick++;
       const changed = l !== this.lastInputSent.l || r !== this.lastInputSent.r;
       if (changed || l || r || this.inputSendTick % 4 === 0) {
         this.lastInputSent = { l, r };
-        this.conn.send({ t: 'input', seq, l, r, holdMs });
+        this._sendRaw({ t: 'input', seq, l, r, holdMs });
       }
     }
     return cmd;
@@ -288,6 +435,10 @@ export class NetworkManager {
   sendMatchStart(arenaIndex) {
     this.resetPredictionState();
     this.sendReliable('match_start', { ai: arenaIndex });
+  }
+
+  sendRequestStart() {
+    this.sendReliable('request_start', {});
   }
 
   sendEvent(kind, data = {}) {
@@ -340,8 +491,12 @@ export class NetworkManager {
   }
 
   sendHostSnapshot(sim, meta) {
-    if (!this.conn || !this.conn.open) return;
-    this.conn.send(this.buildHostSnapshot(sim, meta));
+    if (!this.isConnected()) return;
+    if (!this.localPeerReady && this.conn) {
+      const dc = this.conn.dataChannel || this.conn._dc;
+      if (dc && dc.bufferedAmount > 32768) return;
+    }
+    this._sendRaw(this.buildHostSnapshot(sim, meta));
   }
 
   reconcileClientFrame(sim, onSnapshotMeta) {

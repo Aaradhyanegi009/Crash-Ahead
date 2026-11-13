@@ -113,11 +113,22 @@ function makeOvalCapsuleLoop(cx = 640, cy = 355, halfStraight = 265, r = 215) {
 }
 
 function makeCavernArchOpenWalls(floorFn, lipXLeft = 405, lipXRight = 875) {
+  const xWallL = lipXLeft - 250;
+  const xWallR = lipXRight + 250;
+  const rCurve = 112;
+  const yCurve = 102;
+  const xFloorL = xWallL + rCurve;
+  const xFloorR = xWallR - rCurve;
+  const yFloorL = floorFn(xFloorL);
+  const yFloorR = floorFn(xFloorR);
+
   const raw = [];
   raw.push({ x: lipXLeft, y: -18 });
-  raw.push(...sampleEllipseArc(lipXLeft, 285, 250, 215, -Math.PI * 0.52, -Math.PI * 1.08, 14));
-  raw.push(...sampleCurveX(185, 1095, 30, floorFn));
-  raw.push(...sampleEllipseArc(lipXRight, 285, 250, 215, 0.08, -Math.PI * 0.48, 14));
+  raw.push(...sampleEllipseArc(lipXLeft, 285, 250, 215, -Math.PI * 0.52, -Math.PI, 12));
+  raw.push(...sampleEllipseArc(xFloorL, yFloorL - yCurve, rCurve, yCurve, Math.PI, Math.PI * 0.52, 10));
+  raw.push(...sampleCurveX(xFloorL, xFloorR, 28, floorFn));
+  raw.push(...sampleEllipseArc(xFloorR, yFloorR - yCurve, rCurve, yCurve, Math.PI * 0.48, 0, 10));
+  raw.push(...sampleEllipseArc(lipXRight, 285, 250, 215, 0, -Math.PI * 0.48, 12));
   raw.push({ x: lipXRight, y: -18 });
   const surface = chaikinSmooth(raw, false, 2);
 
@@ -205,7 +216,7 @@ export const ARENAS = Object.freeze([
       openRocks: [arch],
       halfPipes: [],
       blocks: [],
-      seesaws: [{ x: 640, y: 300, w: 340 }],
+      seesaws: [{ x: 640, y: 415, w: 340 }],
       pills: STATIC_ROCK_PILLS,
       p1Spawn: { x: 280, y: 505 },
       p2Spawn: { x: 1000, y: 505 }
@@ -305,19 +316,19 @@ export const ARENAS = Object.freeze([
   Object.freeze({
     id: 8,
     name: 'HALF-PIPE BOWLS',
-    desc: 'Crossable ocean gap + towering C-wall backflips',
+    desc: 'Crossable ocean gap + reachable center deck & C-wall backflips',
     islands: [],
     caves: [],
     openRocks: [],
     halfPipes: [
-      { cx: 440, cy: 365, r: 220, aStart: 0.27 * Math.PI, aEnd: 1.44 * Math.PI, thickness: 28 },
-      { cx: 840, cy: 365, r: 220, aStart: -0.44 * Math.PI, aEnd: 0.73 * Math.PI, thickness: 28 }
+      { cx: 424, cy: 365, r: 220, aStart: 0.26 * Math.PI, aEnd: 1.44 * Math.PI, thickness: 28 },
+      { cx: 856, cy: 365, r: 220, aStart: -0.44 * Math.PI, aEnd: 0.74 * Math.PI, thickness: 28 }
     ],
-    blocks: [{ x: 640, y: 175, w: 290, h: 36 }],
+    blocks: [{ x: 640, y: 345, w: 250, h: 24 }],
     seesaws: [],
     pills: STATIC_ROCK_PILLS,
-    p1Spawn: { x: 430, y: 540 },
-    p2Spawn: { x: 850, y: 540 }
+    p1Spawn: { x: 416, y: 540 },
+    p2Spawn: { x: 864, y: 540 }
   }),
 
   // 9. Twin Floating Islands with Curved End Ramps & Center Seesaw Bridge

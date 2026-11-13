@@ -39,6 +39,16 @@ export class UIManager {
       victoryNote: document.getElementById('victory-note'),
       btnRematch: document.getElementById('btn-rematch')
     };
+    this.discoveredLocalRoom = '';
+  }
+
+  suggestLocalRoom(code) {
+    if (!code) return;
+    this.discoveredLocalRoom = code;
+    if (!this.dom.panelJoin.classList.contains('hidden') && !this.dom.joinCodeInput.value.trim()) {
+      this.dom.joinCodeInput.value = code;
+      this.setOnlineStatus(`Found open room ${code} — tap JOIN!`, 'connected', false);
+    }
   }
 
   bindHandlers(h) {
@@ -149,8 +159,14 @@ export class UIManager {
     this.dom.onlineLobbyPing.textContent = '';
     this.dom.btnOnlineRetry.classList.add('hidden');
     if (tab === 'join') {
-      this.dom.onlineStatusText.textContent = 'Enter friend room code to join.';
-      this.dom.onlineStatus.className = 'status-pill';
+      if (!this.dom.joinCodeInput.value.trim() && this.discoveredLocalRoom) {
+        this.dom.joinCodeInput.value = this.discoveredLocalRoom;
+        this.dom.onlineStatusText.textContent = `Found open room ${this.discoveredLocalRoom} — tap JOIN!`;
+        this.dom.onlineStatus.className = 'status-pill connected';
+      } else {
+        this.dom.onlineStatusText.textContent = 'Enter friend room code or invite link.';
+        this.dom.onlineStatus.className = 'status-pill';
+      }
       setTimeout(() => this.dom.joinCodeInput.focus(), 80);
     }
   }
@@ -170,11 +186,13 @@ export class UIManager {
   }
 
   setOnlineConnected(role) {
-    this.dom.onlineStatusText.textContent = role === 'host' ? 'Player 2 Connected!' : 'Connected to Host!';
+    this.dom.onlineStatusText.textContent = role === 'host'
+      ? 'Player 2 Connected! Starting match...'
+      : 'Connected to Host! Starting match...';
     this.dom.onlineStatus.className = 'status-pill connected';
     this.dom.btnOnlineRetry.classList.add('hidden');
-    this.dom.btnOnlineStart.disabled = role !== 'host';
-    this.dom.btnOnlineStart.textContent = role === 'host' ? 'START MATCH!' : 'WAITING FOR HOST...';
+    this.dom.btnOnlineStart.disabled = false;
+    this.dom.btnOnlineStart.textContent = 'START MATCH!';
   }
 
   setOnlineDisconnected(reason) {

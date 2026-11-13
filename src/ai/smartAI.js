@@ -44,25 +44,27 @@ export class SmartAI {
       const meLeftBowl = mx < 640;
       const oppLeftBowl = ox < 640;
 
-      // In-air chasm crossing stabilizer: keep nose level over x=575..705 so wheels land cleanly on opposite bowl
-      if (!gx && mx > 575 && mx < 705) {
-        if (Math.abs(angle) > 0.32) return angle > 0 ? this._moveLeft() : this._moveRight();
+      // In-air chasm crossing stabilizer: level pitch over mid-chasm and actively pull in past the landing lip
+      if (!gx && mx > 565 && mx < 715) {
+        if (Math.abs(angle) > 0.34) return angle > 0 ? this._moveLeft() : this._moveRight();
+        if (mx < 605 || (mx < 640 && mvx > 0.25)) return this._moveLeft();
+        if (mx > 675 || (mx >= 640 && mvx < -0.25)) return this._moveRight();
         return { l: false, r: false };
       }
 
       if (this.runupTicks > 0) {
         this.runupTicks--;
-        if (meLeftBowl && mx > 335) return this._moveLeft();
-        if (!meLeftBowl && mx < 945) return this._moveRight();
+        if (meLeftBowl && mx > 315) return this._moveLeft();
+        if (!meLeftBowl && mx < 965) return this._moveRight();
         this.runupTicks = 0;
       }
 
       // Guard against rolling slowly off the inner chasm lip into the sea
-      if (gx && meLeftBowl && mx > 530 && mvx > 0.1 && speed < 4.0) {
+      if (gx && meLeftBowl && mx > 520 && mvx > 0.1 && speed < 4.2) {
         this.runupTicks = 28;
         return this._moveLeft();
       }
-      if (gx && !meLeftBowl && mx < 750 && mvx < -0.1 && speed < 4.0) {
+      if (gx && !meLeftBowl && mx < 760 && mvx < -0.1 && speed < 4.2) {
         this.runupTicks = 28;
         return this._moveRight();
       }

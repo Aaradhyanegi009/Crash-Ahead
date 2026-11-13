@@ -43,6 +43,8 @@ export class CrashAheadGame {
     this.p2Input = { l: false, r: false };
     this.localRematchWant = false;
     this.remoteRematchWant = false;
+    this._autoStartTimer = null;
+    this._netSnapTick = 0;
 
     this._bindSimCallbacks();
     this._initNetwork();
@@ -142,9 +144,27 @@ export class CrashAheadGame {
     this.net = new NetworkManager({
       onRoomCode: (code) => this.ui.setRoomCode(code),
       onStatus: (text, cls, showRetry = false) => this.ui.setOnlineStatus(text, cls, showRetry),
-      onConnected: (role) => this.ui.setOnlineConnected(role),
+      onLocalRoomDiscovered: (code) => this.ui.suggestLocalRoom(code),
+      onConnected: (role) => {
+        this.ui.setOnlineConnected(role);
+        if (role === 'host') {
+          if (this._autoStartTimer) clearTimeout(this._autoStartTimer);
+          this._autoStartTimer = setTimeout(() => {
+            this._autoStartTimer = null;
+            this._triggerHostOnlineStart();
+          }, 400);
+        }
+      },
+      onStartRequested: () => this._triggerHostOnlineStart(),
       onPing: (ms) => this.ui.setPing(ms),
-      onMatchStart: (arenaIdx) => this.startMatch('online_client', arenaIdx),
+      onMatchStart: (arenaIdx) => {
+        if (this.mode !== 'online_client') this.startMatch('online_client', arenaIdx);
+      },
+      onSnapshotPacket: (snap) => {
+        if (this.net.role === 'client' && this.mode !== 'online_client') {
+          this.startMatch('online_client', snap.ai || 0);
+        }
+      },
       onSnapshotState: applySnapshotMeta,
       onGameEvent: (msg) => {
         if (msg.kind === 'bump') {
@@ -182,6 +202,7 @@ export class CrashAheadGame {
         }
       },
       onDisconnected: (reason) => {
+        if (this._autoStartTimer) { clearTimeout(this._autoStartTimer); this._autoStartTimer = null; }
         this.mode = 'attract';
         this.phase = 'MENU';
         this.input.setMode('menu');
@@ -189,6 +210,15 @@ export class CrashAheadGame {
         this.ui.setOnlineDisconnected(reason);
       }
     });
+  }
+
+  _triggerHostOnlineStart() {
+    if (this.net.role !== 'host' || !this.net.isConnected()) return;
+    if (this.mode === 'online_host' && this.phase !== 'MENU') return;
+    if (this._autoStartTimer) { clearTimeout(this._autoStartTimer); this._autoStartTimer = null; }
+    const arenaIdx = this._pickArenaIndex(-1);
+    this.net.sendMatchStart(arenaIdx);
+    this.startMatch('online_host', arenaIdx);
   }
 
   _bindUI() {
@@ -249,6 +279,7 @@ export class CrashAheadGame {
       },
       onOnlineBack: () => {
         this.sound.playClick();
+        if (this._autoStartTimer) { clearTimeout(this._autoStartTimer); this._autoStartTimer = null; }
         this.net.destroy();
         this.ui.showHomeMenu();
       },
@@ -266,12 +297,13 @@ export class CrashAheadGame {
         this.net.joinRoom(val);
       },
       onOnlineStart: () => {
-        if (this.net.role !== 'host') return;
         this.sound.unlock();
         this.sound.playClick();
-        const arenaIdx = this._pickArenaIndex(-1);
-        this.net.sendMatchStart(arenaIdx);
-        this.startMatch('online_host', arenaIdx);
+        if (this.net.role === 'host') {
+          this._triggerHostOnlineStart();
+        } else if (this.net.role === 'client') {
+          this.net.sendRequestStart();
+        }
       },
       onOnlineRetry: (joinVal) => {
         this.sound.unlock();
@@ -284,6 +316,7 @@ export class CrashAheadGame {
       },
       onExit: () => {
         this.sound.playClick();
+        if (this._autoStartTimer) { clearTimeout(this._autoStartTimer); this._autoStartTimer = null; }
         this.net.destroy();
         this._startAttractMode();
       },
@@ -453,13 +486,16 @@ export class CrashAheadGame {
     }
 
     if (this.mode === 'online_host') {
-      this.net.sendHostSnapshot(this.sim, {
-        scores: this.scores,
-        roundNumber: this.roundNumber,
-        phase: this.phase,
-        bannerText: this.bannerText,
-        p1Input: this.p1Input
-      });
+      this._netSnapTick = (this._netSnapTick + 1) & 1;
+      if (this._netSnapTick === 0 || this.phase !== 'FIGHT') {
+        this.net.sendHostSnapshot(this.sim, {
+          scores: this.scores,
+          roundNumber: this.roundNumber,
+          phase: this.phase,
+          bannerText: this.bannerText,
+          p1Input: this.p1Input
+        });
+      }
     }
   }
 
@@ -493,12 +529,12 @@ export class CrashAheadGame {
   }
 
   _startMainLoop() {
-    let last = performance.now();
+    let lastSimTime = performance.now();
     let acc = 0;
 
-    const loop = (now) => {
-      const elapsed = Math.min(100, now - last);
-      last = now;
+    const advanceSimulation = (now) => {
+      const elapsed = Math.min(100, Math.max(0, now - lastSimTime));
+      lastSimTime = now;
 
       if (this.mode === 'online_client') {
         this.net.reconcileClientFrame(this.sim, this._applySnapshotMeta);
@@ -521,7 +557,32 @@ export class CrashAheadGame {
         this.sim.roundElapsedMs,
         this.sim.waterRising
       );
+      return elapsed;
+    };
 
+    const bgTick = () => {
+      const now = performance.now();
+      const isOnline = this.mode === 'online_host' || this.mode === 'online_client';
+      if (isOnline && (document.hidden || (now - lastSimTime) >= FIXED_DT * 1.5)) {
+        advanceSimulation(now);
+      }
+    };
+
+    try {
+      const workerBlob = new Blob(
+        ['setInterval(() => postMessage(0), 16);'],
+        { type: 'application/javascript' }
+      );
+      const workerUrl = URL.createObjectURL(workerBlob);
+      this._bgWorker = new Worker(workerUrl);
+      this._bgWorker.onmessage = bgTick;
+      URL.revokeObjectURL(workerUrl);
+    } catch (_) {
+      this._bgTimer = setInterval(bgTick, 16);
+    }
+
+    const loop = (now) => {
+      const elapsed = advanceSimulation(now);
       this.renderer.updateEffects(elapsed / FIXED_DT, this.sim);
       this._updateAudio();
       this.renderer.render(this.sim, this.bannerText);
