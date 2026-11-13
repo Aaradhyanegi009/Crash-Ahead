@@ -48,8 +48,8 @@ export const PALETTE = Object.freeze({
   blue: Object.freeze({ body: '#00B4FF', lip: '#0082B8', rim: '#00B4FF', helmet: '#00B4FF' })
 });
 
-// Additional 10% size reduction across all vehicle models (0.837 * 0.9 = 0.7533)
-export const CAR_SCALE = 0.7533;
+// Additional 9% size reduction across all vehicle models (0.7533 * 0.91 = 0.6855)
+export const CAR_SCALE = 0.6855;
 
 // Grounded Stability, 25% Reduced Max Speed, Progressive Accel, Curved Wall Climb & Backflips
 export const BASE_MAX_FORWARD_SPEED = 8.8;
@@ -105,8 +105,8 @@ export const VEHICLE_PHYSICS = Object.freeze({
   PITCH_TORQUE_LIMIT: 0.052,
   WHEEL_BASE_FRICTION: 0.96,
   WHEEL_COAST_FRICTION: 0.68,
-  WHEEL_MAX_SPIN: 0.616,         // 6.6 / 10.923 = 0.604 rad/tick + grip headroom
-  WHEEL_REVERSE_MAX_SPIN: 0.480, // 5.1 / 10.923 = 0.467 rad/tick + grip headroom
+  WHEEL_MAX_SPIN: Number(((MAX_FORWARD_SPEED / (14.5 * CAR_SCALE)) * 1.04).toFixed(3)),
+  WHEEL_REVERSE_MAX_SPIN: Number(((MAX_REVERSE_SPEED / (14.5 * CAR_SCALE)) * 1.04).toFixed(3)),
   GRAVITY_COMP_SCALE: 0.90
 });
 
@@ -146,30 +146,30 @@ export const CAR_MODELS = Object.freeze({
     id: 'truck',
     name: 'SMALL TRUCK',
     scale: CAR_SCALE,
-    width: 92 * CAR_SCALE,
-    height: 25 * CAR_SCALE,
-    chamfer: 8.5 * CAR_SCALE,
-    density: 0.0065,
+    width: 93 * CAR_SCALE,
+    height: 26 * CAR_SCALE,
+    chamfer: 6.5 * CAR_SCALE,
+    density: 0.0064,
     restitution: 0.10,
     friction: 0.05,
-    wheelOffsetX: 27.5 * CAR_SCALE,
-    wheelOffsetY: 13.6 * CAR_SCALE,
-    wheelOffsetYF: 13.6 * CAR_SCALE,
-    wheelRadius: 15.6 * CAR_SCALE,
-    wheelRadiusR: 15.6 * CAR_SCALE,
-    wheelRadiusF: 15.6 * CAR_SCALE,
+    wheelOffsetX: 28 * CAR_SCALE,
+    wheelOffsetY: 13.8 * CAR_SCALE,
+    wheelOffsetYF: 13.8 * CAR_SCALE,
+    wheelRadius: 15.8 * CAR_SCALE,
+    wheelRadiusR: 15.8 * CAR_SCALE,
+    wheelRadiusF: 15.8 * CAR_SCALE,
     wheelDensity: 0.0110,
     wheelFriction: VEHICLE_PHYSICS.WHEEL_BASE_FRICTION,
     wheelRestitution: 0.08,
     headRadius: 11.5 * CAR_SCALE,
-    headOffsetX: 4 * CAR_SCALE,
-    headOffsetY: -15.8 * CAR_SCALE,
-    collarX: 4 * CAR_SCALE,
+    headOffsetX: 5 * CAR_SCALE,
+    headOffsetY: -16.4 * CAR_SCALE,
+    collarX: 5 * CAR_SCALE,
     collarY: -5.5 * CAR_SCALE,
     headDensity: 0.00055,
     headRestitution: 0.15,
     maxWheelSpin: VEHICLE_PHYSICS.WHEEL_MAX_SPIN,
-    exhaustLocal: Object.freeze({ x: -45 * CAR_SCALE, y: 1 * CAR_SCALE })
+    exhaustLocal: Object.freeze({ x: -15 * CAR_SCALE, y: -32 * CAR_SCALE })
   }),
   jcb: Object.freeze({
     id: 'jcb',

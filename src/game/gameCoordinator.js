@@ -50,11 +50,7 @@ export class CrashAheadGame {
 
     this.p1Input = { l: false, r: false, jump: false };
     this.p2Input = { l: false, r: false, jump: false };
-    if (this.ai) {
-      this.ai.runupTicks = 0;
-      this.ai.commitTicks = 0;
-      this.ai.commitMode = null;
-    }
+    if (this.ai) this.ai.resetRoundState((Math.random() * 0x7fffffff) | 0);
     this.localRematchWant = false;
     this.remoteRematchWant = false;
     this._autoStartTimer = null;
@@ -313,10 +309,13 @@ export class CrashAheadGame {
         this.sound.unlock();
         this.sound.playClick();
         const docEl = document.documentElement;
-        if (!document.fullscreenElement) {
-          if (docEl.requestFullscreen) docEl.requestFullscreen().catch(() => {});
-        } else if (document.exitFullscreen) {
-          document.exitFullscreen().catch(() => {});
+        const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+        if (!fsEl) {
+          const req = docEl.requestFullscreen || docEl.webkitRequestFullscreen;
+          if (req) Promise.resolve(req.call(docEl)).catch(() => {});
+        } else {
+          const exit = document.exitFullscreen || document.webkitExitFullscreen;
+          if (exit) Promise.resolve(exit.call(document)).catch(() => {});
         }
       },
       onStepMap: (delta) => {
@@ -416,6 +415,13 @@ export class CrashAheadGame {
         this._startAttractMode();
       }
     });
+
+    const syncFs = () => {
+      this.ui.updateFullscreenState(document.fullscreenElement || document.webkitFullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', syncFs);
+    document.addEventListener('webkitfullscreenchange', syncFs);
+    syncFs();
   }
 
   _openOnlineModal(tab) {
@@ -491,17 +497,26 @@ export class CrashAheadGame {
     this._applyDifficultySpeeds();
   }
 
+  _isPlayerJumpEnabled() {
+    if (this.mode !== 'ai') return true;
+    const prof = this.ai.getProfile();
+    return !prof || prof.playerCanJump !== false;
+  }
+
   _applyDifficultySpeeds() {
     const prof = this.mode === 'ai' ? this.ai.getProfile() : null;
+    const playerCanJump = this._isPlayerJumpEnabled();
     if (this.sim.p1Car) {
       this.sim.p1Car.speedScale = 1.0;
       this.sim.p1Car.accelScale = 1.0;
       this.sim.p1Car.jumpCooldownMs = JUMP_COOLDOWN_MS;
+      this.sim.p1Car.jumpDisabled = !playerCanJump;
     }
     if (this.sim.p2Car) {
       this.sim.p2Car.speedScale = prof ? prof.speedScale : 1.0;
       this.sim.p2Car.accelScale = prof ? prof.accelScale : 1.0;
       this.sim.p2Car.jumpCooldownMs = (prof && prof.jumpCooldownMs) ? prof.jumpCooldownMs : JUMP_COOLDOWN_MS;
+      this.sim.p2Car.jumpDisabled = false;
     }
   }
 
@@ -518,11 +533,7 @@ export class CrashAheadGame {
     this._pendingAward = 0;
     this.p1Input = { l: false, r: false, jump: false };
     this.p2Input = { l: false, r: false, jump: false };
-    if (this.ai) {
-      this.ai.runupTicks = 0;
-      this.ai.commitTicks = 0;
-      this.ai.commitMode = null;
-    }
+    if (this.ai) this.ai.resetRoundState((Math.random() * 0x7fffffff) | 0);
     if (this.mode === 'online_host' || this.mode === 'online_client') {
       this.net.resetRoundInput();
     }
@@ -628,6 +639,9 @@ export class CrashAheadGame {
         if (this.goBannerMs <= 0 && !this.koPending) this.bannerText = '';
       }
       this.p1Input = this.input.getP1();
+      if (!this._isPlayerJumpEnabled()) {
+        this.p1Input = { ...this.p1Input, jump: false };
+      }
       if (this.mode === 'ai') this.p2Input = this.ai.decide(this.sim, false);
       else if (this.mode === 'local') this.p2Input = this.input.getP2();
       else if (this.mode === 'online_host') {
@@ -723,7 +737,8 @@ export class CrashAheadGame {
       this.ui.updateJumpPads(
         this.sim.getJumpCooldownRemaining(1),
         this.sim.getJumpCooldownRemaining(2),
-        this.mode !== 'attract' && this.phase === 'FIGHT'
+        this.mode !== 'attract' && this.phase === 'FIGHT',
+        this._isPlayerJumpEnabled()
       );
       return elapsed;
     };

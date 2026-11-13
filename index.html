@@ -48,8 +48,12 @@
     <!-- Rising Water Countdown / Flood Alert Badge (triggers around 17s / active at 20s) -->
     <div id="water-alert-pill" class="water-alert-pill hidden" aria-live="polite">WATER RISING!</div>
 
-    <!-- Bottom-Center White EXIT Half-Pill -->
+    <!-- Bottom-Center White EXIT Half-Pill & Top-Right In-Round Fullscreen Button -->
     <button id="btn-exit" class="hud-pill bottom-pill hidden" type="button">EXIT</button>
+    <button id="btn-hud-fullscreen" class="hud-fs-btn fs-btn hidden" type="button" title="Toggle Fullscreen" aria-label="Toggle Fullscreen" aria-pressed="false">
+      <svg class="fs-icon-enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+      <svg class="fs-icon-exit" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
+    </button>
 
     <!-- Unified Touch & Pointer Circular Cartoon Controls -->
     <div id="touch-controls">
@@ -109,8 +113,9 @@
               <svg id="icon-sound-on" viewBox="0 0 24 24"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2c0-1.7-1-3.2-2.5-3.9v7.8c1.5-.7 2.5-2.2 2.5-3.9zM14 4.2v2c2.8.8 4.8 3.2 4.8 5.8s-2 5-4.8 5.8v2c3.9-.9 6.8-4.2 6.8-7.8S17.9 5.1 14 4.2z"/></svg>
               <svg id="icon-sound-off" class="hidden" viewBox="0 0 24 24"><path d="M16.5 12c0-1.7-1-3.2-2.5-3.9v2.2l2.4 2.4c.1-.2.1-.5.1-.7zm4.3 0c0-3.6-2.9-6.9-6.8-7.8v2c2.8.8 4.8 3.2 4.8 5.8 0 .9-.2 1.8-.7 2.6l1.5 1.5c.8-1.2 1.2-2.6 1.2-4.1zM4.3 3L3 4.3 7.7 9H3v6h4l5 5v-6.7l4.2 4.2c-.7.5-1.4.9-2.2 1.1v2c1.4-.3 2.6-.9 3.7-1.8L19.7 21 21 19.7 4.3 3zM12 5L9.9 7.1 12 9.2V5z"/></svg>
             </button>
-            <button id="btn-fullscreen" class="mini-circle-btn" type="button" title="Fullscreen" aria-label="Toggle Fullscreen">
-              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+            <button id="btn-fullscreen" class="mini-circle-btn fs-btn" type="button" title="Fullscreen" aria-label="Toggle Fullscreen" aria-pressed="false">
+              <svg class="fs-icon-enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+              <svg class="fs-icon-exit" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
             </button>
           </div>
         </div>
@@ -130,9 +135,9 @@
           <button id="btn-mode-online" class="cartoon-btn btn-blue" type="button">ONLINE 1v1 (ROOM CODE)</button>
           <button id="btn-mode-ai" class="cartoon-btn btn-yellow" type="button">1 PLAYER (VS BOT)</button>
           <div class="bot-diff-row" role="group" aria-label="Bot Difficulty">
-            <button id="btn-bot-easy" class="bot-diff-btn" data-diff="easy" type="button">EASY <span class="bot-diff-sub">Slow</span></button>
             <button id="btn-bot-hard" class="bot-diff-btn active" data-diff="hard" type="button">HARD <span class="bot-diff-sub">+5% Spd</span></button>
             <button id="btn-bot-extreme" class="bot-diff-btn" data-diff="extreme" type="button">EXTREME <span class="bot-diff-sub">+25% 2sJump</span></button>
+            <button id="btn-bot-death" class="bot-diff-btn" data-diff="death" type="button">DEATH <span class="bot-diff-sub">+30% NoJump</span></button>
           </div>
         </div>
 

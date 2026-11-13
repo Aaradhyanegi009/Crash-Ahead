@@ -9,29 +9,63 @@ import {
 function drawHelmet(ctx, head, facing, isRedPlayer, isKO = false) {
   if (!head) return;
   const colors = isRedPlayer ? PALETTE.red : PALETTE.blue;
+  const r = CAR_SPEC.headRadius;
   ctx.save();
   ctx.translate(head.position.x, head.position.y);
   ctx.rotate(head.angle);
-  ctx.fillStyle = colors.helmet;
-  ctx.strokeStyle = PALETTE.ink;
-  ctx.lineWidth = 3.5;
+  ctx.scale(facing, 1);
+
+  // Full-face motorsport / motocross helmet contour (dome + brow peak + protruding chin guard)
   ctx.beginPath();
-  ctx.arc(0, 0, CAR_SPEC.headRadius, 0, Math.PI * 2);
+  ctx.moveTo(-0.86 * r, 0.58 * r);
+  ctx.bezierCurveTo(-1.12 * r, 0.05 * r, -0.96 * r, -1.04 * r, -0.05 * r, -1.05 * r);
+  ctx.bezierCurveTo(0.45 * r, -1.06 * r, 0.78 * r, -0.92 * r, 1.24 * r, -0.74 * r); // sun peak tip
+  ctx.lineTo(1.20 * r, -0.54 * r);
+  ctx.lineTo(0.84 * r, -0.48 * r); // under peak into brow
+  ctx.bezierCurveTo(1.06 * r, -0.20 * r, 1.16 * r, 0.14 * r, 1.10 * r, 0.48 * r); // chin guard nose
+  ctx.quadraticCurveTo(0.98 * r, 0.80 * r, 0.42 * r, 0.88 * r);
+  ctx.quadraticCurveTo(-0.35 * r, 0.90 * r, -0.86 * r, 0.58 * r);
+  ctx.closePath();
+
+  ctx.fillStyle = colors.helmet;
+  ctx.fill();
+
+  // Subtle crown speed accent clipped inside helmet shell
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = colors.rim;
+  ctx.fillRect(-0.95 * r, -1.08 * r, 1.75 * r, 0.28 * r);
+  ctx.fillStyle = colors.lip;
+  ctx.beginPath();
+  ctx.rect(-1.15 * r, 0.62 * r, 2.35 * r, 0.35 * r);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 3.2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // Contoured dark racing visor shield
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 2.0;
+  ctx.beginPath();
+  ctx.moveTo(0.18 * r, -0.50 * r);
+  ctx.quadraticCurveTo(0.68 * r, -0.52 * r, 0.96 * r, -0.40 * r);
+  ctx.quadraticCurveTo(1.06 * r, -0.08 * r, 0.96 * r, 0.20 * r);
+  ctx.quadraticCurveTo(0.56 * r, 0.24 * r, 0.22 * r, 0.16 * r);
+  ctx.quadraticCurveTo(0.10 * r, -0.16 * r, 0.18 * r, -0.50 * r);
+  ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = PALETTE.charcoal;
-  ctx.beginPath();
-  ctx.arc(facing * 5.2 * CAR_SCALE, -0.5 * CAR_SCALE, 5.2 * CAR_SCALE, -0.55 * Math.PI, 0.55 * Math.PI, facing < 0);
-  ctx.closePath();
-  ctx.fill();
-
   if (isKO) {
-    const vx = facing * 6.0 * CAR_SCALE;
-    const vy = -0.5 * CAR_SCALE;
-    const xr = 2.0 * CAR_SCALE;
+    const vx = 0.58 * r;
+    const vy = -0.14 * r;
+    const xr = 0.20 * r;
     ctx.strokeStyle = PALETTE.white;
-    ctx.lineWidth = 1.6;
+    ctx.lineWidth = 1.7;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(vx - xr, vy - xr);
@@ -39,7 +73,27 @@ function drawHelmet(ctx, head, facing, isRedPlayer, isKO = false) {
     ctx.moveTo(vx + xr, vy - xr);
     ctx.lineTo(vx - xr, vy + xr);
     ctx.stroke();
+  } else {
+    // Crisp white visor reflection streak
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.78)';
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0.32 * r, -0.34 * r);
+    ctx.lineTo(0.62 * r, -0.26 * r);
+    ctx.stroke();
   }
+
+  // Chin breather vent + subtle side visor hinge bolt (clean, non-eye-like)
+  ctx.fillStyle = PALETTE.ink;
+  ctx.beginPath();
+  ctx.roundRect(0.64 * r, 0.42 * r, 0.28 * r, 0.14 * r, 0.06 * r);
+  ctx.fill();
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.arc(0.06 * r, -0.02 * r, 0.14 * r, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.restore();
 }
 
@@ -245,68 +299,76 @@ function drawRoadsterBody(ctx, colors) {
 }
 
 function drawTruckBody(ctx, colors) {
-  // Lower rear tailpipe + vertical rollbar exhaust stack behind cab
+  ctx.lineWidth = 3.2 / CAR_SCALE;
+  ctx.strokeStyle = PALETTE.ink;
+
+  // Vertical chrome diesel exhaust smokestack behind cab (aligns with exhaustLocal -15, -32)
+  ctx.fillStyle = '#bcc6d0';
+  ctx.beginPath();
+  ctx.roundRect(-18, -32.5, 6, 20, 2.2);
+  ctx.fill();
+  ctx.stroke();
   ctx.fillStyle = PALETTE.charcoal;
-  ctx.strokeStyle = PALETTE.ink;
-  ctx.lineWidth = 3 / CAR_SCALE;
   ctx.beginPath();
-  ctx.roundRect(-48, -1, 10, 6.2, 2);
+  ctx.roundRect(-18.5, -33.5, 7, 3.8, 1.4);
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = '#536270';
+  // Rear heavy headboard rack protecting driver cab behind open seat
+  ctx.fillStyle = PALETTE.charcoal;
   ctx.beginPath();
-  ctx.roundRect(-16, -24, 5.4, 17, 2.2);
+  ctx.roundRect(-11.5, -30, 5.5, 16, 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#ffb703';
+  ctx.beginPath();
+  ctx.roundRect(-11, -33, 4.5, 3.8, 1.5);
   ctx.fill();
   ctx.stroke();
 
-  // Rollbar hoop behind cab opening
-  ctx.strokeStyle = PALETTE.ink;
-  ctx.lineWidth = 4.5 / CAR_SCALE;
-  ctx.beginPath();
-  ctx.moveTo(-11, -9);
-  ctx.lineTo(-10, -25);
-  ctx.lineTo(-2, -25);
-  ctx.stroke();
-
-  // Cab roof pillars / open sunroof frame around driver (head at x=+4)
+  // Tall boxy front cab A-pillar + windshield + roof sun-visor
   ctx.fillStyle = colors.body;
-  ctx.strokeStyle = PALETTE.ink;
-  ctx.lineWidth = 3 / CAR_SCALE;
   ctx.beginPath();
-  ctx.moveTo(15, -9);
-  ctx.lineTo(13, -24);
-  ctx.lineTo(22.5, -24);
-  ctx.lineTo(26.5, -9);
+  ctx.moveTo(18, -16);
+  ctx.lineTo(17, -33.5);
+  ctx.lineTo(31, -32.5);
+  ctx.lineTo(34, -17);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // Windshield highlight glass strip
+  // Extended roof visor eyebrow
+  ctx.fillStyle = colors.lip;
+  ctx.beginPath();
+  ctx.roundRect(12.5, -34.5, 20, 5.2, 2.2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Large square truck windshield glass
   ctx.fillStyle = '#dff6ff';
   ctx.beginPath();
-  ctx.moveTo(16.5, -10.5);
-  ctx.lineTo(15, -21);
-  ctx.lineTo(20.8, -21);
-  ctx.lineTo(24.2, -10.5);
+  ctx.moveTo(20, -18.5);
+  ctx.lineTo(19.5, -29.2);
+  ctx.lineTo(28.5, -28.8);
+  ctx.lineTo(31.2, -18.5);
   ctx.closePath();
   ctx.fill();
+  ctx.stroke();
 
-  // Rugged Pickup Body Silhouette (Cargo bed -46..-11, cab/hood -11..+46)
+  // Rugged Heavy Boxy Cargo/Utility Truck Body (High Dump Bed -48..-8, Tall Nose +16..+48)
   ctx.beginPath();
-  ctx.moveTo(-43, 12);
-  ctx.lineTo(43, 12);
-  ctx.lineTo(46.5, 8);
-  ctx.lineTo(46.5, -5.5);
-  ctx.quadraticCurveTo(45, -10.5, 36, -11);
-  ctx.lineTo(22, -11);
-  ctx.lineTo(14.5, -11);
-  ctx.lineTo(11, -3);
-  ctx.lineTo(-3, -3);
-  ctx.lineTo(-10, -11.5);
-  ctx.lineTo(-42.5, -11.5);
-  ctx.lineTo(-46, -8);
-  ctx.lineTo(-45.5, 9);
+  ctx.moveTo(-45, 12.5);
+  ctx.lineTo(44.5, 12.5);
+  ctx.lineTo(48, 8.5);
+  ctx.lineTo(48, -16.5);          // Vertical flat truck nose
+  ctx.lineTo(44, -20.5);          // Crisp square hood corner
+  ctx.lineTo(17, -20.5);          // Tall hood cowl in front of driver
+  ctx.lineTo(14.5, -5.5);         // Open driver cab cockpit well (leaves helmet exposed)
+  ctx.lineTo(-5.5, -5.5);
+  ctx.lineTo(-8.5, -19.5);        // Tall cargo dump bed bulkhead
+  ctx.lineTo(-46.5, -19.5);       // Flat heavy utility bed top rail
+  ctx.lineTo(-48.5, -15);
+  ctx.lineTo(-48, 9);
   ctx.closePath();
 
   ctx.fillStyle = colors.body;
@@ -314,38 +376,57 @@ function drawTruckBody(ctx, colors) {
 
   ctx.save();
   ctx.clip();
-  // Cargo bed recessed trim + racing gold stripe + lower skid lip
+  // Heavy bed rail + lower chassis sill + bold team truck stripe
   ctx.fillStyle = colors.lip;
-  ctx.fillRect(-48, 6.2, 97, 7);
-  ctx.fillStyle = PALETTE.charcoal;
-  ctx.fillRect(-43, -12, 31, 4.5);
+  ctx.fillRect(-50, 6.2, 102, 7.5);
+  ctx.fillStyle = '#3f4b56';
+  ctx.fillRect(-50, -21, 42, 5.5);
   ctx.fillStyle = PALETTE.stripeGold;
-  ctx.fillRect(-47, 1.2, 95, 3.8);
+  ctx.fillRect(-50, -3.5, 102, 4.4);
+  // Corrugated cargo bed vertical stake ribs
+  ctx.fillStyle = colors.lip;
+  for (const bx of [-42, -31, -20]) {
+    ctx.fillRect(bx, -15.5, 3.8, 21.5);
+  }
   ctx.restore();
 
   ctx.strokeStyle = PALETTE.ink;
   ctx.lineWidth = 3.5 / CAR_SCALE;
   ctx.stroke();
 
-  // Chrome/Steel Front Bullbar Bumper + Headlight
-  ctx.fillStyle = '#d2dae2';
+  // Heavy dark slatted front truck grille
+  ctx.fillStyle = PALETTE.charcoal;
   ctx.strokeStyle = PALETTE.ink;
-  ctx.lineWidth = 2.6 / CAR_SCALE;
+  ctx.lineWidth = 2.4 / CAR_SCALE;
   ctx.beginPath();
-  ctx.roundRect(44, -6, 6.5, 16, 2.5);
+  ctx.roundRect(42.5, -15, 6.5, 19, 1.8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#d2dae2';
+  for (const gy of [-12, -7.2, -2.4]) {
+    ctx.fillRect(43.5, gy, 4.8, 2.2);
+  }
+
+  // Dual stacked front truck headlights + chunky chrome bullbar front bumper & rear step bumper
+  ctx.fillStyle = '#ffe066';
+  ctx.beginPath();
+  ctx.roundRect(44, -18.5, 4.5, 3.8, 1.2);
+  ctx.fill();
+  ctx.fillStyle = '#d2dae2';
+  ctx.beginPath();
+  ctx.roundRect(44.5, 2.5, 7, 11.5, 2.5);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.roundRect(-51, 3.5, 6.5, 10, 2);
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = '#ffe066';
-  ctx.beginPath();
-  ctx.roundRect(41, -7.5, 4.2, 5.2, 1.5);
-  ctx.fill();
-
-  // Wheel-Well Arches
-  for (const wx of [-27.5, 27.5]) {
+  // Heavy-duty Squared Wheel-Well Flares
+  for (const wx of [-28, 28]) {
     ctx.fillStyle = PALETTE.ink;
     ctx.beginPath();
-    ctx.arc(wx, 12.8, 18.6, Math.PI, 0);
+    ctx.arc(wx, 13, 19.2, Math.PI, 0);
     ctx.closePath();
     ctx.fill();
   }

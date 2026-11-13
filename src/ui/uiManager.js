@@ -10,6 +10,8 @@ export class UIManager {
       pingTag: document.getElementById('online-ping-tag'),
       waterAlert: document.getElementById('water-alert-pill'),
       btnExit: document.getElementById('btn-exit'),
+      btnFullscreen: document.getElementById('btn-fullscreen'),
+      btnHudFullscreen: document.getElementById('btn-hud-fullscreen'),
 
       menuOverlay: document.getElementById('menu-overlay'),
       onlineOverlay: document.getElementById('online-overlay'),
@@ -60,7 +62,10 @@ export class UIManager {
   bindHandlers(h) {
     document.getElementById('force-landscape-btn').addEventListener('click', h.onForceLandscape);
     this.dom.btnMute.addEventListener('click', h.onToggleMute);
-    document.getElementById('btn-fullscreen').addEventListener('click', h.onToggleFullscreen);
+    this.dom.btnFullscreen.addEventListener('click', h.onToggleFullscreen);
+    if (this.dom.btnHudFullscreen) {
+      this.dom.btnHudFullscreen.addEventListener('click', h.onToggleFullscreen);
+    }
 
     document.getElementById('btn-map-prev').addEventListener('click', () => h.onStepMap(-1));
     document.getElementById('btn-map-next').addEventListener('click', () => h.onStepMap(1));
@@ -140,6 +145,7 @@ export class UIManager {
     this.dom.scorePill.classList.add('hidden');
     this.dom.waterAlert.classList.add('hidden');
     this.dom.btnExit.classList.add('hidden');
+    if (this.dom.btnHudFullscreen) this.dom.btnHudFullscreen.classList.add('hidden');
     this.dom.pingTag.classList.add('hidden');
     this.dom.victoryOverlay.classList.add('hidden');
     this.dom.onlineOverlay.classList.add('hidden');
@@ -152,11 +158,20 @@ export class UIManager {
     this.dom.victoryOverlay.classList.add('hidden');
     this.dom.scorePill.classList.remove('hidden');
     this.dom.btnExit.classList.remove('hidden');
+    if (this.dom.btnHudFullscreen) this.dom.btnHudFullscreen.classList.remove('hidden');
     this.dom.pingTag.classList.toggle('hidden', !isOnline);
     this.dom.waterAlert.classList.add('hidden');
     if (document.activeElement && typeof document.activeElement.blur === 'function') {
       document.activeElement.blur();
     }
+  }
+
+  updateFullscreenState(isFullscreen) {
+    const active = Boolean(isFullscreen);
+    document.body.classList.toggle('is-fullscreen', active);
+    const val = active ? 'true' : 'false';
+    if (this.dom.btnFullscreen) this.dom.btnFullscreen.setAttribute('aria-pressed', val);
+    if (this.dom.btnHudFullscreen) this.dom.btnHudFullscreen.setAttribute('aria-pressed', val);
   }
 
   showOnlineModal() {
@@ -214,6 +229,7 @@ export class UIManager {
     this.dom.scorePill.classList.add('hidden');
     this.dom.waterAlert.classList.add('hidden');
     this.dom.btnExit.classList.add('hidden');
+    if (this.dom.btnHudFullscreen) this.dom.btnHudFullscreen.classList.add('hidden');
     this.dom.victoryOverlay.classList.add('hidden');
     this.dom.onlineOverlay.classList.remove('hidden');
     this.dom.onlineStatusText.textContent = reason;
@@ -233,16 +249,23 @@ export class UIManager {
     this.dom.scoreP2.textContent = String(scores[1]);
   }
 
-  updateJumpPads(rem1Ms, rem2Ms, activeFight) {
-    const syncPad = (btn, lbl, remMs) => {
+  updateJumpPads(rem1Ms, rem2Ms, activeFight, p1JumpEnabled = true) {
+    const syncPad = (btn, lbl, remMs, enabled = true) => {
       if (!btn || !lbl) return;
+      btn.disabled = !enabled;
+      btn.classList.toggle('jump-disabled', !enabled);
+      if (!enabled) {
+        btn.classList.remove('on-cooldown');
+        if (lbl.textContent !== 'NO JMP') lbl.textContent = 'NO JMP';
+        return;
+      }
       const cooling = activeFight && remMs > 0;
       btn.classList.toggle('on-cooldown', cooling);
       const nextText = cooling ? `${(remMs / 1000).toFixed(1)}s` : 'JUMP';
       if (lbl.textContent !== nextText) lbl.textContent = nextText;
     };
-    syncPad(this.dom.padP1Jump, this.dom.padP1JumpLbl, rem1Ms);
-    syncPad(this.dom.padP2Jump, this.dom.padP2JumpLbl, rem2Ms);
+    syncPad(this.dom.padP1Jump, this.dom.padP1JumpLbl, rem1Ms, p1JumpEnabled);
+    syncPad(this.dom.padP2Jump, this.dom.padP2JumpLbl, rem2Ms, true);
   }
 
   updateWaterAlert(activeFight, roundElapsedMs, waterRising) {

@@ -80,6 +80,35 @@
   background: #F0F2F4;
 }
 
+.hud-fs-btn {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  z-index: 26;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3.5px solid var(--ink);
+  background: var(--white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 3px 0 rgba(21, 21, 24, 0.18);
+  padding: 0;
+}
+
+.hud-fs-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: var(--ink);
+}
+
+.hud-fs-btn:active {
+  transform: translateY(2px);
+}
+
 /* Circular Tactile Cartoon Arrow Controls */
 #touch-controls {
   position: fixed;
@@ -150,6 +179,24 @@
 
 .pad-jump.on-cooldown .jump-tag {
   background: var(--slate);
+  color: var(--white);
+}
+
+.pad-jump.jump-disabled {
+  background: #E2E5EB;
+  border-color: #6B7280;
+  box-shadow: none;
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.pad-jump.jump-disabled svg {
+  stroke: #7B828D;
+  opacity: 0.45;
+}
+
+.pad-jump.jump-disabled .jump-tag {
+  background: var(--red);
   color: var(--white);
 }
 
@@ -258,5 +305,16 @@
   .pad-jump svg {
     width: 26px;
     height: 26px;
+  }
+  .hud-fs-btn {
+    width: 36px;
+    height: 36px;
+    border-width: 3px;
+    top: max(8px, env(safe-area-inset-top, 0px));
+    right: max(10px, env(safe-area-inset-right, 0px));
+  }
+  .hud-fs-btn svg {
+    width: 18px;
+    height: 18px;
   }
 }

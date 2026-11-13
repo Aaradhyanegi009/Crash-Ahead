@@ -1,18 +1,8 @@
-import { EXTREME_JUMP_COOLDOWN_MS, JUMP_COOLDOWN_MS } from '../config/constants.js';
+import { EXTREME_JUMP_COOLDOWN_MS } from '../config/constants.js';
 import { ARENAS } from '../maps/arenas.js';
 import { clamp, normalizeAngle } from '../utils/math.js';
 
 export const BOT_DIFFICULTIES = Object.freeze({
-  easy: Object.freeze({
-    id: 'easy',
-    label: 'EASY',
-    speedScale: 0.72,
-    accelScale: 0.70,
-    aggression: 1.0,
-    jumpCooldownMs: 0,
-    smartPathing: false,
-    reactionCadence: 4
-  }),
   hard: Object.freeze({
     id: 'hard',
     label: 'HARD',
@@ -21,19 +11,34 @@ export const BOT_DIFFICULTIES = Object.freeze({
     aggression: 2.0,
     jumpCooldownMs: 0,
     smartPathing: true,
-    reactionCadence: 2
+    reactionCadence: 2,
+    playerCanJump: true
   }),
   extreme: Object.freeze({
     id: 'extreme',
     label: 'EXTREME',
     speedScale: 1.25,
     accelScale: 1.48,
-    aggression: 3.5,
+    aggression: 3.6,
     jumpCooldownMs: EXTREME_JUMP_COOLDOWN_MS,
     smartPathing: true,
-    reactionCadence: 1
+    reactionCadence: 1,
+    playerCanJump: true
+  }),
+  death: Object.freeze({
+    id: 'death',
+    label: 'DEATH',
+    speedScale: 1.30,
+    accelScale: 1.56,
+    aggression: 4.5,
+    jumpCooldownMs: EXTREME_JUMP_COOLDOWN_MS,
+    smartPathing: true,
+    reactionCadence: 1,
+    playerCanJump: false
   })
 });
+
+const EXTREME_PATTERNS = ['headhunter', 'highground', 'feint_counter', 'ringout', 'wheelie_scoop'];
 
 export class SmartAI {
   constructor(difficulty = 'hard') {
@@ -44,7 +49,21 @@ export class SmartAI {
     this.commitDir = 0;
     this.commitTicks = 0;
     this.commitMode = null;
+    this.pattern = 'headhunter';
+    this.patternTicks = 0;
+    this.feintCooldownTicks = 0;
+    this.feintDir = 0;
+    this.feintTicks = 0;
+    this._rngState = 0x9e3779b9;
     this._lastCmd = { l: false, r: false, jump: false };
+    this._pickPattern(null, 640);
+  }
+
+  _rand() {
+    let t = (this._rngState = (this._rngState + 0x6D2B79F5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
   setDifficulty(difficulty) {
@@ -53,6 +72,51 @@ export class SmartAI {
 
   getProfile() {
     return BOT_DIFFICULTIES[this.difficulty] || BOT_DIFFICULTIES.hard;
+  }
+
+  resetRoundState(seed = null) {
+    if (typeof seed === 'number' && Number.isFinite(seed)) {
+      this._rngState = (seed | 0) || 1;
+    } else {
+      this._rngState = ((this._rngState * 1664525 + 1013904223) | 0) || 1;
+    }
+    this.runupTicks = 0;
+    this.commitTicks = 0;
+    this.commitMode = null;
+    this.feintTicks = 0;
+    this.feintCooldownTicks = 0;
+    this.patternTicks = 0;
+    this._lastCmd = { l: false, r: false, jump: false };
+    this._pickPattern(null, 640);
+  }
+
+  _pickPattern(arena, mx) {
+    const profile = this.getProfile();
+    if (profile.aggression < 3.0) {
+      this.pattern = 'headhunter';
+      this.patternTicks = 120;
+      return;
+    }
+    const arenaId = arena ? arena.id : 0;
+    const pool = [];
+    // Weight randomized winning patterns suited to current arena
+    pool.push('headhunter', 'feint_counter', 'wheelie_scoop');
+    if (arenaId === 0 || (arenaId >= 3 && arenaId <= 8)) {
+      pool.push('highground', 'highground');
+    }
+    if (arenaId === 0 || arenaId === 1 || arenaId === 2 || arenaId === 9) {
+      pool.push('ringout', 'ringout');
+    }
+    // Prefer a different pattern on re-roll so bot constantly shifts rhythm
+    const filtered = pool.filter((p) => p !== this.pattern);
+    const choices = filtered.length > 0 ? filtered : EXTREME_PATTERNS;
+    this.pattern = choices[Math.floor(this._rand() * choices.length)];
+    const minT = profile.aggression >= 4.0 ? 68 : 85;
+    const spanT = profile.aggression >= 4.0 ? 65 : 85;
+    this.patternTicks = minT + Math.floor(this._rand() * spanT);
+    if (this.pattern === 'highground') {
+      this.commitDir = this._rand() < 0.72 ? (mx < 640 ? -1 : 1) : (mx < 640 ? 1 : -1);
+    }
   }
 
   _moveLeft(jump = false) { return { l: true, r: false, jump }; }
@@ -89,7 +153,19 @@ export class SmartAI {
     const canJump = this._canJump(sim, me, profile, gx);
     const chaseDir = ox < mx ? -1 : 1;
 
-    // Easy reacts slower between decisions; jump still evaluates immediately if enabled
+    // Extreme & Death dynamically shift winning patterns rather than running one fixed script
+    if (profile.aggression >= 3.0) {
+      if (this.feintCooldownTicks > 0) this.feintCooldownTicks--;
+      this.patternTicks--;
+      if (this.patternTicks <= 0) {
+        this._pickPattern(arena, mx);
+      }
+      if (sim.waterRising && (arena.id === 1 || arena.id === 2 || arena.id === 9) && this._rand() < 0.08) {
+        this.pattern = 'ringout';
+      }
+    }
+
+    // Hard reacts slightly slower between ticks; Extreme & Death react every single frame
     if (profile.reactionCadence > 1 && (this.decisionTick % profile.reactionCadence) !== 0) {
       return { l: this._lastCmd.l, r: this._lastCmd.r, jump: false };
     }
@@ -99,26 +175,74 @@ export class SmartAI {
       return this._lastCmd;
     };
 
-    // Extreme jump triggers (2s cooldown)
+    const oppHeadX = opp.head ? opp.head.position.x : ox;
+    const oppHeadY = opp.head ? opp.head.position.y : oy;
+    const oppG = opp.playerIndex === 1
+      ? (sim.grounded.p1R || sim.grounded.p1F)
+      : (sim.grounded.p2R || sim.grounded.p2F);
+
+    // Tactical winning jump evaluation (purposeful head-dunk, vault dodge, chasm/bridge leap, or self-save)
     const evaluateJump = () => {
       if (!canJump) return false;
       const dxAbs = Math.abs(ox - mx);
-      const pounceDist = profile.aggression >= 3.2 ? 250 : (profile.aggression >= 2.5 ? 215 : 185);
-      // 1) Aggressive pounce / overhead helmet slam / close grapple breakaway
-      if (dxAbs < pounceDist && oy <= my + 72 && mvx * chaseDir > 0.45) return true;
-      if (profile.aggression >= 3.2 && dxAbs < 165 && opp.head && (opp.head.position.y <= my + 48 || Math.abs(oy - my) < 76) && sim.roundElapsedMs > 420) return true;
-      if (profile.aggression >= 2.5 && dxAbs < 85 && Math.abs(mvx) < 1.3 && sim.roundElapsedMs > 800) return true;
-      if (profile.aggression >= 2.0 && dxAbs < 120 && Math.abs(oy - my) < 62 && sim.roundElapsedMs > 1200) return true;
-      // 2) Chasm / bridge leap (near actual lip when carrying crossing momentum)
-      if (arena.id === 8 && ((mx > 562 && mx < 588 && ox >= 640 && mvx > 2.8) || (mx < 718 && mx > 692 && ox < 640 && mvx < -2.8))) {
-        return true;
-      }
-      if (arena.id === 9 && ((mx > 442 && mx < 502 && ox > mx && mvx > 2.0) || (mx < 838 && mx > 778 && ox < mx && mvx < -2.0))) {
-        return true;
-      }
-      // 3) Flip recovery or rising-water hop
+      const closingToMe = ovx * (mx > ox ? 1 : -1);
+      const upright = Math.abs(angle) < 0.44 && Math.abs(me.chassis.angularVelocity) < 0.09;
+
+      // Cliff/chasm safety guard: never jump blindly off open sea edges or into Map 8 sea hole
+      const unsafeOpenCliff =
+        (arena.id === 1 || arena.id === 2 || arena.id === 9) &&
+        ((mx < 240 && mvx < -0.5) || (mx > 1040 && mvx > 0.5));
+      const unsafeGapRim =
+        arena.id === 8 && (
+          ((mx < 640 && mx > 535 && ox < 640 && mvx > 0.2)) ||
+          ((mx >= 640 && mx < 745 && ox >= 640 && mvx < -0.2))
+        );
+      const safeAttack = !unsafeOpenCliff && !unsafeGapRim;
+
+      // Never jump into Map 8's overhead stone deck (x ~ 515..765, bottom y ~ 357)
+      const underMap8Deck = arena.id === 8 && mx > 490 && mx < 790 && my > 355 && my < 465;
+
+      // 1) Flip recovery & rising-water self-save always allowed when grounded
       if (gx && Math.abs(angle) > 1.15) return true;
-      if (gx && my > sim.waterCrestY - 82) return true;
+      if (gx && my > sim.waterCrestY - 76 && !underMap8Deck) return true;
+
+      // 2) Chasm / bridge intentional gap leap (skip extra boost if ramp already launched vy upward into deck)
+      if (arena.id === 8 && me.chassis.velocity.y > -2.6 && ((mx > 555 && mx < 584 && ox >= 640 && mvx > 2.8) || (mx < 725 && mx > 696 && ox < 640 && mvx < -2.8))) {
+        return true;
+      }
+      if (arena.id === 9 && ((mx > 440 && mx < 504 && ox > mx && mvx > 2.0) || (mx < 840 && mx > 776 && ox < mx && mvx < -2.0))) {
+        return true;
+      }
+
+      if (!gx || !safeAttack || underMap8Deck) return false;
+
+      // Overhead clearance guard: NEVER jump straight up into an enemy bumper/tire positioned right above/overlapping us!
+      const myHeadY = me.head ? me.head.position.y : my;
+      if (dxAbs < 64 && oppHeadY < myHeadY - 4) return false;
+
+      // 3) True Deadlock / pin breakaway: stuck nearly motionless side-by-side -> hop cleanly above
+      if (dxAbs < 62 && Math.abs(mvx) < 0.85 && Math.abs(ovx) < 1.25 && oppHeadY >= myHeadY - 6 && sim.roundElapsedMs > 620) {
+        return true;
+      }
+
+      // 4) Counter-vault over an incoming high-speed ram (needs >=58px horizontal space so we clear ABOVE hood, not mid-rise!)
+      if (upright && dxAbs >= 58 && dxAbs < 142 && closingToMe > 2.5 && oppHeadY >= myHeadY - 12 && oppHeadY <= my + 48) {
+        return true;
+      }
+
+      // 5) Predictive Aerial Head-Dunk (at 64..158px closing range so peak descends wheels-first onto opp head!)
+      if (upright && (this.pattern !== 'wheelie_scoop' || oppHeadY < myHeadY - 5)) {
+        const predDx = Math.abs((oppHeadX + ovx * 11) - (mx + mvx * 11));
+        const strikeMax = profile.aggression >= 4.0 ? 158 : 138;
+        const headReachable = oppHeadY >= myHeadY - 24 && oppHeadY <= my + 54;
+        const movingToward = mvx * chaseDir > 1.3;
+        if (dxAbs >= 64 && predDx < strikeMax && headReachable && movingToward) return true;
+      }
+
+      // 6) Anti-air intercept when opponent jumped away from directly on top of us
+      if (upright && profile.aggression >= 4.0 && !oppG && dxAbs >= 56 && dxAbs < 125 && oppHeadY < my - 24 && oppHeadY > my - 115) {
+        return true;
+      }
       return false;
     };
 
@@ -156,13 +280,11 @@ export class SmartAI {
       const meLeftBowl = mx < 640;
       const oppLeftBowl = ox < 640;
 
-      // Inverted mid-air stabilization across Map 8 chasm: right reduces clockwise tilt, left increases
+      // Mid-air PD attitude stabilization across Map 8 chasm: keep nose slightly up & land wheels-down!
       if (!gx && mx > 565 && mx < 715) {
-        if (Math.abs(angle) > 0.24) return emit(angle > 0 ? this._moveRight() : this._moveLeft());
-        if (meLeftBowl === oppLeftBowl && mx < 592) return emit(this._moveLeft());
-        if (meLeftBowl === oppLeftBowl && mx > 688) return emit(this._moveRight());
-        if (mx < 605 || (mx < 640 && mvx > 0.25)) return emit(this._moveRight());
-        if (mx > 675 || (mx >= 640 && mvx < -0.25)) return emit(this._moveLeft());
+        const desired = -me.facing * 0.08;
+        const pd = normalizeAngle(angle - desired) + me.chassis.angularVelocity * 8.0;
+        if (Math.abs(pd) > 0.14) return emit(pd > 0 ? this._moveRight() : this._moveLeft());
         return emit({ l: false, r: false, jump: false });
       }
 
@@ -234,44 +356,76 @@ export class SmartAI {
       oy < my - 84
     );
 
+    const highGroundWanted =
+      this.pattern === 'highground' &&
+      arena.id >= 3 &&
+      arena.id <= 8 &&
+      my >= oy - 35 &&
+      Math.abs(ox - mx) > 165 &&
+      this.commitTicks <= 0;
+
     if (profile.smartPathing && arena.id >= 3 && arena.id <= 8) {
       if (this.commitTicks > 0 && this.commitMode === 'climb') {
-        const reachedTopTarget = my <= oy + 32 && Math.abs(mx - ox) < 270 && (ox - mx) * mvx >= 0;
-        const oppDroppedToFloor = oy > 465 && my > 440;
-        if (reachedTopTarget || oppDroppedToFloor) {
+        const reachedTopTarget = my <= oy + 26 && Math.abs(mx - ox) < 275 && (ox - mx) * mvx >= -0.3;
+        const maxClimbAng = oppElevated ? 1.82 : 1.18;
+        const tooSteepOrAir = Math.abs(angle) > maxClimbAng || (!gx && my < 330 && Math.abs(angle) > 1.1);
+        const oppDroppedToFloor = oy > 465 && my > 440 && this.pattern !== 'highground';
+        if (reachedTopTarget || oppDroppedToFloor || tooSteepOrAir) {
           this.commitTicks = 0;
           this.commitMode = null;
+          if (this.pattern === 'highground') this.pattern = 'headhunter';
         } else {
           this.commitTicks--;
-          if (this.commitTicks === 0) this.commitMode = null;
-          const launchJump = canJump && my < oy + 36 && (ox - mx) * mvx > 0.6;
+          if (this.commitTicks === 0) {
+            this.commitMode = null;
+            if (this.pattern === 'highground') this.pattern = 'headhunter';
+          }
+          const launchJump = canJump && Math.abs(angle) < 0.65 && my < oy + 28 && (ox - mx) * mvx > 0.8 && Math.abs(ox - mx) < 240;
           return emit(this.commitDir < 0 ? this._moveLeft(launchJump) : this._moveRight(launchJump));
         }
       }
 
-      if (oppElevated && Math.abs(ox - mx) < 420) {
-        this.commitDir = mx < 580 ? -1 : mx > 700 ? 1 : (mvx < -0.2 ? -1 : mvx > 0.2 ? 1 : (mx < 640 ? -1 : 1));
-        this.commitTicks = 92;
+      if ((oppElevated && Math.abs(ox - mx) < 420) || highGroundWanted) {
+        this.commitDir = highGroundWanted && this.commitDir !== 0
+          ? this.commitDir
+          : (mx < 580 ? -1 : mx > 700 ? 1 : (mvx < -0.2 ? -1 : mvx > 0.2 ? 1 : (mx < 640 ? -1 : 1)));
+        this.commitTicks = highGroundWanted ? 38 : 82;
         this.commitMode = 'climb';
         return emit(this.commitDir < 0 ? this._moveLeft(false) : this._moveRight(false));
       }
     }
 
-    // Inverted mid-air pitch recovery & opportunistic flip/slam dive
+    // Feint & bait-counter pattern: brief pullback at mid-range to lure enemy into exposing helmet/momentum
+    if (profile.aggression >= 3.0 && gx && Math.abs(angle) < 0.55 && arena.id !== 8) {
+      const safeForFeint = mx > 285 && mx < 995;
+      if (this.feintTicks > 0) {
+        this.feintTicks--;
+        if (!safeForFeint || Math.abs(ox - mx) < 105) {
+          this.feintTicks = 0;
+        } else {
+          return emit(this.feintDir < 0 ? this._moveLeft(false) : this._moveRight(false));
+        }
+      } else if (
+        this.pattern === 'feint_counter' &&
+        this.feintCooldownTicks <= 0 &&
+        safeForFeint &&
+        Math.abs(ox - mx) > 175 &&
+        Math.abs(ox - mx) < 340
+      ) {
+        this.feintDir = ox > mx ? -1 : 1;
+        this.feintTicks = (profile.aggression >= 4.0 ? 6 : 10) + Math.floor(this._rand() * (profile.aggression >= 4.0 ? 5 : 8));
+        this.feintCooldownTicks = 100;
+        return emit(this.feintDir < 0 ? this._moveLeft(false) : this._moveRight(false));
+      }
+    }
+
+    // Mid-air PD attitude control: never spin upside-down trying to steer horizontally in air (air has 0 linear drive!).
+    // Keep wheels down & slight front-nose lift so we land safely atop enemy helmets instead of skull-first!
     if (!gx && my < 495) {
-      if (this.decisionTick % 20 === 0) this.flipBias = ((this.decisionTick / 20) % 3) * 0.35;
-      if (profile.aggression >= 3.2 && opp.head && oy > my + 16 && Math.abs(ox - mx) < 230) {
-        return emit(opp.head.position.x < mx ? this._moveLeft() : this._moveRight());
-      }
-      if (profile.aggression >= 2.5 && oy > my + 24 && Math.abs(ox - mx) < 195) {
-        return emit(ox < mx ? this._moveLeft() : this._moveRight());
-      }
-      if (Math.abs(angle) > 0.55) {
-        return emit(angle > 0 ? this._moveRight() : this._moveLeft());
-      }
-      if (profile.aggression >= 2.0 && Math.abs(ox - mx) < 170 && oy < my) {
-        // Flip / slam orientation above enemy
-        return emit(ox < mx ? this._moveLeft() : this._moveRight());
+      const desired = -me.facing * 0.08;
+      const pd = normalizeAngle(angle - desired) + me.chassis.angularVelocity * 8.0;
+      if (Math.abs(pd) > 0.14) {
+        return emit(pd > 0 ? this._moveRight() : this._moveLeft());
       }
       return emit({ l: false, r: false, jump: false });
     }
@@ -281,16 +435,43 @@ export class SmartAI {
       return emit(angle > 0 ? this._moveRight(canJump) : this._moveLeft(canJump));
     }
 
-    // Extreme & Hard enhanced curved-track / bridge / overhead path tracking
-    const deadzone = profile.aggression >= 3.2 ? 3 : (profile.aggression >= 2.5 ? 6 : (profile.aggression >= 2.0 ? 10 : 48));
-    const lookaheadFrames = profile.aggression >= 3.2 ? 18 : (profile.aggression >= 2.5 ? 15 : (profile.smartPathing ? 12 : 4));
+    // Never park directly underneath an elevated/descending opponent: sidestep toward safe ground, then counter-strike
+    const myHeadYNow = me.head ? me.head.position.y : my;
+    if (profile.aggression >= 3.0 && gx && oppHeadY < myHeadYNow - 24 && Math.abs(ox - mx) < 88 && arena.id !== 8) {
+      const awayDir = ox <= mx ? 1 : -1;
+      const openWaterArena = arena.id === 1 || arena.id === 2 || arena.id === 9;
+      const cliffBlocked = openWaterArena && ((awayDir < 0 && mx < 245) || (awayDir > 0 && mx > 1035));
+      if (!cliffBlocked) {
+        return emit(awayDir < 0 ? this._moveLeft(false) : this._moveRight(false));
+      }
+    }
+
+    // Extreme, Death & Hard enhanced curved-track / bridge / overhead path tracking
+    const deadzone = profile.aggression >= 4.0 ? 2 : (profile.aggression >= 3.2 ? 3 : (profile.aggression >= 2.0 ? 9 : 48));
+    const dxClose = Math.abs(ox - mx);
+    const lookaheadFrames = dxClose < 115
+      ? (profile.aggression >= 3.2 ? 7 : 5)
+      : (profile.aggression >= 4.0 ? 16 : (profile.aggression >= 3.2 ? 14 : (profile.smartPathing ? 11 : 4)));
     let minTargetX = 200;
     let maxTargetX = 1080;
     if (arena.id === 8 && (mx < 640) === (ox < 640)) {
       if (mx < 640) maxTargetX = 470;
       else minTargetX = 810;
     }
-    const targetX = clamp(ox + ovx * lookaheadFrames, minTargetX, maxTargetX);
+
+    // Headhunter aims right at predicted enemy helmet; Ringout pushes from center outward toward sea!
+    let aimX = (profile.aggression >= 3.2 ? oppHeadX : ox) + ovx * lookaheadFrames;
+    if (this.pattern === 'ringout' && profile.aggression >= 3.0) {
+      const oppOutwardDir = ox >= 640 ? 1 : -1;
+      const enemyOnOutside = (ox - mx) * oppOutwardDir > -10;
+      if (enemyOnOutside) {
+        aimX = ox + ovx * (lookaheadFrames * 0.85) + oppOutwardDir * 24;
+      } else {
+        // Get inside opponent first so we push them toward sea, never ourselves
+        aimX = clamp(ox - oppOutwardDir * 95, minTargetX, maxTargetX);
+      }
+    }
+    const targetX = clamp(aimX, minTargetX, maxTargetX);
 
     const doJump = evaluateJump();
     if (targetX < mx - deadzone) return emit(this._moveLeft(doJump));

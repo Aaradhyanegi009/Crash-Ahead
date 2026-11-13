@@ -706,6 +706,7 @@ export class NetworkManager {
         break;
       }
       case 'match_start':
+        if (typeof msg.ep === 'number' && msg.ep < this.matchEpoch) return;
         this.resetPredictionState(typeof msg.ep === 'number' ? msg.ep : this.matchEpoch);
         this.cb.onMatchStart(msg.ai || 0, idxToModel(msg.m1), idxToModel(msg.m2));
         break;
@@ -713,6 +714,7 @@ export class NetworkManager {
         if (this.role === 'host' && this.cb.onStartRequested) this.cb.onStartRequested();
         break;
       case 'snap': {
+        if (!Number.isFinite(msg.sq)) return;
         if (typeof msg.ep === 'number') {
           if (msg.ep < this.matchEpoch) return;
           if (msg.ep > this.matchEpoch) {
@@ -762,7 +764,7 @@ export class NetworkManager {
       const changed = l !== this.lastInputSent.l || r !== this.lastInputSent.r || j !== this.lastInputSent.j;
       if (changed && !l && !r && !j) this.releaseBurstLeft = 2;
       const relayOnly = this.transportName() === 'relay';
-      const heldSend = (l || r) && (this.inputSendTick % (relayOnly ? 3 : 2) === 0);
+      const heldSend = (l || r || j) && (this.inputSendTick % (relayOnly ? 3 : 2) === 0);
       const releaseEcho = !l && !r && !j && this.releaseBurstLeft > 0;
       const idleHeartbeat = this.inputSendTick % (relayOnly ? 8 : 4) === 0;
       if (changed || heldSend || releaseEcho || idleHeartbeat) {

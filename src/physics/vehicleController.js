@@ -196,6 +196,23 @@ export class VehiclePhysicsController {
 
   clampAirborneAndMaxSpeed(car) {
     if (!car) return;
+    const bodies = [car.chassis, car.wheelR, car.wheelF, car.head];
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (!b) continue;
+      if (
+        !Number.isFinite(b.position.x) || !Number.isFinite(b.position.y) ||
+        !Number.isFinite(b.velocity.x) || !Number.isFinite(b.velocity.y) ||
+        !Number.isFinite(b.angle) || !Number.isFinite(b.angularVelocity)
+      ) {
+        const safe = (car.spawnParts && car.spawnParts[i]) || { x: 640, y: 360 };
+        this.Body.setPosition(b, { x: safe.x, y: safe.y });
+        this.Body.setVelocity(b, { x: 0, y: 0 });
+        this.Body.setAngle(b, 0);
+        this.Body.setAngularVelocity(b, 0);
+      }
+    }
+
     const spdScale = car.speedScale || 1.0;
     if (car.isAirborne) {
       const clampedAv = clamp(
@@ -217,7 +234,7 @@ export class VehiclePhysicsController {
         const trim = vAlong - maxS;
         const dx = car.accelDir * tx * trim;
         const dy = car.accelDir * ty * trim;
-        for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+        for (const b of bodies) {
           this.Body.setVelocity(b, { x: b.velocity.x - dx, y: b.velocity.y - dy });
         }
       }
@@ -225,14 +242,14 @@ export class VehiclePhysicsController {
       const totalCap = maxS * 1.04;
       if (totalSpd > totalCap) {
         const sc = totalCap / totalSpd;
-        for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+        for (const b of bodies) {
           this.Body.setVelocity(b, { x: b.velocity.x * sc, y: b.velocity.y * sc });
         }
       }
     }
 
     const worldCap = VEHICLE_PHYSICS.MAX_WORLD_SPEED * Math.max(1.0, spdScale);
-    for (const body of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+    for (const body of bodies) {
       const spd = Math.hypot(body.velocity.x, body.velocity.y);
       if (spd > worldCap) {
         const scale = worldCap / spd;
@@ -247,6 +264,14 @@ export class VehiclePhysicsController {
           car.chassis,
           clamp(car.chassis.angularVelocity, -edgeSpinCap, edgeSpinCap)
         );
+      }
+    }
+    if (car.head && Math.abs(car.head.angularVelocity) > 0.45) {
+      this.Body.setAngularVelocity(car.head, clamp(car.head.angularVelocity, -0.45, 0.45));
+    }
+    for (const w of [car.wheelR, car.wheelF]) {
+      if (w && Math.abs(w.angularVelocity) > 1.5) {
+        this.Body.setAngularVelocity(w, clamp(w.angularVelocity, -1.5, 1.5));
       }
     }
   }
@@ -398,7 +423,7 @@ export class VehiclePhysicsController {
     const contactScale = ground.groundedCount === 2 ? 1.0 : (!isReverse && uphillFactor > 0.35 ? 0.98 : 0.90);
 
     const totalMass = car.chassis.mass + car.wheelR.mass + car.wheelF.mass + car.head.mass;
-    const massScale = clamp(totalMass / 15.3403, 0.90, 1.18);
+    const massScale = clamp(totalMass / 15.3403, 0.68, 1.18);
     const uphillCompBoost = isReverse ? 0.0 : 0.04;
     const gravityComp = totalMass * this.engine.gravity.y * 0.001 * Math.max(uphillFactor, steepWallFactor * 0.7) * (VEHICLE_PHYSICS.GRAVITY_COMP_SCALE + uphillCompBoost * uphillFactor) * (0.45 + 0.55 * progressiveGain);
 
@@ -503,8 +528,8 @@ export class VehiclePhysicsController {
       ) {
         const liftGain = clamp((forwardTargetLift - noseLiftNow) / VEHICLE_PHYSICS.FORWARD_WHEELIE_ANGLE, 0, 1);
         this.Body.applyForce(noseWheel, noseWheel.position, {
-          x: ground.normal.x * 0.0040 * liftGain,
-          y: ground.normal.y * 0.0040 * liftGain
+          x: ground.normal.x * 0.0040 * massScale * liftGain,
+          y: ground.normal.y * 0.0040 * massScale * liftGain
         });
       }
     }

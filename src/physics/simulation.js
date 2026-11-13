@@ -154,22 +154,18 @@ export class PhysicsSimulation {
         const la = a.label || '';
         const lb = b.label || '';
 
-        if (la === 'head_p1' || lb === 'head_p1') {
-          const other = la === 'head_p1' ? b : a;
+        const checkHeadHit = (headLabel, playerIdx, oppTag) => {
+          if (la !== headLabel && lb !== headLabel) return;
+          const headBody = la === headLabel ? a : b;
+          const other = la === headLabel ? b : a;
           const ol = other.label || '';
-          if (ol === 'island' || ol === 'seesaw' || ol.endsWith('_p2') || ol.includes('_p2_')) {
-            const pt = (pair.collision.supports && pair.collision.supports[0]) || a.position;
-            if (this.onHeadKO) this.onHeadKO(1, pt);
+          if (ol === 'island' || ol === 'seesaw' || ol.endsWith(oppTag) || ol.includes(`${oppTag}_`)) {
+            const pt = (pair.collision.supports && pair.collision.supports[0]) || headBody.position;
+            if (this.onHeadKO) this.onHeadKO(playerIdx, pt);
           }
-        }
-        if (la === 'head_p2' || lb === 'head_p2') {
-          const other = la === 'head_p2' ? b : a;
-          const ol = other.label || '';
-          if (ol === 'island' || ol === 'seesaw' || ol.endsWith('_p1') || ol.includes('_p1_')) {
-            const pt = (pair.collision.supports && pair.collision.supports[0]) || b.position;
-            if (this.onHeadKO) this.onHeadKO(2, pt);
-          }
-        }
+        };
+        checkHeadHit('head_p1', 1, '_p2');
+        checkHeadHit('head_p2', 2, '_p1');
 
         if (
           (la.startsWith('chassis_p') || la.startsWith('wheel_p')) &&
@@ -582,6 +578,7 @@ export class PhysicsSimulation {
       driving: false,
       speedScale: 1.0,
       accelScale: 1.0,
+      jumpDisabled: false,
       jumpCooldownMs: JUMP_COOLDOWN_MS,
       lastJumpAtMs: -99999,
       driverState: {
@@ -599,7 +596,7 @@ export class PhysicsSimulation {
 
   getJumpCooldownRemaining(playerIndex) {
     const car = playerIndex === 1 ? this.p1Car : this.p2Car;
-    if (!car) return 0;
+    if (!car || car.jumpDisabled) return Infinity;
     const cooldownMs = car.jumpCooldownMs || JUMP_COOLDOWN_MS;
     const elapsedSince = this.roundElapsedMs - car.lastJumpAtMs;
     if (elapsedSince >= cooldownMs) return 0;
@@ -607,12 +604,13 @@ export class PhysicsSimulation {
   }
 
   triggerJump(car, chaseDir = 0) {
-    if (!car || car.dead) return false;
+    if (!car || car.dead || car.jumpDisabled) return false;
     const cooldownMs = car.jumpCooldownMs || JUMP_COOLDOWN_MS;
     if (this.roundElapsedMs - car.lastJumpAtMs < cooldownMs) return false;
     if (car.isAirborne && car.airTicks > 8) return false;
 
     const dxBoost = chaseDir * VEHICLE_PHYSICS.JUMP_FWD_BOOST;
+    const maxVx = Math.max(10.8, VEHICLE_PHYSICS.MAX_FORWARD_SPEED * (car.speedScale || 1.0) + VEHICLE_PHYSICS.JUMP_FWD_BOOST + 0.5);
     const bodies = [car.chassis, car.wheelR, car.wheelF, car.head];
     for (const b of bodies) {
       const targetVy = clamp(
@@ -621,7 +619,7 @@ export class PhysicsSimulation {
         -VEHICLE_PHYSICS.JUMP_MIN_VY
       );
       this.Body.setVelocity(b, {
-        x: clamp(b.velocity.x + dxBoost, -10.5, 10.5),
+        x: clamp(b.velocity.x + dxBoost, -maxVx, maxVx),
         y: targetVy
       });
     }
@@ -678,18 +676,20 @@ export class PhysicsSimulation {
     const applyBody = (body, st) => {
       if (!body || !st) return;
       if (Array.isArray(st)) {
+        if (!st.every(Number.isFinite)) return;
         this.Body.setPosition(body, { x: st[0], y: st[1] });
         this.Body.setVelocity(body, { x: st[2], y: st[3] });
         this.Body.setAngle(body, st[4]);
         this.Body.setAngularVelocity(body, st[5]);
         return;
       }
+      if (!Number.isFinite(st.x) || !Number.isFinite(st.y) || !Number.isFinite(st.a)) return;
       this.Body.setPosition(body, { x: st.x, y: st.y });
       this.Body.setAngle(body, st.a);
-      if (typeof st.vx === 'number' && typeof st.vy === 'number') {
+      if (Number.isFinite(st.vx) && Number.isFinite(st.vy)) {
         this.Body.setVelocity(body, { x: st.vx, y: st.vy });
       }
-      if (typeof st.av === 'number') {
+      if (Number.isFinite(st.av)) {
         this.Body.setAngularVelocity(body, st.av);
       }
     };
@@ -722,11 +722,11 @@ export class PhysicsSimulation {
       for (let i = 0; i < this.seesaws.length; i++) {
         const swSt = snap.sw[i];
         if (Array.isArray(swSt)) {
-          this.Body.setAngle(this.seesaws[i].body, swSt[0]);
-          this.Body.setAngularVelocity(this.seesaws[i].body, swSt[1]);
-        } else {
+          if (Number.isFinite(swSt[0])) this.Body.setAngle(this.seesaws[i].body, swSt[0]);
+          if (Number.isFinite(swSt[1])) this.Body.setAngularVelocity(this.seesaws[i].body, swSt[1]);
+        } else if (swSt && Number.isFinite(swSt.a)) {
           this.Body.setAngle(this.seesaws[i].body, swSt.a);
-          if (typeof swSt.av === 'number') {
+          if (Number.isFinite(swSt.av)) {
             this.Body.setAngularVelocity(this.seesaws[i].body, swSt.av);
           }
         }
@@ -862,7 +862,7 @@ export class PhysicsSimulation {
     });
   }
 
-  popHelmet(playerIndex, impactPt) {
+  _severDriver(playerIndex, impactPt, isWater = false) {
     const car = playerIndex === 1 ? this.p1Car : this.p2Car;
     if (!car || car.headSevered) return;
     car.headSevered = true;
@@ -872,20 +872,15 @@ export class PhysicsSimulation {
       this.Composite.remove(this.engine.world, c);
     }
     car.headConstraints = [];
-    this._spawnRagdollBodies(car, impactPt, false);
+    this._spawnRagdollBodies(car, impactPt, isWater);
+  }
+
+  popHelmet(playerIndex, impactPt) {
+    this._severDriver(playerIndex, impactPt, false);
   }
 
   ejectWaterRagdoll(playerIndex, impactPt) {
-    const car = playerIndex === 1 ? this.p1Car : this.p2Car;
-    if (!car || car.headSevered) return;
-    car.headSevered = true;
-    car.dead = true;
-
-    for (const c of car.headConstraints) {
-      this.Composite.remove(this.engine.world, c);
-    }
-    car.headConstraints = [];
-    this._spawnRagdollBodies(car, impactPt, true);
+    this._severDriver(playerIndex, impactPt, true);
   }
 
   _updateDriverSpring(car) {
@@ -927,7 +922,8 @@ export class PhysicsSimulation {
   }
 
   stepHoverCountdown(countdownElapsedMs = 0) {
-    const hoverY = -3.0 * (1 - Math.cos(countdownElapsedMs * 0.0055));
+    const tMs = Number.isFinite(countdownElapsedMs) ? countdownElapsedMs : 0;
+    const hoverY = -3.0 * (1 - Math.cos(tMs * 0.0055));
     const cars = [this.p1Car, this.p2Car];
     for (const car of cars) {
       if (!car || !car.spawnParts) continue;
@@ -944,6 +940,8 @@ export class PhysicsSimulation {
       car.isAirborne = false;
       car.airTicks = 0;
       car.driving = false;
+      car.accelHoldMs = 0;
+      car.accelDir = 0;
     }
 
     for (const s of this.seesaws) {
@@ -970,11 +968,11 @@ export class PhysicsSimulation {
     const g1 = this.vehicleController.updateVehicle(this.p1Car, activeP1, this.wheelContacts.p1, this.driveSurfaces);
     const g2 = this.vehicleController.updateVehicle(this.p2Car, activeP2, this.wheelContacts.p2, this.driveSurfaces);
 
-    if (canControl && activeP1.jump && this.p1Car && !this.p1Car.dead) {
+    if (canControl && activeP1.jump && this.p1Car && !this.p1Car.dead && !this.p1Car.jumpDisabled) {
       const chaseDir1 = activeP1.r ? 1 : (activeP1.l ? -1 : 0);
       this.triggerJump(this.p1Car, chaseDir1);
     }
-    if (canControl && activeP2.jump && this.p2Car && !this.p2Car.dead) {
+    if (canControl && activeP2.jump && this.p2Car && !this.p2Car.dead && !this.p2Car.jumpDisabled) {
       const chaseDir2 = activeP2.r ? 1 : (activeP2.l ? -1 : 0);
       this.triggerJump(this.p2Car, chaseDir2);
     }
@@ -1014,14 +1012,15 @@ export class PhysicsSimulation {
           }
         }
       }
-      this.Body.setAngularVelocity(sw.body, av);
+      this.Body.setAngularVelocity(sw.body, clamp(av, -0.18, 0.18));
     }
 
     if (this.isHostSide) {
       const checkWater = (car, idx) => {
         if (!car || car.dead) return;
-        if (car.head.position.y > this.waterHazardY || car.chassis.position.y > this.waterHazardY) {
-          if (this.onWaterKO) this.onWaterKO(idx, { x: car.chassis.position.x, y: this.waterCrestY });
+        const outX = car.chassis.position.x < -140 || car.chassis.position.x > WORLD_W + 140;
+        if (car.head.position.y > this.waterHazardY || car.chassis.position.y > this.waterHazardY || outX) {
+          if (this.onWaterKO) this.onWaterKO(idx, { x: clamp(car.chassis.position.x, 40, WORLD_W - 40), y: this.waterCrestY });
         }
       };
       checkWater(this.p1Car, 1);
