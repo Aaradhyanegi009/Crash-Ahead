@@ -712,8 +712,8 @@
         <div class="map-picker-row">
           <button id="btn-map-prev" class="map-step-btn" type="button" aria-label="Previous Map">&lt;</button>
           <button id="btn-map-cycle" class="map-picker-label" type="button" title="Cycle Map">
-            <span id="map-picker-title" class="map-picker-main">ALL 15 MAPS (RANDOM ROTATION)</span>
-            <span id="map-picker-sub" class="map-picker-sub">Tap arrows to lock Maps 1&ndash;15 or preview</span>
+            <span id="map-picker-title" class="map-picker-main">ALL 9 MAPS (IN ORDER)</span>
+            <span id="map-picker-sub" class="map-picker-sub">Plays Maps 1&ndash;9 in exact order &bull; Tap arrows to lock</span>
           </button>
           <button id="btn-map-next" class="map-step-btn" type="button" aria-label="Next Map">&gt;</button>
         </div>
@@ -823,27 +823,60 @@
         blue: { body: '#00B4FF', lip: '#0082B8', rim: '#00B4FF', helmet: '#00B4FF' }
       };
 
+      // Tunable Vehicle Physics Constants (Grounded Stability, Forward & Reverse Hill Climbing)
+      const FORWARD_TORQUE = 0.0125;          // Low-end forward climbing force scalar
+      const REVERSE_TORQUE = 0.0112;          // Dedicated reverse climbing force for steep backward climbs
+      const MAX_FORWARD_SPEED = 8.8;          // Top tangential flat/climb speed cap (px/tick @ 60Hz)
+      const MAX_REVERSE_SPEED = 6.8;          // Controlled reverse top speed cap (px/tick @ 60Hz)
+      const SLOPE_GRIP_MULTIPLIER = 1.85;     // Longitudinal traction & force multiplier on upward slopes
+      const CENTER_OF_MASS_OFFSET = 5.5;      // Pixels below chassis midpoint to stop erratic tipping
+      const SUSPENSION_DAMPING = 0.28;        // Critically tuned suspension damper (absorbs hits without bounce/jitter)
+
+      const VEHICLE_PHYSICS = Object.freeze({
+        FORWARD_TORQUE,
+        REVERSE_TORQUE,
+        MAX_FORWARD_SPEED,
+        MAX_REVERSE_SPEED,
+        SLOPE_GRIP_MULTIPLIER,
+        CENTER_OF_MASS_OFFSET,
+        SUSPENSION_DAMPING,
+        SUSPENSION_STIFFNESS: 0.48,
+        AXLE_ARM_STIFFNESS: 0.85,
+        AXLE_ARM_DAMPING: 0.30,
+        BRAKE_DECEL_FORCE: 0.028,
+        BRAKE_ZERO_THRESHOLD: 0.32,
+        MAX_ANGULAR_VELOCITY: 0.135,
+        GROUND_ANGULAR_DAMPING: 0.84,
+        AIR_ANGULAR_DAMPING: 0.88,
+        AIR_CONTROL_SPIN: 0.105,
+        FORWARD_PITCH_MAX_OFFSET: 0.12,
+        REVERSE_PITCH_BIAS: 0.04,
+        PITCH_KP: 0.016,
+        PITCH_KD: 0.20,
+        PITCH_TORQUE_LIMIT: 0.022,
+        WHEEL_BASE_FRICTION: 0.96,
+        WHEEL_MAX_SPIN: 0.66,
+        WHEEL_REVERSE_MAX_SPIN: 0.51,
+        GRAVITY_COMP_SCALE: 0.72
+      });
+
       const CAR_SPEC = {
         width: 90,
         height: 26,
         density: 0.005,
-        restitution: 0.14,
-        friction: 0.32,
+        restitution: 0.10,
+        friction: 0.35,
         wheelOffsetX: 27,
         wheelOffsetY: 13,
         wheelRadius: 14.5,
-        wheelDensity: 0.008,
-        wheelFriction: 1.0,
-        wheelRestitution: 0.14,
+        wheelDensity: 0.0088,
+        wheelFriction: VEHICLE_PHYSICS.WHEEL_BASE_FRICTION,
+        wheelRestitution: 0.08,
         headRadius: 11.5,
         headOffsetY: -16,
         headDensity: 0.0005,
         headRestitution: 0.15,
-        maxWheelSpin: 0.45,
-        slopeAssistForce: 0.0044,
-        wheelieAngle: 0.24,
-        airTargetSpin: 0.135,
-        airSpinDamping: 0.90
+        maxWheelSpin: VEHICLE_PHYSICS.WHEEL_MAX_SPIN
       };
 
       function clamp(v, min, max) {
@@ -966,7 +999,14 @@
           const dur = 0.34;
           const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
           const data = buf.getChannelData(0);
-          for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (data.length * 0.32));
+          let lfsr = 0x9E3779B9;
+          for (let i = 0; i < data.length; i++) {
+            lfsr ^= lfsr << 13;
+            lfsr ^= lfsr >>> 17;
+            lfsr ^= lfsr << 5;
+            const norm = ((lfsr >>> 0) / 4294967295) * 2 - 1;
+            data[i] = norm * Math.exp(-i / (data.length * 0.32));
+          }
           const src = this.ctx.createBufferSource();
           src.buffer = buf;
           const bp = this.ctx.createBiquadFilter();
@@ -1024,7 +1064,7 @@
       };
 
       // =========================================================================
-      // 3. GEOMETRY & ARENAS (ALL 15 MAPS: 9 CORE SCREENSHOT MAPS + 6 DERIVED)
+      // 3. DETERMINISTIC 9-MAP CONFIGURATION MODULE (STRICTLY 9 CORE MAPS)
       // =========================================================================
       function sampleArcPoints(cx, cy, r, aStart, aEnd, steps = 16) {
         const pts = [];
@@ -1072,20 +1112,20 @@
         return cur;
       }
 
-      function generateRockPills(seed = 1) {
-        const pills = [];
-        let s = seed * 9301 + 49297;
-        const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
-        for (let i = 0; i < 34; i++) {
-          pills.push({
-            x: 40 + rnd() * 1140,
-            y: 45 + rnd() * 600,
-            w: 46 + rnd() * 82,
-            h: 16
-          });
-        }
-        return pills;
-      }
+      // Fixed, 100% static inner rock texture markings (zero random generation)
+      const STATIC_ROCK_PILLS = Object.freeze([
+        { x: 58, y: 74, w: 94, h: 16 },   { x: 215, y: 68, w: 72, h: 16 },  { x: 390, y: 58, w: 112, h: 16 },
+        { x: 602, y: 64, w: 86, h: 16 },  { x: 840, y: 70, w: 108, h: 16 }, { x: 1095, y: 82, w: 78, h: 16 },
+        { x: 76, y: 158, w: 118, h: 16 }, { x: 280, y: 148, w: 66, h: 16 }, { x: 520, y: 136, w: 92, h: 16 },
+        { x: 765, y: 146, w: 80, h: 16 }, { x: 990, y: 164, w: 114, h: 16 },{ x: 1140, y: 182, w: 74, h: 16 },
+        { x: 48, y: 248, w: 84, h: 16 },  { x: 142, y: 312, w: 68, h: 16 }, { x: 1105, y: 268, w: 96, h: 16 },
+        { x: 1152, y: 348, w: 72, h: 16 },{ x: 64, y: 405, w: 106, h: 16 }, { x: 1085, y: 424, w: 88, h: 16 },
+        { x: 245, y: 492, w: 88, h: 16 }, { x: 412, y: 518, w: 110, h: 16 },{ x: 585, y: 496, w: 72, h: 16 },
+        { x: 745, y: 514, w: 104, h: 16 },{ x: 930, y: 498, w: 82, h: 16 }, { x: 1110, y: 516, w: 92, h: 16 },
+        { x: 88, y: 562, w: 102, h: 16 }, { x: 295, y: 584, w: 76, h: 16 }, { x: 545, y: 572, w: 118, h: 16 },
+        { x: 802, y: 582, w: 94, h: 16 }, { x: 1020, y: 576, w: 84, h: 16 },{ x: 165, y: 618, w: 96, h: 16 },
+        { x: 448, y: 616, w: 80, h: 16 }, { x: 690, y: 620, w: 108, h: 16 },{ x: 940, y: 614, w: 78, h: 16 }
+      ]);
 
       function doubleValleyY(x, base = 436, crest = 430, depth = 40, leftX = 180, rightX = 1100, ledge = 135) {
         const cx = 640;
@@ -1197,7 +1237,7 @@
         return { surface, visualPoly };
       }
 
-      const ARENAS = [
+      const ARENAS = Object.freeze([
         // 1. Classic Double-Valley Floating Island
         (() => {
           const top = sampleCurveX(180, 1100, 32, (x) => doubleValleyY(x));
@@ -1214,7 +1254,7 @@
             { x: 195, y: 500 },
             { x: 180, y: 446 }
           ], false, 2);
-          return {
+          return Object.freeze({
             id: 1,
             name: 'DOUBLE-VALLEY ISLAND',
             desc: 'Classic floating rock over open water',
@@ -1224,10 +1264,10 @@
             halfPipes: [],
             blocks: [{ x: 640, y: 542, w: 690, h: 86, chamfer: 26, hiddenVisual: true }],
             seesaws: [],
-            pills: generateRockPills(1),
+            pills: STATIC_ROCK_PILLS,
             p1Spawn: { x: 245, y: 404 },
             p2Spawn: { x: 1035, y: 404 }
-          };
+          });
         })(),
 
         // 2. Bumpy 3-Peak Caterpillar Island
@@ -1244,7 +1284,7 @@
             { x: 146, y: 540 },
             { x: 182, y: 472 }
           ], false, 2);
-          return {
+          return Object.freeze({
             id: 2,
             name: '3-PEAK CATERPILLAR',
             desc: 'Triple center waves on thick floating rock',
@@ -1254,16 +1294,16 @@
             halfPipes: [],
             blocks: [{ x: 640, y: 562, w: 800, h: 80, chamfer: 22, hiddenVisual: true }],
             seesaws: [],
-            pills: generateRockPills(2),
+            pills: STATIC_ROCK_PILLS,
             p1Spawn: { x: 240, y: 414 },
             p2Spawn: { x: 1040, y: 414 }
-          };
+          });
         })(),
 
         // 3. Cavern Arch with High Center Seesaw
         (() => {
           const arch = makeCavernArchOpenWalls(cavernFloor4DipY, 415, 865, 92);
-          return {
+          return Object.freeze({
             id: 3,
             name: 'HIGH SEESAW CAVERN',
             desc: 'Arched rock walls + suspended seesaw beam',
@@ -1273,16 +1313,16 @@
             halfPipes: [],
             blocks: [],
             seesaws: [{ x: 640, y: 300, w: 340 }],
-            pills: generateRockPills(3),
+            pills: STATIC_ROCK_PILLS,
             p1Spawn: { x: 280, y: 505 },
             p2Spawn: { x: 1000, y: 505 }
-          };
+          });
         })(),
 
         // 4. The Cloud / Clover Enclosed Cave
         (() => {
           const loop = makeCloverInteriorLoop();
-          return {
+          return Object.freeze({
             id: 4,
             name: 'CLOVER CLOUD CAVE',
             desc: '3-lobed 360° loop cavern with ceiling tooth',
@@ -1292,10 +1332,10 @@
             halfPipes: [],
             blocks: [],
             seesaws: [],
-            pills: generateRockPills(4),
+            pills: STATIC_ROCK_PILLS,
             p1Spawn: { x: 270, y: 512 },
             p2Spawn: { x: 1010, y: 512 }
-          };
+          });
         })(),
 
         // 5. Open Canyon Bowl with Overhanging Lip Cliffs
@@ -1308,7 +1348,7 @@
             return 540 + peak + dips;
           };
           const wall = makeCanyonWallPair(canyonFloor, 315, 965);
-          return {
+          return Object.freeze({
             id: 5,
             name: 'OVERHANG CANYON',
             desc: 'Center mountain peak + C-shaped quarter-pipes',
@@ -1318,10 +1358,10 @@
             halfPipes: [],
             blocks: [],
             seesaws: [],
-            pills: generateRockPills(5),
+            pills: STATIC_ROCK_PILLS,
             p1Spawn: { x: 265, y: 492 },
             p2Spawn: { x: 1015, y: 492 }
-          };
+          });
         })(),
 
         // 6. Cavern Arch with Twin Angled Seesaw Bridges
@@ -1330,7 +1370,7 @@
             const u = (x - 640) / 460;
             return 538 + 38 * Math.sin(Math.abs(u) * Math.PI * 1.6);
           }, 495, 785, 76);
-          return {
+          return Object.freeze({
             id: 6,
             name: 'TWIN SEESAW ARCH',
             desc: 'Duel directly on twin rotating bridges',
@@ -1343,16 +1383,16 @@
               { x: 438, y: 356, w: 260, angle: 0.16 },
               { x: 842, y: 356, w: 260, angle: -0.16 }
             ],
-            pills: generateRockPills(6),
+            pills: STATIC_ROCK_PILLS,
             p1Spawn: { x: 375, y: 300 },
             p2Spawn: { x: 905, y: 300 }
-          };
+          });
         })(),
 
         // 7. Fully Enclosed Oval Capsule Dome + Low Center Seesaw
         (() => {
           const oval = makeOvalCapsuleLoop(640, 355, 265, 215);
-          return {
+          return Object.freeze({
             id: 7,
             name: 'OVAL CAPSULE DOME',
             desc: 'Smooth enclosed stadium loop + low seesaw',
@@ -1362,14 +1402,14 @@
             halfPipes: [],
             blocks: [],
             seesaws: [{ x: 640, y: 405, w: 330 }],
-            pills: generateRockPills(7),
+            pills: STATIC_ROCK_PILLS,
             p1Spawn: { x: 530, y: 365 },
             p2Spawn: { x: 750, y: 365 }
-          };
+          });
         })(),
 
         // 8. Twin Floating Half-Pipe Bowls + Flat Roof Block
-        (() => ({
+        Object.freeze({
           id: 8,
           name: 'HALF-PIPE BOWLS',
           desc: 'Twin floating cradles + overhead slam block',
@@ -1382,10 +1422,10 @@
           ],
           blocks: [{ x: 640, y: 245, w: 330, h: 42 }],
           seesaws: [],
-          pills: generateRockPills(8),
+          pills: STATIC_ROCK_PILLS,
           p1Spawn: { x: 365, y: 525 },
           p2Spawn: { x: 915, y: 525 }
-        }))(),
+        }),
 
         // 9. Twin Floating Islands with Center Seesaw Bridge
         (() => {
@@ -1404,7 +1444,7 @@
             ];
             return { top, belly, poly: [...top, ...belly] };
           };
-          return {
+          return Object.freeze({
             id: 9,
             name: 'TWIN ISLANDS BRIDGE',
             desc: 'Two rock ledges linked by tilting seesaw plank',
@@ -1414,183 +1454,309 @@
             halfPipes: [],
             blocks: [],
             seesaws: [{ x: 640, y: 452, w: 340 }],
-            pills: generateRockPills(9),
+            pills: STATIC_ROCK_PILLS,
             p1Spawn: { x: 270, y: 410 },
             p2Spawn: { x: 1010, y: 410 }
-          };
-        })(),
-
-        // 10. Twin Half-Pipes + Spinning Center Seesaw (Derived: Maps 8 + 3)
-        (() => ({
-          id: 10,
-          name: 'HALF-PIPE SPINNER',
-          desc: 'Cradle jumps onto a live center seesaw bridge',
-          islands: [],
-          caves: [],
-          openRocks: [],
-          halfPipes: [
-            { cx: 355, cy: 382, r: 182, aStart: 0.08 * Math.PI, aEnd: 1.30 * Math.PI, thickness: 28 },
-            { cx: 925, cy: 382, r: 182, aStart: -0.30 * Math.PI, aEnd: 0.92 * Math.PI, thickness: 28 }
-          ],
-          blocks: [],
-          seesaws: [{ x: 640, y: 370, w: 280 }],
-          pills: generateRockPills(10),
-          p1Spawn: { x: 355, y: 522 },
-          p2Spawn: { x: 925, y: 522 }
-        }))(),
-
-        // 11. Enclosed Clover Cave + Twin Seesaw Blades (Derived: Maps 4 + 6)
-        (() => ({
-          id: 11,
-          name: 'CLOVER SPINNER CAVE',
-          desc: 'Clover cavern armed with twin aerial paddles',
-          islands: [],
-          caves: [makeCloverInteriorLoop()],
-          openRocks: [],
-          halfPipes: [],
-          blocks: [],
-          seesaws: [
-            { x: 385, y: 335, w: 195 },
-            { x: 895, y: 335, w: 195 }
-          ],
-          pills: generateRockPills(11),
-          p1Spawn: { x: 270, y: 512 },
-          p2Spawn: { x: 1010, y: 512 }
-        }))(),
-
-        // 12. Double-Decker Seesaw Cavern (Derived: Maps 3 + 7)
-        (() => ({
-          id: 12,
-          name: 'DOUBLE-DECKER DOME',
-          desc: 'Oval dome with two stacked vertical seesaws',
-          islands: [],
-          caves: [makeOvalCapsuleLoop(640, 355, 265, 215)],
-          openRocks: [],
-          halfPipes: [],
-          blocks: [],
-          seesaws: [
-            { x: 640, y: 446, w: 330 },
-            { x: 640, y: 254, w: 265 }
-          ],
-          pills: generateRockPills(12),
-          p1Spawn: { x: 525, y: 406 },
-          p2Spawn: { x: 755, y: 406 }
-        }))(),
-
-        // 13. Floating Caterpillar Island + Ceiling Blocks (Derived: Maps 2 + 8)
-        (() => {
-          const top = sampleCurveX(185, 1095, 42, caterpillar3PeakY);
-          const belly = chaikinSmooth([
-            { x: 1098, y: 472 },
-            { x: 1134, y: 540 },
-            { x: 1090, y: 598 },
-            { x: 960, y: 612 },
-            { x: 640, y: 614 },
-            { x: 320, y: 612 },
-            { x: 190, y: 598 },
-            { x: 146, y: 540 },
-            { x: 182, y: 472 }
-          ], false, 2);
-          return {
-            id: 13,
-            name: 'CATERPILLAR BUMPERS',
-            desc: '3-peak island + overhead rebound rock blocks',
-            islands: [{ top, belly, poly: [...top, ...belly.slice(1, -1)] }],
-            caves: [],
-            openRocks: [],
-            halfPipes: [],
-            blocks: [
-              { x: 640, y: 562, w: 800, h: 80, chamfer: 22, hiddenVisual: true },
-              { x: 430, y: 222, w: 200, h: 36 },
-              { x: 850, y: 222, w: 200, h: 36 }
-            ],
-            seesaws: [],
-            pills: generateRockPills(13),
-            p1Spawn: { x: 240, y: 414 },
-            p2Spawn: { x: 1040, y: 414 }
-          };
-        })(),
-
-        // 14. Triple-Cradle Water Hopper (Derived: Map 8)
-        (() => ({
-          id: 14,
-          name: 'TRIPLE WATER HOPPER',
-          desc: 'Three U-cradles over open water + deflectors',
-          islands: [],
-          caves: [],
-          openRocks: [],
-          halfPipes: [
-            { cx: 265, cy: 380, r: 128, aStart: 0.06 * Math.PI, aEnd: 1.24 * Math.PI, thickness: 28 },
-            { cx: 640, cy: 438, r: 130, aStart: 0.08 * Math.PI, aEnd: 0.92 * Math.PI, thickness: 28 },
-            { cx: 1015, cy: 380, r: 128, aStart: -0.24 * Math.PI, aEnd: 0.94 * Math.PI, thickness: 28 }
-          ],
-          blocks: [
-            { x: 452, y: 215, w: 185, h: 32, angle: -0.22 },
-            { x: 828, y: 215, w: 185, h: 32, angle: 0.22 }
-          ],
-          seesaws: [],
-          pills: generateRockPills(14),
-          p1Spawn: { x: 265, y: 468 },
-          p2Spawn: { x: 1015, y: 468 }
-        }))(),
-
-        // 15. Canyon Overhang + Tilting Valley Floor (Derived: Maps 5 + 6)
-        (() => {
-          const makeSideCliff = (isLeft) => {
-            if (isLeft) {
-              const raw = [
-                { x: 320, y: -18 },
-                ...sampleEllipseArc(320, 265, 180, 240, -Math.PI * 0.52, -Math.PI * 1.22, 14),
-                ...sampleCurveX(185, 340, 8, (x) => lerp(496, 514, (x - 185) / 155))
-              ];
-              const surface = chaikinSmooth(raw, false, 1);
-              const visualPoly = [
-                { x: 320, y: -25 },
-                { x: -25, y: -25 },
-                { x: -25, y: 745 },
-                { x: 332, y: 745 },
-                ...surface.slice().reverse()
-              ];
-              return { surface, visualPoly };
-            }
-            const raw = [
-              ...sampleCurveX(940, 1095, 8, (x) => lerp(514, 496, (x - 940) / 155)),
-              ...sampleEllipseArc(960, 265, 180, 240, 0.22, -Math.PI * 0.48, 14),
-              { x: 960, y: -18 }
-            ];
-            const surface = chaikinSmooth(raw, false, 1);
-            const visualPoly = [
-              { x: 960, y: -25 },
-              { x: 1305, y: -25 },
-              { x: 1305, y: 745 },
-              { x: 948, y: 745 },
-              ...surface
-            ];
-            return { surface, visualPoly };
-          };
-          return {
-            id: 15,
-            name: 'CANYON SEESAW PIT',
-            desc: 'Quarter-pipe cliffs + twin valley seesaw ramps',
-            islands: [],
-            caves: [],
-            openRocks: [makeSideCliff(true), makeSideCliff(false)],
-            halfPipes: [],
-            blocks: [],
-            seesaws: [
-              { x: 492, y: 505, w: 270, angle: 0.08 },
-              { x: 788, y: 505, w: 270, angle: -0.08 }
-            ],
-            pills: generateRockPills(15),
-            p1Spawn: { x: 255, y: 465 },
-            p2Spawn: { x: 1025, y: 465 }
-          };
+          });
         })()
-      ];
+      ]);
 
       // =========================================================================
-      // 4. MATTER.JS PHYSICS SIMULATION
+      // 4. VEHICLE PHYSICS CONTROLLER & MATTER.JS SIMULATION
       // =========================================================================
+      class VehiclePhysicsController {
+        constructor(BodyApi, QueryApi, engine) {
+          this.Body = BodyApi;
+          this.Query = QueryApi;
+          this.engine = engine;
+        }
+
+        _probeWheelRay(wheel, carDown, driveBodies) {
+          if (!driveBodies || driveBodies.length === 0) return null;
+          const start = wheel.position;
+          const probeDist = CAR_SPEC.wheelRadius + 3.5;
+          const end = {
+            x: start.x + carDown.x * probeDist,
+            y: start.y + carDown.y * probeDist
+          };
+          const hits = this.Query.ray(driveBodies, start, end, 4);
+          if (!hits || hits.length === 0) return null;
+
+          const carUpX = -carDown.x;
+          const carUpY = -carDown.y;
+          let bestN = null;
+          let bestDot = -1;
+
+          for (let i = 0; i < hits.length; i++) {
+            const h = hits[i];
+            let nx = h.normal ? h.normal.x : carUpX;
+            let ny = h.normal ? h.normal.y : carUpY;
+            if (nx * carDown.x + ny * carDown.y > 0) {
+              nx = -nx;
+              ny = -ny;
+            }
+            const len = Math.hypot(nx, ny);
+            if (len < 0.001) continue;
+            nx /= len;
+            ny /= len;
+            const upDot = nx * carUpX + ny * carUpY;
+            if (upDot > 0.20 && upDot > bestDot) {
+              bestDot = upDot;
+              bestN = { x: nx, y: ny };
+            }
+          }
+          return bestN;
+        }
+
+        detectGroundState(car, wheelContacts, driveBodies) {
+          const angle = car.chassis.angle;
+          const carDown = { x: -Math.sin(angle), y: Math.cos(angle) };
+          const carUp = { x: Math.sin(angle), y: -Math.cos(angle) };
+
+          let rearGrounded = false;
+          let frontGrounded = false;
+          let sumNx = 0;
+          let sumNy = 0;
+
+          const checkWheel = (wheel, contact) => {
+            if (contact && contact.count > 0) {
+              const len = Math.hypot(contact.nx, contact.ny);
+              if (len > 0.001) {
+                const nx = contact.nx / len;
+                const ny = contact.ny / len;
+                if (nx * carUp.x + ny * carUp.y > 0.15) {
+                  return { grounded: true, nx, ny };
+                }
+              }
+            }
+            const rayNormal = this._probeWheelRay(wheel, carDown, driveBodies);
+            if (rayNormal) {
+              return { grounded: true, nx: rayNormal.x, ny: rayNormal.y };
+            }
+            return { grounded: false, nx: 0, ny: 0 };
+          };
+
+          const rRes = checkWheel(car.wheelR, wheelContacts.rear);
+          const fRes = checkWheel(car.wheelF, wheelContacts.front);
+
+          if (rRes.grounded) {
+            rearGrounded = true;
+            sumNx += rRes.nx;
+            sumNy += rRes.ny;
+          }
+          if (fRes.grounded) {
+            frontGrounded = true;
+            sumNx += fRes.nx;
+            sumNy += fRes.ny;
+          }
+
+          const groundedCount = (rearGrounded ? 1 : 0) + (frontGrounded ? 1 : 0);
+          const grounded = groundedCount > 0;
+
+          if (grounded) {
+            const len = Math.hypot(sumNx, sumNy) || 1;
+            const targetNx = sumNx / len;
+            const targetNy = sumNy / len;
+            // Smooth ground normal so polygon seams do not jerk slope calculations
+            const blendNx = lerp(car.groundNormal.x, targetNx, 0.45);
+            const blendNy = lerp(car.groundNormal.y, targetNy, 0.45);
+            const bLen = Math.hypot(blendNx, blendNy) || 1;
+            car.groundNormal = { x: blendNx / bLen, y: blendNy / bLen };
+            car.groundAngle = Math.atan2(car.groundNormal.x, -car.groundNormal.y);
+            car.airTicks = 0;
+          } else {
+            car.airTicks += 1;
+            car.groundNormal = {
+              x: lerp(car.groundNormal.x, 0, 0.04),
+              y: lerp(car.groundNormal.y, -1, 0.04)
+            };
+            const nLen = Math.hypot(car.groundNormal.x, car.groundNormal.y) || 1;
+            car.groundNormal.x /= nLen;
+            car.groundNormal.y /= nLen;
+            car.groundAngle = Math.atan2(car.groundNormal.x, -car.groundNormal.y);
+          }
+
+          return {
+            grounded,
+            groundedCount,
+            rearGrounded,
+            frontGrounded,
+            normal: car.groundNormal,
+            groundAngle: car.groundAngle
+          };
+        }
+
+        _applyPitchStability(car, groundAngle, targetNoseLift, extraAntiFlip = false) {
+          const relPitch = normalizeAngle(car.chassis.angle - groundAngle);
+          const noseLift = -car.facing * relPitch;
+          const liftVel = -car.facing * car.chassis.angularVelocity;
+
+          const err = targetNoseLift - noseLift;
+          const kp = extraAntiFlip && noseLift > 0.04 ? VEHICLE_PHYSICS.PITCH_KP * 1.65 : VEHICLE_PHYSICS.PITCH_KP;
+          const kd = extraAntiFlip && noseLift > 0.04 ? VEHICLE_PHYSICS.PITCH_KD * 1.35 : VEHICLE_PHYSICS.PITCH_KD;
+          const torque = clamp(err * kp - liftVel * kd, -VEHICLE_PHYSICS.PITCH_TORQUE_LIMIT, VEHICLE_PHYSICS.PITCH_TORQUE_LIMIT);
+          const nextAv = clamp(car.chassis.angularVelocity + (-car.facing * torque), -VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY, VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY);
+          this.Body.setAngularVelocity(car.chassis, nextAv);
+        }
+
+        updateVehicle(car, inputL, inputR, wheelContacts, driveBodies) {
+          if (!car || car.dead) {
+            if (car) car.driving = false;
+            return { grounded: false, rearGrounded: false, frontGrounded: false };
+          }
+
+          const ground = this.detectGroundState(car, wheelContacts, driveBodies);
+          const worldDir = (inputR ? 1 : 0) - (inputL ? 1 : 0);
+          car.driving = worldDir !== 0;
+
+          if (!ground.grounded) {
+            // Strictly airborne: ZERO wheel or horizontal drive forces applied
+            car.wheelR.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
+            car.wheelF.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
+
+            if (worldDir !== 0) {
+              const targetSpin = worldDir * VEHICLE_PHYSICS.AIR_CONTROL_SPIN;
+              const nextAv = clamp(
+                lerp(car.chassis.angularVelocity, targetSpin, 0.16),
+                -VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY,
+                VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY
+              );
+              this.Body.setAngularVelocity(car.chassis, nextAv);
+            } else {
+              this.Body.setAngularVelocity(car.chassis, car.chassis.angularVelocity * VEHICLE_PHYSICS.AIR_ANGULAR_DAMPING);
+            }
+            return ground;
+          }
+
+          // World +X terrain tangent perpendicular to outward normal (nx, ny)
+          const tx = -ground.normal.y;
+          const ty = ground.normal.x;
+          const vT = car.chassis.velocity.x * tx + car.chassis.velocity.y * ty;
+
+          if (worldDir === 0) {
+            // Grounded coasting: keep tires gripped and damp pitch bounce smoothly
+            car.wheelR.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
+            car.wheelF.friction = VEHICLE_PHYSICS.WHEEL_BASE_FRICTION;
+            this.Body.setAngularVelocity(car.wheelR, car.wheelR.angularVelocity * 0.96);
+            this.Body.setAngularVelocity(car.wheelF, car.wheelF.angularVelocity * 0.96);
+            this.Body.setAngularVelocity(
+              car.chassis,
+              clamp(car.chassis.angularVelocity * VEHICLE_PHYSICS.GROUND_ANGULAR_DAMPING, -VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY, VEHICLE_PHYSICS.MAX_ANGULAR_VELOCITY)
+            );
+            return ground;
+          }
+
+          const driveT = { x: worldDir * tx, y: worldDir * ty };
+          const vAlong = worldDir * vT;
+          const uphillFactor = clamp(-driveT.y, 0, 1);
+          const isReverse = (worldDir * car.facing) < 0;
+
+          // Dynamic slope traction increase during uphill throttle
+          const activeFriction = clamp(VEHICLE_PHYSICS.WHEEL_BASE_FRICTION + uphillFactor * 0.04, 0.96, 1.0);
+          car.wheelR.friction = activeFriction;
+          car.wheelF.friction = activeFriction;
+
+          // Smooth Brake-to-Reverse (and oppose-motion braking) until velocity crosses zero
+          if (vAlong < -VEHICLE_PHYSICS.BRAKE_ZERO_THRESHOLD) {
+            const brakeScale = clamp((-vAlong) / 2.4, 0.35, 1.0);
+            const brakeMag = VEHICLE_PHYSICS.BRAKE_DECEL_FORCE * brakeScale;
+
+            this.Body.setAngularVelocity(car.wheelR, car.wheelR.angularVelocity * 0.60);
+            this.Body.setAngularVelocity(car.wheelF, car.wheelF.angularVelocity * 0.60);
+
+            this.Body.applyForce(car.chassis, car.chassis.position, {
+              x: driveT.x * brakeMag * 0.54,
+              y: driveT.y * brakeMag * 0.54
+            });
+            if (ground.rearGrounded) {
+              this.Body.applyForce(car.wheelR, car.wheelR.position, {
+                x: driveT.x * brakeMag * 0.23,
+                y: driveT.y * brakeMag * 0.23
+              });
+            }
+            if (ground.frontGrounded) {
+              this.Body.applyForce(car.wheelF, car.wheelF.position, {
+                x: driveT.x * brakeMag * 0.23,
+                y: driveT.y * brakeMag * 0.23
+              });
+            }
+
+            this._applyPitchStability(car, ground.groundAngle, 0, true);
+            return ground;
+          }
+
+          // Dedicated Forward & Reverse Hill-Climbing Torque Curve
+          const maxSpeed = isReverse ? VEHICLE_PHYSICS.MAX_REVERSE_SPEED : VEHICLE_PHYSICS.MAX_FORWARD_SPEED;
+          const baseTorque = isReverse ? VEHICLE_PHYSICS.REVERSE_TORQUE : VEHICLE_PHYSICS.FORWARD_TORQUE;
+          const maxWheelSpin = isReverse ? VEHICLE_PHYSICS.WHEEL_REVERSE_MAX_SPIN : VEHICLE_PHYSICS.WHEEL_MAX_SPIN;
+
+          const speedRatio = clamp(vAlong / maxSpeed, 0, 1.25);
+          const lowEndMultiplier = 1.0 - 0.64 * clamp(speedRatio, 0, 1);
+          const slopeClimbBoost = 1.0 + uphillFactor * (VEHICLE_PHYSICS.SLOPE_GRIP_MULTIPLIER - 1.0);
+          const contactScale = ground.groundedCount === 2 ? 1.0 : 0.72;
+
+          const totalMass = car.chassis.mass + car.wheelR.mass + car.wheelF.mass + car.head.mass;
+          const gravityComp = totalMass * this.engine.gravity.y * 0.001 * uphillFactor * VEHICLE_PHYSICS.GRAVITY_COMP_SCALE;
+
+          let tangentForce = 0;
+          if (vAlong <= maxSpeed) {
+            tangentForce = (baseTorque * lowEndMultiplier * slopeClimbBoost + gravityComp) * contactScale;
+          } else {
+            // Smooth drivetrain governor caps flat & crest speed cleanly
+            const overspeed = vAlong - maxSpeed;
+            tangentForce = -clamp(overspeed * 0.007, 0, 0.015);
+          }
+
+          const targetWheelSpin = worldDir * clamp((maxSpeed / CAR_SPEC.wheelRadius) * 1.12, 0.1, maxWheelSpin);
+          this.Body.setAngularVelocity(car.wheelR, lerp(car.wheelR.angularVelocity, targetWheelSpin, 0.36));
+          this.Body.setAngularVelocity(car.wheelF, lerp(car.wheelF.angularVelocity, targetWheelSpin, 0.36));
+
+          // Distribute longitudinal climbing force smoothly across chassis + nose/tail wheels
+          const noseWheel = car.facing > 0 ? car.wheelF : car.wheelR;
+          const tailWheel = car.facing > 0 ? car.wheelR : car.wheelF;
+          const noseGrounded = car.facing > 0 ? ground.frontGrounded : ground.rearGrounded;
+          const tailGrounded = car.facing > 0 ? ground.rearGrounded : ground.frontGrounded;
+
+          const chassisFrac = 0.50;
+          let tailFrac = isReverse ? 0.20 : 0.28;
+          let noseFrac = isReverse ? 0.30 : 0.22;
+          if (tailGrounded && !noseGrounded) {
+            tailFrac += noseFrac * 0.65;
+            noseFrac = 0;
+          } else if (noseGrounded && !tailGrounded) {
+            noseFrac += tailFrac * 0.65;
+            tailFrac = 0;
+          }
+
+          this.Body.applyForce(car.chassis, car.chassis.position, {
+            x: driveT.x * tangentForce * chassisFrac,
+            y: driveT.y * tangentForce * chassisFrac
+          });
+          if (tailFrac > 0) {
+            this.Body.applyForce(tailWheel, tailWheel.position, {
+              x: driveT.x * tangentForce * tailFrac,
+              y: driveT.y * tangentForce * tailFrac
+            });
+          }
+          if (noseFrac > 0) {
+            this.Body.applyForce(noseWheel, noseWheel.position, {
+              x: driveT.x * tangentForce * noseFrac,
+              y: driveT.y * tangentForce * noseFrac
+            });
+          }
+
+          // Pitch Stability: subtle climbing attitude forward, firmly planted nose on reverse
+          if (isReverse) {
+            this._applyPitchStability(car, ground.groundAngle, -VEHICLE_PHYSICS.REVERSE_PITCH_BIAS, true);
+          } else {
+            const forwardTargetLift = clamp(0.03 + uphillFactor * 0.08, 0, VEHICLE_PHYSICS.FORWARD_PITCH_MAX_OFFSET);
+            this._applyPitchStability(car, ground.groundAngle, forwardTargetLift, false);
+          }
+
+          return ground;
+        }
+      }
+
       class PhysicsSimulation {
         constructor(isHostSide = true) {
           this.isHostSide = isHostSide;
@@ -1600,13 +1766,26 @@
           this.Composite = Matter.Composite;
           this.Constraint = Matter.Constraint;
           this.Events = Matter.Events;
+          this.Query = Matter.Query;
 
-          this.engine = this.Engine.create({ gravity: { x: 0, y: 1.15 } });
+          this.engine = this.Engine.create({
+            gravity: { x: 0, y: 1.25 },
+            positionIterations: 8,
+            velocityIterations: 6,
+            constraintIterations: 4
+          });
+          this.vehicleController = new VehiclePhysicsController(this.Body, this.Query, this.engine);
+
           this.arenaIndex = 0;
           this.seesaws = [];
+          this.driveSurfaces = [];
           this.p1Car = null;
           this.p2Car = null;
           this.grounded = { p1R: false, p1F: false, p2R: false, p2F: false };
+          this.wheelContacts = {
+            p1: { rear: { count: 0, nx: 0, ny: 0 }, front: { count: 0, nx: 0, ny: 0 } },
+            p2: { rear: { count: 0, nx: 0, ny: 0 }, front: { count: 0, nx: 0, ny: 0 } }
+          };
 
           this.onHeadKO = null;
           this.onWaterKO = null;
@@ -1614,24 +1793,39 @@
           this._bindEvents();
         }
 
+        _resetWheelContacts() {
+          for (const pk of ['p1', 'p2']) {
+            for (const wk of ['rear', 'front']) {
+              const c = this.wheelContacts[pk][wk];
+              c.count = 0;
+              c.nx = 0;
+              c.ny = 0;
+            }
+          }
+        }
+
         _bindEvents() {
           this.Events.on(this.engine, 'beforeUpdate', () => {
-            this.grounded.p1R = false;
-            this.grounded.p1F = false;
-            this.grounded.p2R = false;
-            this.grounded.p2F = false;
+            this._resetWheelContacts();
           });
 
-          const trackGround = (wheel, car, flagKey, pair) => {
-            this.grounded[flagKey] = true;
+          const addWheelContact = (wheel, pKey, wKey, pair) => {
             const sup = pair.collision && pair.collision.supports && pair.collision.supports[0];
-            if (sup && car) {
-              const nx = wheel.position.x - sup.x;
-              const ny = wheel.position.y - sup.y;
-              if (nx * nx + ny * ny > 0.25) {
-                car.groundAngle = Math.atan2(nx, -ny);
+            let nx = 0;
+            let ny = -1;
+            if (sup) {
+              const dx = wheel.position.x - sup.x;
+              const dy = wheel.position.y - sup.y;
+              const len = Math.hypot(dx, dy);
+              if (len > 0.2) {
+                nx = dx / len;
+                ny = dy / len;
               }
             }
+            const bucket = this.wheelContacts[pKey][wKey];
+            bucket.count += 1;
+            bucket.nx += nx;
+            bucket.ny += ny;
           };
 
           this.Events.on(this.engine, 'collisionActive', (ev) => {
@@ -1644,15 +1838,15 @@
               const solidA = la === 'island' || la === 'seesaw' || la.includes('_p');
               const solidB = lb === 'island' || lb === 'seesaw' || lb.includes('_p');
 
-              if (la === 'wheel_p1_r' && solidB && !lb.includes('_p1')) trackGround(a, this.p1Car, 'p1R', pair);
-              if (lb === 'wheel_p1_r' && solidA && !la.includes('_p1')) trackGround(b, this.p1Car, 'p1R', pair);
-              if (la === 'wheel_p1_f' && solidB && !lb.includes('_p1')) trackGround(a, this.p1Car, 'p1F', pair);
-              if (lb === 'wheel_p1_f' && solidA && !la.includes('_p1')) trackGround(b, this.p1Car, 'p1F', pair);
+              if (la === 'wheel_p1_r' && solidB && !lb.includes('_p1')) addWheelContact(a, 'p1', 'rear', pair);
+              if (lb === 'wheel_p1_r' && solidA && !la.includes('_p1')) addWheelContact(b, 'p1', 'rear', pair);
+              if (la === 'wheel_p1_f' && solidB && !lb.includes('_p1')) addWheelContact(a, 'p1', 'front', pair);
+              if (lb === 'wheel_p1_f' && solidA && !la.includes('_p1')) addWheelContact(b, 'p1', 'front', pair);
 
-              if (la === 'wheel_p2_r' && solidB && !lb.includes('_p2')) trackGround(a, this.p2Car, 'p2R', pair);
-              if (lb === 'wheel_p2_r' && solidA && !la.includes('_p2')) trackGround(b, this.p2Car, 'p2R', pair);
-              if (la === 'wheel_p2_f' && solidB && !lb.includes('_p2')) trackGround(a, this.p2Car, 'p2F', pair);
-              if (lb === 'wheel_p2_f' && solidA && !la.includes('_p2')) trackGround(b, this.p2Car, 'p2F', pair);
+              if (la === 'wheel_p2_r' && solidB && !lb.includes('_p2')) addWheelContact(a, 'p2', 'rear', pair);
+              if (lb === 'wheel_p2_r' && solidA && !la.includes('_p2')) addWheelContact(b, 'p2', 'rear', pair);
+              if (la === 'wheel_p2_f' && solidB && !lb.includes('_p2')) addWheelContact(a, 'p2', 'front', pair);
+              if (lb === 'wheel_p2_f' && solidA && !la.includes('_p2')) addWheelContact(b, 'p2', 'front', pair);
             }
           });
 
@@ -1715,11 +1909,13 @@
               isStatic: true,
               angle,
               chamfer: { radius: 6 },
-              friction: 0.95,
-              restitution: 0.12,
+              friction: 1.0,
+              restitution: 0.08,
+              slop: 0.02,
               label: 'island'
             });
             this.Composite.add(this.engine.world, rect);
+            this.driveSurfaces.push(rect);
           }
         }
 
@@ -1739,31 +1935,34 @@
               isStatic: true,
               angle,
               chamfer: { radius: 6 },
-              friction: 0.95,
-              restitution: 0.14,
+              friction: 1.0,
+              restitution: 0.10,
+              slop: 0.02,
               label: 'island'
             });
             this.Composite.add(this.engine.world, seg);
+            this.driveSurfaces.push(seg);
           }
-          // Smooth rounded endcaps so rims never snag wheels
           for (const endPt of [pts[0], pts[pts.length - 1]]) {
             const cap = this.Bodies.circle(endPt.x, endPt.y, pipe.thickness * 0.5, {
               isStatic: true,
-              friction: 0.95,
-              restitution: 0.14,
+              friction: 1.0,
+              restitution: 0.10,
               label: 'island'
             });
             this.Composite.add(this.engine.world, cap);
+            this.driveSurfaces.push(cap);
           }
         }
 
         _addSeesaw(cfg) {
           const plank = this.Bodies.rectangle(cfg.x, cfg.y, cfg.w, 28, {
-            density: 0.0038,
+            density: 0.0042,
             chamfer: { radius: 14 },
-            friction: 0.95,
-            restitution: 0.15,
-            frictionAir: 0.008,
+            friction: 1.0,
+            restitution: 0.10,
+            frictionAir: 0.012,
+            slop: 0.02,
             angle: cfg.angle || 0,
             label: 'seesaw'
           });
@@ -1776,6 +1975,7 @@
           });
           this.Composite.add(this.engine.world, [plank, pivot]);
           this.seesaws.push({ body: plank, x: cfg.x, y: cfg.y, w: cfg.w });
+          this.driveSurfaces.push(plank);
         }
 
         resetArena(arenaIndex = this.arenaIndex) {
@@ -1785,7 +1985,9 @@
           this.Composite.clear(this.engine.world, false);
           this.engine.timing.timeScale = 1.0;
           this.seesaws = [];
+          this.driveSurfaces = [];
           this.grounded = { p1R: false, p1F: false, p2R: false, p2F: false };
+          this._resetWheelContacts();
 
           for (const isl of arena.islands) {
             this._addSurfacePolyline(isl.top, 1, 34, false);
@@ -1793,24 +1995,26 @@
           }
 
           for (const caveLoop of arena.caves) {
-            // Winding goes bottom L->R, up right, top R->L, down left -> inwardSign +1 pushes 72px outward INTO outer rock!
             this._addSurfacePolyline(caveLoop, 1, 72, true);
-            // Outer rock backup walls prevent high-speed tunneling outside enclosed caves
-            this.Composite.add(this.engine.world, [
-              this.Bodies.rectangle(WORLD_W / 2, -50, WORLD_W + 200, 100, { isStatic: true, label: 'island' }),
-              this.Bodies.rectangle(WORLD_W / 2, WORLD_H + 50, WORLD_W + 200, 100, { isStatic: true, label: 'island' }),
-              this.Bodies.rectangle(-50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, label: 'island' }),
-              this.Bodies.rectangle(WORLD_W + 50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, label: 'island' })
-            ]);
+            const backupWalls = [
+              this.Bodies.rectangle(WORLD_W / 2, -50, WORLD_W + 200, 100, { isStatic: true, friction: 1.0, label: 'island' }),
+              this.Bodies.rectangle(WORLD_W / 2, WORLD_H + 50, WORLD_W + 200, 100, { isStatic: true, friction: 1.0, label: 'island' }),
+              this.Bodies.rectangle(-50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, friction: 1.0, label: 'island' }),
+              this.Bodies.rectangle(WORLD_W + 50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, friction: 1.0, label: 'island' })
+            ];
+            this.Composite.add(this.engine.world, backupWalls);
+            this.driveSurfaces.push(...backupWalls);
           }
 
           for (const openRock of arena.openRocks) {
             this._addSurfacePolyline(openRock.surface, 1, 46, false);
-            this.Composite.add(this.engine.world, [
-              this.Bodies.rectangle(-50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, label: 'island' }),
-              this.Bodies.rectangle(WORLD_W + 50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, label: 'island' }),
-              this.Bodies.rectangle(WORLD_W / 2, WORLD_H + 55, WORLD_W + 200, 100, { isStatic: true, label: 'island' })
-            ]);
+            const backupWalls = [
+              this.Bodies.rectangle(-50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, friction: 1.0, label: 'island' }),
+              this.Bodies.rectangle(WORLD_W + 50, WORLD_H / 2, 100, WORLD_H + 200, { isStatic: true, friction: 1.0, label: 'island' }),
+              this.Bodies.rectangle(WORLD_W / 2, WORLD_H + 55, WORLD_W + 200, 100, { isStatic: true, friction: 1.0, label: 'island' })
+            ];
+            this.Composite.add(this.engine.world, backupWalls);
+            this.driveSurfaces.push(...backupWalls);
           }
 
           for (const pipe of arena.halfPipes) {
@@ -1818,17 +2022,16 @@
           }
 
           for (const blk of arena.blocks) {
-            this.Composite.add(
-              this.engine.world,
-              this.Bodies.rectangle(blk.x, blk.y, blk.w, blk.h, {
-                isStatic: true,
-                angle: blk.angle || 0,
-                chamfer: { radius: blk.chamfer || 4 },
-                friction: 0.95,
-                restitution: 0.2,
-                label: 'island'
-              })
-            );
+            const rect = this.Bodies.rectangle(blk.x, blk.y, blk.w, blk.h, {
+              isStatic: true,
+              angle: blk.angle || 0,
+              chamfer: { radius: blk.chamfer || 4 },
+              friction: 1.0,
+              restitution: 0.14,
+              label: 'island'
+            });
+            this.Composite.add(this.engine.world, rect);
+            this.driveSurfaces.push(rect);
           }
 
           for (const sw of arena.seesaws) {
@@ -1849,16 +2052,21 @@
             density: CAR_SPEC.density,
             restitution: CAR_SPEC.restitution,
             friction: CAR_SPEC.friction,
-            frictionAir: 0.008,
+            frictionAir: 0.012,
+            slop: 0.02,
             collisionFilter: { group },
             label: `chassis_${pTag}`
           });
+          // Shift Center of Mass below chassis geometric center to prevent erratic tipping & somersaults
+          this.Body.setCentre(chassis, { x: 0, y: CENTER_OF_MASS_OFFSET }, true);
 
           const wheelR = this.Bodies.circle(x - CAR_SPEC.wheelOffsetX, y + CAR_SPEC.wheelOffsetY, CAR_SPEC.wheelRadius, {
             density: CAR_SPEC.wheelDensity,
             friction: CAR_SPEC.wheelFriction,
+            frictionStatic: 1.0,
             restitution: CAR_SPEC.wheelRestitution,
-            frictionAir: 0.006,
+            frictionAir: 0.010,
+            slop: 0.01,
             collisionFilter: { group },
             label: `wheel_${pTag}_r`
           });
@@ -1866,60 +2074,64 @@
           const wheelF = this.Bodies.circle(x + CAR_SPEC.wheelOffsetX, y + CAR_SPEC.wheelOffsetY, CAR_SPEC.wheelRadius, {
             density: CAR_SPEC.wheelDensity,
             friction: CAR_SPEC.wheelFriction,
+            frictionStatic: 1.0,
             restitution: CAR_SPEC.wheelRestitution,
-            frictionAir: 0.006,
+            frictionAir: 0.010,
+            slop: 0.01,
             collisionFilter: { group },
             label: `wheel_${pTag}_f`
           });
 
-          // Low-seated helmet resting directly on the cockpit collar (localY = -16px)
+          // Low-seated helmet resting directly on the cockpit collar (localY = -16px relative to visual body)
           const head = this.Bodies.circle(x, y + CAR_SPEC.headOffsetY, CAR_SPEC.headRadius, {
             density: CAR_SPEC.headDensity,
             restitution: CAR_SPEC.headRestitution,
             friction: 0.3,
-            frictionAir: 0.006,
+            frictionAir: 0.008,
             collisionFilter: { group },
             label: `head_${pTag}`
           });
 
-          // Elastic spring suspension (stiffness: 0.36, damping: 0.08) + horizontal axle lock arm
+          // Suspension mount anchors compensated for lowered CoM (visualOffsetY = -CENTER_OF_MASS_OFFSET)
+          const suspY = CAR_SPEC.wheelOffsetY - CENTER_OF_MASS_OFFSET;
           const suspRVert = this.Constraint.create({
-            bodyA: chassis, pointA: { x: -CAR_SPEC.wheelOffsetX, y: CAR_SPEC.wheelOffsetY },
+            bodyA: chassis, pointA: { x: -CAR_SPEC.wheelOffsetX, y: suspY },
             bodyB: wheelR, pointB: { x: 0, y: 0 },
-            length: 0, stiffness: 0.36, damping: 0.08
+            length: 0, stiffness: VEHICLE_PHYSICS.SUSPENSION_STIFFNESS, damping: SUSPENSION_DAMPING
           });
           const suspRArm = this.Constraint.create({
-            bodyA: chassis, pointA: { x: 0, y: CAR_SPEC.wheelOffsetY },
+            bodyA: chassis, pointA: { x: 0, y: suspY },
             bodyB: wheelR, pointB: { x: 0, y: 0 },
-            length: CAR_SPEC.wheelOffsetX, stiffness: 0.72, damping: 0.14
+            length: CAR_SPEC.wheelOffsetX, stiffness: VEHICLE_PHYSICS.AXLE_ARM_STIFFNESS, damping: VEHICLE_PHYSICS.AXLE_ARM_DAMPING
           });
 
           const suspFVert = this.Constraint.create({
-            bodyA: chassis, pointA: { x: CAR_SPEC.wheelOffsetX, y: CAR_SPEC.wheelOffsetY },
+            bodyA: chassis, pointA: { x: CAR_SPEC.wheelOffsetX, y: suspY },
             bodyB: wheelF, pointB: { x: 0, y: 0 },
-            length: 0, stiffness: 0.36, damping: 0.08
+            length: 0, stiffness: VEHICLE_PHYSICS.SUSPENSION_STIFFNESS, damping: SUSPENSION_DAMPING
           });
           const suspFArm = this.Constraint.create({
-            bodyA: chassis, pointA: { x: 0, y: CAR_SPEC.wheelOffsetY },
+            bodyA: chassis, pointA: { x: 0, y: suspY },
             bodyB: wheelF, pointB: { x: 0, y: 0 },
-            length: CAR_SPEC.wheelOffsetX, stiffness: 0.72, damping: 0.14
+            length: CAR_SPEC.wheelOffsetX, stiffness: VEHICLE_PHYSICS.AXLE_ARM_STIFFNESS, damping: VEHICLE_PHYSICS.AXLE_ARM_DAMPING
           });
 
           // 3 triangulated neck constraints locking helmet snugly to seat collar
+          const collarY = -2 - CENTER_OF_MASS_OFFSET;
           const neckSpine = this.Constraint.create({
-            bodyA: chassis, pointA: { x: 0, y: -2 },
+            bodyA: chassis, pointA: { x: 0, y: collarY },
             bodyB: head, pointB: { x: 0, y: 0 },
-            stiffness: 0.92, damping: 0.12
+            stiffness: 0.92, damping: 0.16
           });
           const neckL = this.Constraint.create({
-            bodyA: chassis, pointA: { x: -16, y: -2 },
+            bodyA: chassis, pointA: { x: -16, y: collarY },
             bodyB: head, pointB: { x: 0, y: 0 },
-            stiffness: 0.75, damping: 0.12
+            stiffness: 0.78, damping: 0.16
           });
           const neckR = this.Constraint.create({
-            bodyA: chassis, pointA: { x: 16, y: -2 },
+            bodyA: chassis, pointA: { x: 16, y: collarY },
             bodyB: head, pointB: { x: 0, y: 0 },
-            stiffness: 0.75, damping: 0.12
+            stiffness: 0.78, damping: 0.16
           });
 
           this.Composite.add(this.engine.world, [
@@ -1941,6 +2153,7 @@
             dead: false,
             airTicks: 0,
             groundAngle: 0,
+            groundNormal: { x: 0, y: -1 },
             driving: false
           };
         }
@@ -1961,73 +2174,23 @@
           const dy = car.head.position.y - (impactPt ? impactPt.y : car.chassis.position.y);
           const len = Math.hypot(dx, dy) || 1;
           this.Body.setVelocity(car.head, {
-            x: (dx / len) * 7.5 + (Math.random() - 0.5) * 3,
-            y: -7.5 - Math.random() * 2.5
+            x: (dx / len) * 7.5,
+            y: -8.2
           });
-          this.Body.setAngularVelocity(car.head, (Math.random() > 0.5 ? 1 : -1) * 0.28);
-        }
-
-        _applyCarControl(car, inputL, inputR, gR, gF) {
-          if (!car || car.dead) {
-            if (car) car.driving = false;
-            return;
-          }
-          const groundedCount = (gR ? 1 : 0) + (gF ? 1 : 0);
-          car.airTicks = groundedCount === 0 ? car.airTicks + 1 : 0;
-
-          const dir = (inputR ? 1 : 0) - (inputL ? 1 : 0);
-          car.driving = dir !== 0;
-
-          // 1. Grounded Wheel Spin, Slope Force & Subtle Elastic Wheelie Lift (PD Governor)
-          if (groundedCount > 0 && dir !== 0) {
-            const targetSpin = dir * CAR_SPEC.maxWheelSpin;
-            this.Body.setAngularVelocity(car.wheelR, targetSpin);
-            this.Body.setAngularVelocity(car.wheelF, targetSpin);
-
-            const cosA = Math.cos(car.chassis.angle);
-            const sinA = Math.sin(car.chassis.angle);
-            this.Body.applyForce(car.chassis, car.chassis.position, {
-              x: dir * CAR_SPEC.slopeAssistForce * cosA,
-              y: dir * CAR_SPEC.slopeAssistForce * sinA
-            });
-
-            // Elastic PD wheelie pitch relative to ground slope (~0.24 rad lift of leading wheels)
-            const relativeAngle = normalizeAngle(car.chassis.angle - car.groundAngle);
-            const targetWheelieAngle = -dir * CAR_SPEC.wheelieAngle;
-            const pdTorque = clamp(
-              (targetWheelieAngle - relativeAngle) * 0.0022 - car.chassis.angularVelocity * 0.009,
-              -0.0028,
-              0.0028
-            );
-            // Apply scaled to Matter chassis angular impulse (torque/inertia scaled cleanly for 0.19.0 responsiveness)
-            const nextAv = clamp(car.chassis.angularVelocity + pdTorque * 4.6, -0.095, 0.095);
-            this.Body.setAngularVelocity(car.chassis, nextAv);
-          }
-
-          // 2. Snappy Mid-Air Flip Control & Immediate Damping on Release
-          const relTilt = Math.abs(normalizeAngle(car.chassis.angle - car.groundAngle));
-          if (groundedCount === 0 && (car.airTicks >= 4 || relTilt > 0.45)) {
-            if (dir !== 0) {
-              this.Body.setAngularVelocity(
-                car.chassis,
-                lerp(car.chassis.angularVelocity, dir * CAR_SPEC.airTargetSpin, 0.18)
-              );
-            } else {
-              this.Body.setAngularVelocity(car.chassis, car.chassis.angularVelocity * CAR_SPEC.airSpinDamping);
-            }
-          } else if (groundedCount === 1 && relTilt > 0.58 && dir !== 0) {
-            this.Body.setAngularVelocity(
-              car.chassis,
-              lerp(car.chassis.angularVelocity, dir * (CAR_SPEC.airTargetSpin * 0.8), 0.14)
-            );
-          }
+          this.Body.setAngularVelocity(car.head, -car.facing * 0.28);
         }
 
         step(p1Input, p2Input, canControl) {
-          if (canControl) {
-            this._applyCarControl(this.p1Car, p1Input.l, p1Input.r, this.grounded.p1R, this.grounded.p1F);
-            this._applyCarControl(this.p2Car, p2Input.l, p2Input.r, this.grounded.p2R, this.grounded.p2F);
-          }
+          const activeP1 = canControl ? p1Input : { l: false, r: false };
+          const activeP2 = canControl ? p2Input : { l: false, r: false };
+
+          const g1 = this.vehicleController.updateVehicle(this.p1Car, activeP1.l, activeP1.r, this.wheelContacts.p1, this.driveSurfaces);
+          const g2 = this.vehicleController.updateVehicle(this.p2Car, activeP2.l, activeP2.r, this.wheelContacts.p2, this.driveSurfaces);
+
+          this.grounded.p1R = g1.rearGrounded;
+          this.grounded.p1F = g1.frontGrounded;
+          this.grounded.p2R = g2.rearGrounded;
+          this.grounded.p2F = g2.frontGrounded;
 
           this.Engine.update(this.engine, FIXED_DT);
 
@@ -2079,8 +2242,9 @@
         // 1. Seated Charcoal Torso & 9px Neck Bridge (Drawn BEHIND chassis rim so helmet attaches snugly)
         const sinC = Math.sin(chassis.angle);
         const cosC = Math.cos(chassis.angle);
-        const collarX = chassis.position.x - sinC * -4;
-        const collarY = chassis.position.y + cosC * -4;
+        const collarLocalY = -4 - CENTER_OF_MASS_OFFSET;
+        const collarX = chassis.position.x - sinC * collarLocalY;
+        const collarY = chassis.position.y + cosC * collarLocalY;
 
         if (!headSevered) {
           ctx.save();
@@ -2104,6 +2268,7 @@
           // Seated driver shoulders inside cockpit cutout
           ctx.translate(chassis.position.x, chassis.position.y);
           ctx.rotate(chassis.angle);
+          ctx.translate(0, -CENTER_OF_MASS_OFFSET);
           ctx.fillStyle = PALETTE.charcoal;
           ctx.strokeStyle = PALETTE.ink;
           ctx.lineWidth = 3.5;
@@ -2139,6 +2304,7 @@
         ctx.save();
         ctx.translate(chassis.position.x, chassis.position.y);
         ctx.rotate(chassis.angle);
+        ctx.translate(0, -CENTER_OF_MASS_OFFSET);
         ctx.scale(facing, 1);
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -2274,14 +2440,15 @@
           const cos = Math.cos(a);
           const sin = Math.sin(a);
           const lx = -49 * carState.facing;
-          const ly = -1;
+          const ly = -1 - CENTER_OF_MASS_OFFSET;
           const px = carState.chassis.position.x + lx * cos - ly * sin;
           const py = carState.chassis.position.y + lx * sin + ly * cos;
+          const spread = ((this.tickCount % 5) - 2) * 0.08;
           this.smoke.push({
             x: px,
             y: py,
-            vx: -carState.facing * (0.9 + Math.random() * 0.9) + (Math.random() - 0.5) * 0.4,
-            vy: -0.6 - Math.random() * 0.8,
+            vx: -carState.facing * 1.25 + spread,
+            vy: -0.95 - (this.tickCount % 3) * 0.2,
             r: 4,
             life: 1.0
           });
@@ -2289,12 +2456,12 @@
 
         spawnWaterSplash(x) {
           for (let i = 0; i < 8; i++) {
-            const ang = -Math.PI * 0.15 - Math.random() * Math.PI * 0.7;
-            const spd = 4 + Math.random() * 5.5;
+            const ang = -Math.PI * (0.18 + (i / 7) * 0.64);
+            const spd = 5 + (i % 3) * 1.8;
             this.splashes.push({
               x, y: WATER_CREST_Y,
               vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
-              r: 5 + Math.random() * 5, life: 1.0
+              r: 6 + (i % 3) * 1.5, life: 1.0
             });
           }
         }
@@ -2605,7 +2772,7 @@
           if (mx > 1060 && me.chassis.velocity.x > 0) return { l: true, r: false };
 
           if (!gx && my < 480) {
-            if (this.decisionTick % 24 === 0) this.flipBias = Math.random();
+            if (this.decisionTick % 24 === 0) this.flipBias = ((this.decisionTick / 24) % 3) * 0.35;
             if (Math.abs(angle) > 0.65) return angle > 0 ? { l: true, r: false } : { l: false, r: true };
             if (Math.abs(ox - mx) < 160 && this.flipBias < 0.55) {
               return ox < mx ? { l: true, r: false } : { l: false, r: true };
@@ -2817,8 +2984,10 @@
 
       function generateRoomCode() {
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const bytes = new Uint8Array(4);
+        crypto.getRandomValues(bytes);
         let code = '';
-        for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+        for (let i = 0; i < 4; i++) code += chars[bytes[i] % chars.length];
         return `CRSH-${code}`;
       }
 
@@ -3068,7 +3237,7 @@
           this.scores = [0, 0];
           this.roundNumber = 1;
           this.bannerText = '';
-          this.selectedArenaIdx = -1; // -1 = ALL 15 MAPS (RANDOM ROTATION), 0..14 = locked specific map
+          this.selectedArenaIdx = -1; // -1 = ALL 9 MAPS (IN ORDER), 0..8 = locked specific map
           this.attractMapTicks = 0;
 
           this.koPending = false;
@@ -3133,21 +3302,18 @@
         }
 
         _pickArenaIndex(previousIndex = -1) {
-          if (this.selectedArenaIdx >= 0) return this.selectedArenaIdx;
-          let idx = Math.floor(Math.random() * ARENAS.length);
-          if (ARENAS.length > 1 && idx === previousIndex) {
-            idx = (idx + 1 + Math.floor(Math.random() * (ARENAS.length - 1))) % ARENAS.length;
-          }
-          return idx;
+          if (this.selectedArenaIdx >= 0) return clamp(this.selectedArenaIdx, 0, ARENAS.length - 1);
+          if (previousIndex < 0) return 0;
+          return (previousIndex + 1) % ARENAS.length;
         }
 
         _updateMapPickerUI() {
           if (this.selectedArenaIdx < 0) {
-            this.dom.mapTitle.textContent = 'ALL 15 MAPS (RANDOM ROTATION)';
-            this.dom.mapSub.textContent = 'Rotates every round • Tap < > to pick Map 1–15';
+            this.dom.mapTitle.textContent = 'ALL 9 MAPS (IN ORDER)';
+            this.dom.mapSub.textContent = 'Plays Maps 1–9 in exact order • Tap < > to pick Map 1–9';
           } else {
             const a = ARENAS[this.selectedArenaIdx];
-            this.dom.mapTitle.textContent = `MAP ${a.id}/15: ${a.name}`;
+            this.dom.mapTitle.textContent = `MAP ${a.id}/9: ${a.name}`;
             this.dom.mapSub.textContent = a.desc;
           }
         }
@@ -3320,11 +3486,11 @@
             }
           });
 
-          // Map Selector Pill cycling (-1 = Random Rotation, 0..14 = Specific Map 1..15)
+          // Map Selector Pill cycling (-1 = In-Order Sequence 1..9, 0..8 = Specific Map 1..9)
           const stepMap = (delta) => {
             this.sound.unlock();
             this.sound.playClick();
-            const total = ARENAS.length + 1; // -1, 0 .. 14
+            const total = ARENAS.length + 1; // -1, 0 .. 8
             const cur = this.selectedArenaIdx + 1;
             const next = ((cur + delta) % total + total) % total;
             this.selectedArenaIdx = next - 1;
@@ -3681,6 +3847,7 @@
         }
         window.__crashAheadGame = new CrashAheadGame();
         window.__crashAheadArenas = ARENAS;
+        window.__crashAheadPhysics = VEHICLE_PHYSICS;
       });
     })();
   </script>

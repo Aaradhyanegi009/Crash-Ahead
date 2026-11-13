@@ -10,6 +10,6 @@ A mobile-first, 1v1 2D physics car gladiator game built with HTML5 Canvas, Matte
 - **1 Player (vs Bot):** Single-player duel with selectable Split-Thumbs or Side-Pair mobile controls.
 
 ## Features
-- **15 Arenas:** 9 core islands/caverns/half-pipes/seesaw stages + 6 derived stages, with random rotation or manual map lock (`1–15`).
-- **Physics & Combat:** Elastic suspension with controlled front-wheelie lift, snappy mid-air flips, tilting center-pinned seesaws, low-seated driver helmet knockoffs (`5` to win), and bottom water hazards.
+- **9 Deterministic Arenas:** Strictly the 9 core islands, caverns, half-pipes, and seesaw stages loaded in exact sequence (`1–9`) or selectable via map lock, with 100% deterministic obstacle layouts.
+- **Grounded Physics & Hill Climbing:** Lowered center of mass, damped spring suspension, slope-aware forward/reverse climbing torque, smooth brake-to-reverse transitions, tilting seesaws, low-seated driver helmet knockoffs (`5` to win), and bottom water hazards.
 - **Zero-Build:** Runs directly from a single self-contained `index.html`.
