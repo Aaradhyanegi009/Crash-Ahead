@@ -251,6 +251,22 @@ export class VehiclePhysicsController {
       if (clampedAv !== car.chassis.angularVelocity) {
         this.Body.setAngularVelocity(car.chassis, clampedAv);
       }
+      const canGlide = Boolean(car.model === 'aircraft' || (car.spec && car.spec.canGlide));
+      if (canGlide && !car.dead && Math.cos(car.chassis.angle) > 0.22) {
+        const sinkCap = car.driving
+          ? VEHICLE_PHYSICS.GLIDE_MAX_SINK_VY
+          : (car.accelDir === 0 && Math.abs(car.chassis.velocity.x) > 1.0 ? VEHICLE_PHYSICS.GLIDE_PASSIVE_MAX_SINK_VY : Infinity);
+        if (Number.isFinite(sinkCap) && car.chassis.velocity.y > sinkCap) {
+          for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+            if (b && b.velocity.y > sinkCap) {
+              this.Body.setVelocity(b, {
+                x: b.velocity.x,
+                y: sinkCap
+              });
+            }
+          }
+        }
+      }
     } else if (car.accelDir !== 0 && !car.dead) {
       const isRev = (car.accelDir * car.facing) < 0;
       const maxS = (isRev ? VEHICLE_PHYSICS.MAX_REVERSE_SPEED : VEHICLE_PHYSICS.MAX_FORWARD_SPEED) * spdScale;
@@ -332,6 +348,84 @@ export class VehiclePhysicsController {
       const forwardPressed = car.facing > 0 ? inputR : inputL;
       const reversePressed = car.facing > 0 ? inputL : inputR;
       const pitchCmd = (forwardPressed ? 1 : 0) - (reversePressed ? 1 : 0);
+      const canGlide = Boolean(car.model === 'aircraft' || (car.spec && car.spec.canGlide));
+
+      if (canGlide) {
+        car.driving = forwardPressed;
+        car.accelDir = worldDir;
+        const ang = normalizeAngle(car.chassis.angle);
+        const uprightCos = Math.cos(ang);
+        const spdScale = car.speedScale || 1.0;
+        if (uprightCos > 0.22) {
+          const bodies = [car.chassis, car.wheelR, car.wheelF, car.head];
+          const gScale = this.engine.gravity.y * 0.001 * uprightCos;
+          if (forwardPressed && worldDir !== 0) {
+            for (const b of bodies) {
+              if (!b) continue;
+              this.Body.applyForce(b, b.position, {
+                x: 0,
+                y: -b.mass * gScale * VEHICLE_PHYSICS.GLIDE_GRAVITY_COUNTER
+              });
+            }
+            const maxGlideSpd = VEHICLE_PHYSICS.MAX_FORWARD_SPEED * spdScale * 1.06;
+            if (worldDir * car.chassis.velocity.x < maxGlideSpd) {
+              const thrust = worldDir * VEHICLE_PHYSICS.GLIDE_THRUST_FORCE * spdScale;
+              this.Body.applyForce(car.chassis, car.chassis.position, { x: thrust * 0.70, y: 0 });
+              if (car.wheelR) this.Body.applyForce(car.wheelR, car.wheelR.position, { x: thrust * 0.15, y: 0 });
+              if (car.wheelF) this.Body.applyForce(car.wheelF, car.wheelF.position, { x: thrust * 0.15, y: 0 });
+            }
+            if (car.chassis.velocity.y > VEHICLE_PHYSICS.GLIDE_MAX_SINK_VY) {
+              for (const b of bodies) {
+                if (b && b.velocity.y > VEHICLE_PHYSICS.GLIDE_MAX_SINK_VY) {
+                  this.Body.setVelocity(b, {
+                    x: b.velocity.x,
+                    y: lerp(b.velocity.y, VEHICLE_PHYSICS.GLIDE_MAX_SINK_VY, 0.72)
+                  });
+                }
+              }
+            }
+          } else if (reversePressed && worldDir !== 0) {
+            if (worldDir * car.chassis.velocity.x < -0.5) {
+              for (const b of bodies) {
+                if (b) {
+                  this.Body.setVelocity(b, { x: b.velocity.x * 0.88, y: b.velocity.y });
+                }
+              }
+            }
+            const maxAirBrakeSpd = VEHICLE_PHYSICS.MAX_FORWARD_SPEED * spdScale * 0.85;
+            if (worldDir * car.chassis.velocity.x < maxAirBrakeSpd) {
+              const thrust = worldDir * VEHICLE_PHYSICS.GLIDE_THRUST_FORCE * spdScale * 1.15;
+              this.Body.applyForce(car.chassis, car.chassis.position, { x: thrust * 0.70, y: 0 });
+              if (car.wheelR) this.Body.applyForce(car.wheelR, car.wheelR.position, { x: thrust * 0.15, y: 0 });
+              if (car.wheelF) this.Body.applyForce(car.wheelF, car.wheelF.position, { x: thrust * 0.15, y: 0 });
+            }
+          } else if (worldDir === 0 && Math.abs(car.chassis.velocity.x) > 1.0) {
+            for (const b of bodies) {
+              if (!b) continue;
+              this.Body.applyForce(b, b.position, {
+                x: 0,
+                y: -b.mass * gScale * 0.38
+              });
+            }
+            if (car.chassis.velocity.y > VEHICLE_PHYSICS.GLIDE_PASSIVE_MAX_SINK_VY) {
+              for (const b of bodies) {
+                if (b && b.velocity.y > VEHICLE_PHYSICS.GLIDE_PASSIVE_MAX_SINK_VY) {
+                  this.Body.setVelocity(b, {
+                    x: b.velocity.x,
+                    y: lerp(b.velocity.y, VEHICLE_PHYSICS.GLIDE_PASSIVE_MAX_SINK_VY, 0.58)
+                  });
+                }
+              }
+            }
+          }
+        }
+        if (Math.abs(ang) < 1.15 && forwardPressed) {
+          this._applyPitchStability(car, 0, VEHICLE_PHYSICS.GLIDE_TARGET_PITCH, false);
+          this.Body.setAngularVelocity(car.chassis, clamp(car.chassis.angularVelocity, -0.06, 0.06));
+          return ground;
+        }
+      }
+
       // Inverted mid-air pitch rotation: Gas rolls nose-up/backflip, Reverse rolls nose-down
       const torqueDir = -(pitchCmd * car.facing);
 

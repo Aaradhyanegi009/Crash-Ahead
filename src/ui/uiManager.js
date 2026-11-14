@@ -155,7 +155,7 @@ export class UIManager {
     const total = modelIds.length;
     if (selectedCarIdx < 0 || selectedCarIdx >= total) {
       this.dom.carTitle.textContent = `RANDOM VEHICLES (ALL ${total})`;
-      this.dom.carSub.textContent = 'Roadster, Truck, JCB, Bike & Tank • Tap < > to pick';
+      this.dom.carSub.textContent = 'Roadster, Truck, JCB, Bike, Tank, Biplane, Jetski & Snowmobile • Tap < > to pick';
     } else {
       const id = modelIds[selectedCarIdx];
       const name = modelsMap[id]?.name || String(id).toUpperCase();

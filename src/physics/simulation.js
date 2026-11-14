@@ -1404,6 +1404,42 @@ export class PhysicsSimulation {
       this.Body.setAngularVelocity(sw.body, clamp(av, -0.18, 0.18));
     }
 
+    for (const car of [this.p1Car, this.p2Car]) {
+      if (!car || car.dead || !(car.model === 'jetski' || (car.spec && car.spec.waterSkim))) continue;
+      if (
+        Math.cos(car.chassis.angle) > 0.45 &&
+        car.chassis.position.y > this.waterCrestY - 20 &&
+        car.chassis.position.y < this.waterHazardY + 4 &&
+        Math.abs(car.chassis.velocity.x) > 1.8
+      ) {
+        const bodies = [car.chassis, car.wheelR, car.wheelF, car.head];
+        const deepOnWater = car.chassis.position.y > this.waterCrestY - 6;
+        for (const b of bodies) {
+          if (!b) continue;
+          if (!deepOnWater) {
+            if (b.velocity.y > 0.35) {
+              this.Body.setVelocity(b, { x: b.velocity.x, y: b.velocity.y * 0.40 - 0.45 });
+            }
+          } else if (b.velocity.y > -0.3) {
+            this.Body.setVelocity(b, { x: b.velocity.x, y: b.velocity.y * 0.30 - 0.90 });
+          }
+        }
+        if (deepOnWater) {
+          const maxSafeBodyY = Math.max(
+            car.chassis.position.y,
+            car.head ? car.head.position.y : -Infinity
+          );
+          const safeLimitY = this.waterHazardY - 3;
+          if (maxSafeBodyY > safeLimitY) {
+            const liftY = safeLimitY - maxSafeBodyY;
+            for (const b of bodies) {
+              if (b) this.Body.translate(b, { x: 0, y: liftY });
+            }
+          }
+        }
+      }
+    }
+
     if (this.isHostSide) {
       const checkWater = (car, idx) => {
         if (!car || car.dead) return;

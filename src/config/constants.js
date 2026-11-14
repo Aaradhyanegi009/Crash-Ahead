@@ -115,10 +115,17 @@ export const VEHICLE_PHYSICS = Object.freeze({
   WHEEL_COAST_FRICTION: 0.68,
   WHEEL_MAX_SPIN: Number(((MAX_FORWARD_SPEED / (14.5 * CAR_SCALE)) * 1.04).toFixed(3)),
   WHEEL_REVERSE_MAX_SPIN: Number(((MAX_REVERSE_SPEED / (14.5 * CAR_SCALE)) * 1.04).toFixed(3)),
-  GRAVITY_COMP_SCALE: 0.90
+  GRAVITY_COMP_SCALE: 0.90,
+  GLIDE_GRAVITY_COUNTER: 0.64,
+  GLIDE_MAX_SINK_VY: 2.15,
+  GLIDE_PASSIVE_MAX_SINK_VY: 3.45,
+  GLIDE_THRUST_FORCE: 0.0044,
+  GLIDE_TARGET_PITCH: 0.13
 });
 
-export const CAR_MODEL_IDS = Object.freeze(['roadster', 'truck', 'jcb', 'bike', 'tank']);
+export const CAR_MODEL_IDS = Object.freeze([
+  'roadster', 'truck', 'jcb', 'bike', 'tank', 'aircraft', 'jetski', 'snowmobile'
+]);
 
 export const CAR_MODELS = Object.freeze({
   roadster: Object.freeze({
@@ -259,6 +266,95 @@ export const CAR_MODELS = Object.freeze({
     headRestitution: 0.15,
     maxWheelSpin: VEHICLE_PHYSICS.WHEEL_MAX_SPIN,
     exhaustLocal: Object.freeze({ x: -38 * CAR_SCALE, y: -6 * CAR_SCALE })
+  }),
+  aircraft: Object.freeze({
+    id: 'aircraft',
+    name: 'MINI WWI BIPLANE',
+    scale: CAR_SCALE,
+    canGlide: true,
+    width: 86 * CAR_SCALE,
+    height: 21 * CAR_SCALE,
+    chamfer: 7 * CAR_SCALE,
+    density: 0.0058,
+    restitution: 0.08,
+    friction: 0.04,
+    wheelOffsetX: 24 * CAR_SCALE,
+    wheelOffsetY: 12.2 * CAR_SCALE,
+    wheelOffsetYF: 12.2 * CAR_SCALE,
+    wheelRadius: 13.8 * CAR_SCALE,
+    wheelRadiusR: 13.8 * CAR_SCALE,
+    wheelRadiusF: 13.8 * CAR_SCALE,
+    wheelDensity: 0.0102,
+    wheelFriction: VEHICLE_PHYSICS.WHEEL_BASE_FRICTION,
+    wheelRestitution: 0.08,
+    headRadius: 11.5 * CAR_SCALE,
+    headOffsetX: -3 * CAR_SCALE,
+    headOffsetY: -15.8 * CAR_SCALE,
+    collarX: -3 * CAR_SCALE,
+    collarY: -5.2 * CAR_SCALE,
+    headDensity: 0.00052,
+    headRestitution: 0.15,
+    maxWheelSpin: VEHICLE_PHYSICS.WHEEL_MAX_SPIN,
+    exhaustLocal: Object.freeze({ x: 14 * CAR_SCALE, y: -5 * CAR_SCALE })
+  }),
+  jetski: Object.freeze({
+    id: 'jetski',
+    name: 'WAVE JETSKI',
+    scale: CAR_SCALE,
+    waterSkim: true,
+    width: 84 * CAR_SCALE,
+    height: 19.5 * CAR_SCALE,
+    chamfer: 8 * CAR_SCALE,
+    density: 0.0059,
+    restitution: 0.10,
+    friction: 0.03,
+    wheelOffsetX: 23.5 * CAR_SCALE,
+    wheelOffsetY: 11.2 * CAR_SCALE,
+    wheelOffsetYF: 11.2 * CAR_SCALE,
+    wheelRadius: 13.6 * CAR_SCALE,
+    wheelRadiusR: 13.6 * CAR_SCALE,
+    wheelRadiusF: 13.6 * CAR_SCALE,
+    wheelDensity: 0.0106,
+    wheelFriction: VEHICLE_PHYSICS.WHEEL_BASE_FRICTION,
+    wheelRestitution: 0.08,
+    headRadius: 11.5 * CAR_SCALE,
+    headOffsetX: -4 * CAR_SCALE,
+    headOffsetY: -16.8 * CAR_SCALE,
+    collarX: -4 * CAR_SCALE,
+    collarY: -6 * CAR_SCALE,
+    headDensity: 0.00052,
+    headRestitution: 0.15,
+    maxWheelSpin: VEHICLE_PHYSICS.WHEEL_MAX_SPIN,
+    exhaustLocal: Object.freeze({ x: -42 * CAR_SCALE, y: 4 * CAR_SCALE })
+  }),
+  snowmobile: Object.freeze({
+    id: 'snowmobile',
+    name: 'ALPINE SNOWMOBILE',
+    scale: CAR_SCALE,
+    width: 90 * CAR_SCALE,
+    height: 21 * CAR_SCALE,
+    chamfer: 7.5 * CAR_SCALE,
+    density: 0.0065,
+    restitution: 0.08,
+    friction: 0.04,
+    wheelOffsetX: 26 * CAR_SCALE,
+    wheelOffsetY: 11.8 * CAR_SCALE,
+    wheelOffsetYF: 11.8 * CAR_SCALE,
+    wheelRadius: 14.4 * CAR_SCALE,
+    wheelRadiusR: 14.4 * CAR_SCALE,
+    wheelRadiusF: 14.4 * CAR_SCALE,
+    wheelDensity: 0.0114,
+    wheelFriction: VEHICLE_PHYSICS.WHEEL_BASE_FRICTION,
+    wheelRestitution: 0.06,
+    headRadius: 11.5 * CAR_SCALE,
+    headOffsetX: -3 * CAR_SCALE,
+    headOffsetY: -17.0 * CAR_SCALE,
+    collarX: -3 * CAR_SCALE,
+    collarY: -6.2 * CAR_SCALE,
+    headDensity: 0.00055,
+    headRestitution: 0.15,
+    maxWheelSpin: VEHICLE_PHYSICS.WHEEL_MAX_SPIN,
+    exhaustLocal: Object.freeze({ x: -38 * CAR_SCALE, y: 3 * CAR_SCALE })
   })
 });
 

@@ -788,10 +788,384 @@ function drawTankBody(ctx, colors) {
   }
 }
 
+function drawAircraftBody(ctx, colors, roundElapsedMs = 0) {
+  ctx.lineWidth = 3.1 / CAR_SCALE;
+  ctx.strokeStyle = PALETTE.ink;
+
+  // Landing gear V-struts connecting lower fuselage to rear tailwheel (-24, 12.2) & main axle (+24, 12.2)
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.moveTo(10, 5);
+  ctx.lineTo(25.5, 11.5);
+  ctx.lineTo(22.5, 13.5);
+  ctx.lineTo(6.5, 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(-18, 4.5);
+  ctx.lineTo(-25, 11.8);
+  ctx.lineTo(-22, 13.4);
+  ctx.lineTo(-14, 5.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Rear WWI vertical tail fin & rudder + horizontal stabilizer
+  ctx.fillStyle = colors.body;
+  ctx.beginPath();
+  ctx.moveTo(-31, -4);
+  ctx.quadraticCurveTo(-41, -22, -45.5, -18);
+  ctx.lineTo(-44.5, 3.5);
+  ctx.lineTo(-33, 5.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = PALETTE.white;
+  ctx.fillRect(-46, -22, 4.8, 28);
+  ctx.fillStyle = colors.lip;
+  ctx.fillRect(-41.2, -22, 4.4, 28);
+  ctx.restore();
+  ctx.stroke();
+
+  // Main WWI tapered fabric-skinned fuselage (-42..+42)
+  ctx.beginPath();
+  ctx.moveTo(-42, 4);
+  ctx.lineTo(35, 7.5);
+  ctx.quadraticCurveTo(43.5, 7.5, 43.5, 0);
+  ctx.quadraticCurveTo(43.5, -9, 34, -10.5);
+  ctx.lineTo(12, -11.5);
+  ctx.lineTo(4, -5.5);          // open cockpit bay cutout for pilot helmet
+  ctx.lineTo(-11.5, -5.5);
+  ctx.lineTo(-15.5, -10.5);     // rear turtledeck spine
+  ctx.lineTo(-42.5, -4.5);
+  ctx.closePath();
+
+  ctx.fillStyle = colors.body;
+  ctx.fill();
+
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = colors.lip;
+  ctx.fillRect(-45, 2.2, 92, 7.5);
+  ctx.fillStyle = PALETTE.stripeGold;
+  ctx.fillRect(-45, -1.8, 92, 3.6);
+  ctx.restore();
+  ctx.stroke();
+
+  // Classic WWI circular squadron roundel on rear fuselage flank
+  ctx.fillStyle = PALETTE.white;
+  ctx.beginPath();
+  ctx.arc(-23, -1, 4.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 1.6 / CAR_SCALE;
+  ctx.stroke();
+  ctx.fillStyle = PALETTE.stripeGold;
+  ctx.beginPath();
+  ctx.arc(-23, -1, 2.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Open cockpit leather coaming rim + angled aero windscreen + nose machine guns
+  ctx.lineWidth = 2.6 / CAR_SCALE;
+  ctx.fillStyle = '#5c3721';
+  ctx.beginPath();
+  ctx.roundRect(-12.5, -11, 18, 4.4, 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#dff6ff';
+  ctx.beginPath();
+  ctx.moveTo(6.5, -10.5);
+  ctx.lineTo(3.5, -16.5);
+  ctx.lineTo(7.5, -16.5);
+  ctx.lineTo(11, -10.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Twin nose cowl machine gun barrels + rotary radial aluminum nose cowling
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(14, -13.2, 16, 2.8, 1);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#adb5bd';
+  ctx.beginPath();
+  ctx.roundRect(35.5, -9.8, 7.8, 17, 3.2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Lower biplane wing airfoil chord
+  ctx.fillStyle = colors.lip;
+  ctx.beginPath();
+  ctx.roundRect(-13, 2.5, 31, 5.5, 2.7);
+  ctx.fill();
+  ctx.stroke();
+
+  // Interplane wooden struts well clear of central pilot helmet bay (-16 & +15)
+  ctx.fillStyle = '#8b5a2b';
+  ctx.beginPath();
+  ctx.roundRect(-18.5, -29.5, 3.4, 33.5, 1.4);
+  ctx.roundRect(14.5, -29.5, 3.4, 33.5, 1.4);
+  ctx.fill();
+  ctx.stroke();
+
+  // Upper parasol WWI biplane wing cleanly above pilot helmet (-33.5..-28.2)
+  ctx.fillStyle = colors.body;
+  ctx.beginPath();
+  ctx.roundRect(-21, -33.5, 45, 5.4, 2.6);
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = PALETTE.stripeGold;
+  ctx.fillRect(-21, -30.5, 45, 2.6);
+  ctx.restore();
+  ctx.stroke();
+
+  // Animated spinning front propeller + hub spinner
+  const spinPhase = (roundElapsedMs || 0) * 0.045;
+  const bladeH = 4.5 + Math.abs(Math.sin(spinPhase)) * 13.5;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+  ctx.beginPath();
+  ctx.ellipse(46.2, -1.2, 2.8, 18.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#5c3721';
+  ctx.beginPath();
+  ctx.roundRect(45.2, -1.2 - bladeH, 3.2, bladeH * 2, 1.6);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = PALETTE.stripeGold;
+  ctx.beginPath();
+  ctx.arc(44.2, -1.2, 3.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+}
+
+function drawJetskiBody(ctx, colors) {
+  ctx.lineWidth = 3.2 / CAR_SCALE;
+  ctx.strokeStyle = PALETTE.ink;
+
+  // Rear jet-pump nozzle & transom step (-45..-36)
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(-45.5, 0.5, 9.5, 8.2, 2.2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#9aa5b1';
+  ctx.beginPath();
+  ctx.roundRect(-47, 2.4, 3.4, 4.4, 1);
+  ctx.fill();
+
+  // Low dark wake/hydro-hull skirt framing underside rollers
+  ctx.fillStyle = '#24313f';
+  ctx.beginPath();
+  ctx.moveTo(-39, 7);
+  ctx.lineTo(36, 7);
+  ctx.lineTo(39, 13.5);
+  ctx.quadraticCurveTo(0, 15.5, -36, 13.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Angled watercraft steering console & high handlebar grips
+  ctx.fillStyle = colors.lip;
+  ctx.beginPath();
+  ctx.moveTo(6, -5);
+  ctx.lineTo(13, -17.5);
+  ctx.lineTo(19, -15.5);
+  ctx.lineTo(14.5, -4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = PALETTE.ink;
+  ctx.beginPath();
+  ctx.roundRect(10.5, -19.5, 9.5, 3.8, 1.6);
+  ctx.fill();
+
+  // Small tinted jetski bow splash visor
+  ctx.fillStyle = '#dff6ff';
+  ctx.beginPath();
+  ctx.moveTo(16, -11.5);
+  ctx.lineTo(25.5, -15.2);
+  ctx.lineTo(28, -9.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Sharp wave-piercing Jetski hull (-41..+48)
+  ctx.beginPath();
+  ctx.moveTo(-38, 10.5);
+  ctx.lineTo(32, 10.5);
+  ctx.quadraticCurveTo(46.5, 9.5, 49, -1.5);
+  ctx.quadraticCurveTo(43.5, -8.5, 22, -10.5);
+  ctx.lineTo(11, -10.5);
+  ctx.lineTo(3, -5.5);           // rider straddle footwell dip
+  ctx.lineTo(-22, -6.5);
+  ctx.lineTo(-37, -11.5);        // kicked-up rear grab spoiler
+  ctx.lineTo(-41.5, -7);
+  ctx.lineTo(-40.5, 7);
+  ctx.closePath();
+
+  ctx.fillStyle = colors.body;
+  ctx.fill();
+
+  ctx.save();
+  ctx.clip();
+  // Crisp white wave-chine bottom, gold slash & lower team lip
+  ctx.fillStyle = PALETTE.white;
+  ctx.fillRect(-44, 5.8, 96, 5.8);
+  ctx.fillStyle = PALETTE.stripeGold;
+  ctx.beginPath();
+  ctx.moveTo(-42, 2);
+  ctx.lineTo(48, -4.5);
+  ctx.lineTo(48, 0.2);
+  ctx.lineTo(-42, 5.8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = colors.lip;
+  ctx.fillRect(-44, -12, 96, 5.2);
+  ctx.restore();
+
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 3.5 / CAR_SCALE;
+  ctx.stroke();
+
+  // Dark contoured straddle saddle
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(-24.5, -10, 26, 5.8, 2.6);
+  ctx.fill();
+  ctx.stroke();
+}
+
+function drawSnowmobileBody(ctx, colors) {
+  ctx.lineWidth = 3.1 / CAR_SCALE;
+  ctx.strokeStyle = PALETTE.ink;
+
+  // Rear snow-flap + heavy cleated rubber track suspension frame (-44..-1, y +3..+22)
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(-45.5, 5, 5.5, 13.5, 1.5);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(-41.5, 5.5, 39.5, 17, 7.8);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#5c6670';
+  for (const bx of [-34, -22, -10]) {
+    ctx.beginPath();
+    ctx.arc(bx, 14, 4.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Front spindle strut + twin curved Alpine Ski Runner (+7..+53, y +11..+24.5)
+  ctx.fillStyle = '#adb5bd';
+  ctx.beginPath();
+  ctx.moveTo(20, 4);
+  ctx.lineTo(25.5, 4);
+  ctx.lineTo(28.5, 20.5);
+  ctx.lineTo(23, 20.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = PALETTE.ink;
+  ctx.beginPath();
+  ctx.moveTo(7.5, 20.5);
+  ctx.lineTo(43, 20.5);
+  ctx.quadraticCurveTo(51.5, 20.5, 53.5, 11.2);
+  ctx.lineTo(49.5, 9.8);
+  ctx.quadraticCurveTo(47.5, 17, 42, 17.5);
+  ctx.lineTo(8.5, 17.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = colors.body;
+  ctx.fillRect(14, 18.2, 24, 1.8);
+
+  // Tall riser handlebars & icy tinted angular windshield
+  ctx.fillStyle = '#dff6ff';
+  ctx.beginPath();
+  ctx.moveTo(12, -10.5);
+  ctx.lineTo(21, -22.5);
+  ctx.lineTo(26, -21);
+  ctx.lineTo(20, -10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = colors.lip;
+  ctx.beginPath();
+  ctx.roundRect(6, -18.5, 8.5, 4.0, 1.6);
+  ctx.fill();
+  ctx.stroke();
+
+  // Sharp faceted Snowmobile tunnel & front nose cowling (-40..+45)
+  ctx.beginPath();
+  ctx.moveTo(-40, 8);
+  ctx.lineTo(35, 8);
+  ctx.lineTo(46, 3);
+  ctx.lineTo(39, -6.5);
+  ctx.lineTo(14, -11.5);
+  ctx.lineTo(4, -5);
+  ctx.lineTo(-22, -6.5);
+  ctx.lineTo(-39, -9.5);
+  ctx.lineTo(-42, 2);
+  ctx.closePath();
+
+  ctx.fillStyle = colors.body;
+  ctx.fill();
+
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.fillRect(-43, 2.5, 91, 6.5);
+  ctx.fillStyle = PALETTE.stripeGold;
+  ctx.fillRect(-43, -1.8, 91, 3.8);
+  ctx.fillStyle = PALETTE.white;
+  ctx.fillRect(16, -9.5, 28, 3.5);
+  ctx.restore();
+
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 3.5 / CAR_SCALE;
+  ctx.stroke();
+
+  // Thermal quilted snowmobile saddle
+  ctx.fillStyle = PALETTE.charcoal;
+  ctx.beginPath();
+  ctx.roundRect(-25.5, -10.2, 26.5, 5.8, 2.5);
+  ctx.fill();
+  ctx.stroke();
+}
+
 function drawWheel(ctx, wheel, radius, colors, style = 'roadster', offsetX = 0, offsetY = 0) {
   ctx.save();
   ctx.translate(wheel.position.x + offsetX, wheel.position.y + offsetY);
   ctx.rotate(wheel.angle);
+
+  if (style === 'jetski') {
+    // Low-profile dark hydro-roller subtly visible under watercraft hull
+    ctx.fillStyle = '#1b2631';
+    ctx.beginPath();
+    ctx.arc(0, 0, radius * 0.88, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#334e68';
+    ctx.beginPath();
+    ctx.arc(0, 0, radius * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
 
   if (style === 'jcb') {
     // Bold industrial tractor tread lugs around tire perimeter
@@ -830,6 +1204,18 @@ function drawWheel(ctx, wheel, radius, colors, style = 'roadster', offsetX = 0, 
       ctx.fill();
       ctx.restore();
     }
+  } else if (style === 'snowmobile') {
+    const lugCount = 7;
+    ctx.fillStyle = PALETTE.ink;
+    for (let i = 0; i < lugCount; i++) {
+      const a = (i / lugCount) * Math.PI * 2;
+      ctx.save();
+      ctx.rotate(a);
+      ctx.beginPath();
+      ctx.roundRect(-1.8 * CAR_SCALE, -radius - 1.0 * CAR_SCALE, 3.6 * CAR_SCALE, 2.6 * CAR_SCALE, 0.8 * CAR_SCALE);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   ctx.fillStyle = PALETTE.ink;
@@ -837,20 +1223,20 @@ function drawWheel(ctx, wheel, radius, colors, style = 'roadster', offsetX = 0, 
   ctx.arc(0, 0, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  const rimR = style === 'jcb' ? radius * 0.56 : style === 'bike' ? radius * 0.62 : style === 'tank' ? radius * 0.58 : radius * 0.53;
-  ctx.fillStyle = style === 'jcb' ? '#f5b818' : style === 'tank' ? '#5c6670' : colors.rim;
+  const rimR = style === 'jcb' ? radius * 0.56 : style === 'bike' ? radius * 0.62 : style === 'tank' ? radius * 0.58 : style === 'aircraft' ? radius * 0.64 : style === 'snowmobile' ? radius * 0.55 : radius * 0.53;
+  ctx.fillStyle = style === 'jcb' ? '#f5b818' : style === 'tank' ? '#5c6670' : style === 'aircraft' ? '#e6d5b8' : style === 'snowmobile' ? '#3f4b56' : colors.rim;
   ctx.beginPath();
   ctx.arc(0, 0, rimR, 0, Math.PI * 2);
   ctx.fill();
 
-  if (style === 'jcb' || style === 'tank') {
+  if (style === 'jcb' || style === 'tank' || style === 'snowmobile') {
     ctx.strokeStyle = colors.rim;
     ctx.lineWidth = 2.2 * CAR_SCALE;
     ctx.stroke();
-  } else if (style === 'bike') {
+  } else if (style === 'bike' || style === 'aircraft') {
     ctx.strokeStyle = PALETTE.ink;
-    ctx.lineWidth = 1.6 * CAR_SCALE;
-    const spokes = 5;
+    ctx.lineWidth = (style === 'aircraft' ? 1.2 : 1.6) * CAR_SCALE;
+    const spokes = style === 'aircraft' ? 8 : 5;
     for (let i = 0; i < spokes; i++) {
       const sa = (i / spokes) * Math.PI * 2;
       ctx.beginPath();
@@ -860,12 +1246,12 @@ function drawWheel(ctx, wheel, radius, colors, style = 'roadster', offsetX = 0, 
     }
   }
 
-  ctx.fillStyle = PALETTE.white;
+  ctx.fillStyle = style === 'aircraft' ? colors.rim : PALETTE.white;
   ctx.beginPath();
   ctx.arc(0, 0, radius * 0.23, 0, Math.PI * 2);
   ctx.fill();
 
-  if (style === 'truck' || style === 'jcb' || style === 'tank') {
+  if (style === 'truck' || style === 'jcb' || style === 'tank' || style === 'snowmobile') {
     ctx.fillStyle = PALETTE.ink;
     const bolts = style === 'tank' ? 6 : 4;
     for (let i = 0; i < bolts; i++) {
@@ -959,6 +1345,12 @@ export function drawVehicle(ctx, carState, isRedPlayer, roundElapsedMs = 0) {
     drawBikeBody(ctx, colors);
   } else if (model === 'tank') {
     drawTankBody(ctx, colors);
+  } else if (model === 'aircraft') {
+    drawAircraftBody(ctx, colors, roundElapsedMs);
+  } else if (model === 'jetski') {
+    drawJetskiBody(ctx, colors);
+  } else if (model === 'snowmobile') {
+    drawSnowmobileBody(ctx, colors);
   } else {
     drawRoadsterBody(ctx, colors);
   }
