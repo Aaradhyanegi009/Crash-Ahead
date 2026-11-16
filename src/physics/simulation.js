@@ -863,6 +863,7 @@ export class PhysicsSimulation {
       cannonEnabled: false,
       rapidCannon: false,
       oneHitCannon: false,
+      cannonKnockbackOnly: false,
       scaleFactor: 1.0,
       lastCannonAtMs: -99999,
       _prevJumpHeld: false,
@@ -1117,6 +1118,7 @@ export class PhysicsSimulation {
       if (typeof snap.lg1 === 'number') this.p1Car.lastGroundedAtMs = snap.lg1;
       if (typeof snap.ij1 === 'number') this.p1Car.infiniteJump = !!snap.ij1;
       if (typeof snap.gm1 === 'number') this.p1Car.godMode = !!snap.gm1;
+      if (typeof snap.kb1 === 'number') this.p1Car.cannonKnockbackOnly = !!snap.kb1;
       if (typeof snap.sf1 === 'number' && Math.abs((this.p1Car.scaleFactor || 1) - snap.sf1) > 0.04) {
         this.scaleVehicle(1, snap.sf1);
       }
@@ -1129,6 +1131,7 @@ export class PhysicsSimulation {
       if (typeof snap.lg2 === 'number') this.p2Car.lastGroundedAtMs = snap.lg2;
       if (typeof snap.ij2 === 'number') this.p2Car.infiniteJump = !!snap.ij2;
       if (typeof snap.gm2 === 'number') this.p2Car.godMode = !!snap.gm2;
+      if (typeof snap.kb2 === 'number') this.p2Car.cannonKnockbackOnly = !!snap.kb2;
       if (typeof snap.sf2 === 'number' && Math.abs((this.p2Car.scaleFactor || 1) - snap.sf2) > 0.04) {
         this.scaleVehicle(2, snap.sf2);
       }
@@ -1145,8 +1148,9 @@ export class PhysicsSimulation {
         vx: row[2],
         vy: row[3],
         r: row[6] || 8,
-        oneHitKO: !!row[7],
-        mega: !!row[7],
+        oneHitKO: !!(row[7] & 1),
+        knockbackOnly: !!(row[7] & 2),
+        mega: !!(row[7] & 1),
         lifeMs: 2000
       }));
     }
@@ -1663,6 +1667,7 @@ export class PhysicsSimulation {
       cannonEnabled: oldCar.cannonEnabled,
       rapidCannon: oldCar.rapidCannon,
       oneHitCannon: oldCar.oneHitCannon,
+      cannonKnockbackOnly: oldCar.cannonKnockbackOnly,
       scaleFactor: oldCar.scaleFactor || 1.0
     };
 
@@ -1725,7 +1730,9 @@ export class PhysicsSimulation {
     car.lastCannonAtMs = this.roundElapsedMs;
 
     const sf = car.scaleFactor || 1.0;
-    const spd = ADMIN_CONFIG.CANNON_SHELL_SPEED * (car.oneHitCannon ? 1.15 : 1.0);
+    const kbOnly = !!car.cannonKnockbackOnly;
+    const lethalMega = !!car.oneHitCannon && !kbOnly;
+    const spd = ADMIN_CONFIG.CANNON_SHELL_SPEED * (lethalMega ? 1.15 : 1.0);
     const proj = {
       id: ++this._nextProjId,
       owner: playerIndex,
@@ -1733,15 +1740,16 @@ export class PhysicsSimulation {
       y: muzzle.y + muzzle.dy * 6,
       vx: muzzle.dx * spd + car.chassis.velocity.x * 0.22,
       vy: muzzle.dy * spd + car.chassis.velocity.y * 0.12 - 0.55,
-      r: (car.oneHitCannon ? 10.5 : 7.8) * clamp(sf, 0.85, 1.4),
-      oneHitKO: !!car.oneHitCannon,
-      mega: !!car.oneHitCannon || !!car.rapidCannon,
+      r: (lethalMega ? 10.5 : (kbOnly ? 8.4 : 7.8)) * clamp(sf, 0.85, 1.4),
+      oneHitKO: lethalMega,
+      knockbackOnly: kbOnly,
+      mega: lethalMega || !!car.rapidCannon,
       lifeMs: 2600
     };
     this.projectiles.push(proj);
 
     // Barrel recoil kickback on the Panzer Tank
-    const recoilForce = car.oneHitCannon ? 2.4 : 1.7;
+    const recoilForce = lethalMega ? 2.4 : 1.7;
     for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
       if (!b) continue;
       this.Body.setVelocity(b, {
@@ -1761,7 +1769,8 @@ export class PhysicsSimulation {
         dx: muzzle.dx,
         dy: muzzle.dy,
         mega: proj.mega,
-        oneHitKO: proj.oneHitKO
+        oneHitKO: proj.oneHitKO,
+        knockbackOnly: proj.knockbackOnly
       });
     }
     return true;
@@ -1780,7 +1789,8 @@ export class PhysicsSimulation {
   }
 
   _detonateProjectile(proj, hitPt, directOppIdx = 0, hitPart = '') {
-    const isMega = !!proj.oneHitKO;
+    const kbOnly = !!proj.knockbackOnly;
+    const isMega = !kbOnly && !!proj.oneHitKO;
     const radius = isMega ? ADMIN_CONFIG.CANNON_MEGA_RADIUS : ADMIN_CONFIG.CANNON_BLAST_RADIUS;
     const hx = hitPt.x;
     const hy = hitPt.y;
@@ -1805,12 +1815,16 @@ export class PhysicsSimulation {
       const headDist = opp.head ? Math.hypot(opp.head.position.x - hx, opp.head.position.y - hy) : dist;
       const minD = Math.min(dist, headDist);
       if (minD <= radius + 24) {
-        const nx = dist > 1 ? dx / dist : (proj.vx >= 0 ? 1 : -1);
+        const shotDir = Math.abs(proj.vx) > 0.6 ? Math.sign(proj.vx) : (dx >= 0 ? 1 : -1);
+        const nx = kbOnly && directOppIdx === oppIdx ? shotDir : (dist > 1 ? dx / dist : shotDir);
         const ny = dist > 1 ? dy / dist : -0.6;
         const falloff = clamp(1.15 - minD / (radius * 1.2), 0.35, 1.0);
-        const blastPower = (isMega ? 25 : 17.5) * falloff;
-        const pushVx = nx * blastPower + proj.vx * 0.25;
-        const pushVy = ny * blastPower * 0.72 - 7.8 * falloff;
+        const basePower = isMega ? 25 : (kbOnly && directOppIdx === oppIdx ? 21.5 : 17.5);
+        const blastPower = basePower * falloff;
+        const pushVx = nx * blastPower + proj.vx * (kbOnly ? 0.22 : 0.25);
+        const pushVy = kbOnly
+          ? Math.min(ny, 0.05) * blastPower * 0.32 - 8.2 * falloff
+          : ny * blastPower * 0.72 - 7.8 * falloff;
         for (const b of [opp.chassis, opp.wheelR, opp.wheelF, opp.head]) {
           if (!b) continue;
           this.Body.setVelocity(b, {
@@ -1818,10 +1832,13 @@ export class PhysicsSimulation {
             y: clamp(b.velocity.y + pushVy, -24, 24)
           });
         }
-        const spin = (nx >= 0 ? 1 : -1) * (0.22 + 0.12 * falloff);
+        const spin = kbOnly
+          ? (nx >= 0 ? 1 : -1) * (0.055 + 0.035 * falloff)
+          : (nx >= 0 ? 1 : -1) * (0.22 + 0.12 * falloff);
         this.Body.setAngularVelocity(opp.chassis, clamp(opp.chassis.angularVelocity + spin, -0.35, 0.35));
 
         const lethal =
+          !kbOnly &&
           this.isHostSide &&
           (hitPart === 'head' ||
             isMega ||
@@ -1833,7 +1850,15 @@ export class PhysicsSimulation {
     }
 
     if (this.onCannonExplode) {
-      this.onCannonExplode({ x: hx, y: hy, r: radius, mega: proj.mega, oneHitKO: isMega, owner: proj.owner });
+      this.onCannonExplode({
+        x: hx,
+        y: hy,
+        r: radius,
+        mega: proj.mega,
+        oneHitKO: isMega,
+        knockbackOnly: kbOnly,
+        owner: proj.owner
+      });
     }
   }
 

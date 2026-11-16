@@ -19,6 +19,7 @@ export class AdminManager {
     };
     this.aiFrozen = false;
     this.noWaterRise = false;
+    this.cannonKnockback = false;
     this.gravityMode = 'normal';
     this._keyBuffer = '';
     this._lastKeyAt = 0;
@@ -81,6 +82,7 @@ export class AdminManager {
     this.drawerOpen = false;
     this.aiFrozen = false;
     this.noWaterRise = false;
+    this.cannonKnockback = false;
     this.gravityMode = 'normal';
     this._resetOverrides();
     this._saveState();
@@ -121,9 +123,17 @@ export class AdminManager {
       this.aiFrozen = !this.aiFrozen;
     } else if (key === 'noWaterRise') {
       this.noWaterRise = !this.noWaterRise;
+    } else if (key === 'cannonKnockback') {
+      this.cannonKnockback = !this.cannonKnockback;
+      if (this.cannonKnockback) {
+        this.overrides.oneHitKO = false;
+      }
     } else if (Object.prototype.hasOwnProperty.call(this.overrides, key)) {
       const eff = this.getEffectiveState();
       this.overrides[key] = !eff[key];
+      if (key === 'oneHitKO' && this.overrides[key]) {
+        this.cannonKnockback = false;
+      }
       if (this.level === 0 && this.overrides[key]) {
         this.level = 1;
         this._saveState();
@@ -160,6 +170,7 @@ export class AdminManager {
       if (this.overrides[k] !== null) return this.overrides[k];
       return active && Boolean(meta[k]);
     };
+    const cannonKnockback = this.unlocked && this.cannonKnockback;
     return {
       unlocked: this.unlocked,
       drawerOpen: this.drawerOpen,
@@ -167,10 +178,11 @@ export class AdminManager {
       level: this.level,
       levelMeta: meta,
       infiniteJump: resolve('infiniteJump'),
-      tankCannon: resolve('tankCannon') || (active && meta.tankCannon),
+      tankCannon: resolve('tankCannon') || (active && meta.tankCannon) || cannonKnockback,
+      cannonKnockback,
       godMode: resolve('godMode'),
       rapidFire: resolve('rapidFire'),
-      oneHitKO: resolve('oneHitKO'),
+      oneHitKO: cannonKnockback ? false : resolve('oneHitKO'),
       giantSelf: resolve('giantSelf'),
       miniOpp: resolve('miniOpp'),
       aiFrozen: this.unlocked && this.aiFrozen,
@@ -234,7 +246,7 @@ export class AdminManager {
       }
 
       const eff = this.getEffectiveState();
-      if (!eff.active && !['KeyT', 'KeyG', 'KeyK', 'KeyH', 'KeyU', 'KeyZ', 'KeyX', 'KeyV', 'KeyB', 'KeyN'].includes(e.code)) {
+      if (!eff.active && !['KeyT', 'KeyG', 'KeyK', 'KeyH', 'KeyU', 'KeyJ', 'KeyZ', 'KeyX', 'KeyV', 'KeyB', 'KeyN'].includes(e.code)) {
         return;
       }
 
@@ -255,6 +267,10 @@ export class AdminManager {
         case 'KeyU':
           this.togglePower('noWaterRise');
           if (actions.onNoWaterRiseChanged) actions.onNoWaterRiseChanged(this.getEffectiveState());
+          break;
+        case 'KeyJ':
+          this.togglePower('cannonKnockback');
+          if (actions.onCannonKnockbackChanged) actions.onCannonKnockbackChanged(this.getEffectiveState());
           break;
         case 'KeyZ':
           this.togglePower('miniOpp');

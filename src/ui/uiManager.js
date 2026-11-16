@@ -335,15 +335,22 @@ export class UIManager {
     if (!unlocked) return;
 
     this.dom.adminDrawer.classList.toggle('hidden', !eff.drawerOpen);
-    this.dom.adminToggleBtn.classList.toggle('off', eff.level === 0 && !eff.noWaterRise);
-    this.dom.adminBadgeLbl.textContent = eff.level === 0
-      ? (eff.noWaterRise ? 'DEV: NO WATER' : 'ADMIN OFF')
-      : `ADMIN LVL ${eff.level}`;
+    const devActiveCount = (eff.noWaterRise ? 1 : 0) + (eff.cannonKnockback ? 1 : 0);
+    this.dom.adminToggleBtn.classList.toggle('off', eff.level === 0 && devActiveCount === 0);
+    let badgeText = `ADMIN LVL ${eff.level}`;
+    if (eff.level === 0) {
+      if (eff.noWaterRise && eff.cannonKnockback) badgeText = 'DEV: 2 ACTIVE';
+      else if (eff.noWaterRise) badgeText = 'DEV: NO WATER';
+      else if (eff.cannonKnockback) badgeText = 'DEV: TANK KB';
+      else badgeText = 'ADMIN OFF';
+    }
+    this.dom.adminBadgeLbl.textContent = badgeText;
     if (this.dom.adminLvlDesc) {
       this.dom.adminLvlDesc.textContent = eff.levelMeta ? eff.levelMeta.desc : '';
     }
     if (this.dom.adminFireBtn) {
-      this.dom.adminFireBtn.classList.toggle('hidden', !(eff.active && eff.tankCannon && isTankFight));
+      this.dom.adminFireBtn.classList.toggle('hidden', !(eff.tankCannon && isTankFight));
+      this.dom.adminFireBtn.textContent = eff.cannonKnockback ? 'CANNON KB [F]' : 'CANNON [F]';
     }
     for (const btn of this.dom.adminLvlBtns) {
       btn.classList.toggle('active', Number(btn.dataset.lvl) === eff.level);

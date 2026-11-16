@@ -140,20 +140,20 @@ export class CanvasRenderer {
     }
   }
 
-  spawnMuzzleFlash(x, y, dx, dy, mega = false) {
+  spawnMuzzleFlash(x, y, dx, dy, mega = false, kbOnly = false) {
     for (let i = 0; i < (mega ? 7 : 5); i++) {
       const spread = (i - 2) * 0.22;
       const ca = Math.cos(spread);
       const sa = Math.sin(spread);
       const vx = (dx * ca - dy * sa) * (4.2 + (i % 3) * 1.4);
       const vy = (dx * sa + dy * ca) * (4.2 + (i % 3) * 1.4);
-      this.smoke.push({ x, y, vx, vy, r: mega ? 7 : 5, life: 0.72, isRing: false });
+      this.smoke.push({ x, y, vx, vy, r: mega ? 7 : 5, life: 0.72, isRing: kbOnly });
     }
-    this.blasts.push({ x, y, maxR: mega ? 34 : 24, life: 1.0, kind: 'muzzle' });
+    this.blasts.push({ x, y, maxR: mega ? 34 : 24, life: 1.0, kind: kbOnly ? 'kb_boom' : 'muzzle' });
   }
 
-  spawnExplosion(x, y, r = 112, mega = false) {
-    this.blasts.push({ x, y, maxR: r, life: 1.0, kind: mega ? 'mega' : 'boom' });
+  spawnExplosion(x, y, r = 112, mega = false, kbOnly = false) {
+    this.blasts.push({ x, y, maxR: r, life: 1.0, kind: kbOnly ? 'kb_boom' : (mega ? 'mega' : 'boom') });
     for (let i = 0; i < (mega ? 14 : 9); i++) {
       const ang = (i / (mega ? 14 : 9)) * Math.PI * 2;
       const spd = (mega ? 6.4 : 4.6) + (i % 3) * 1.2;
@@ -452,12 +452,17 @@ export class CanvasRenderer {
       const curR = Math.max(4, b.maxR * (0.25 + prog * 0.78));
       const a = Math.max(0, b.life);
       ctx.save();
-      if (b.kind === 'shock') {
-        ctx.strokeStyle = `rgba(247, 181, 56, ${a.toFixed(3)})`;
-        ctx.lineWidth = 7 * a + 2;
+      if (b.kind === 'shock' || b.kind === 'kb_boom') {
+        const isKb = b.kind === 'kb_boom';
+        ctx.strokeStyle = isKb ? `rgba(56, 189, 248, ${a.toFixed(3)})` : `rgba(247, 181, 56, ${a.toFixed(3)})`;
+        ctx.lineWidth = (isKb ? 8 : 7) * a + 2;
         ctx.beginPath();
         ctx.arc(b.x, b.y, curR, 0, Math.PI * 2);
         ctx.stroke();
+        if (isKb) {
+          ctx.fillStyle = `rgba(14, 165, 233, ${(a * 0.22).toFixed(3)})`;
+          ctx.fill();
+        }
         ctx.strokeStyle = `rgba(255, 255, 255, ${(a * 0.85).toFixed(3)})`;
         ctx.lineWidth = 3 * a + 1;
         ctx.beginPath();
@@ -554,8 +559,8 @@ export class CanvasRenderer {
       ctx.translate(p.x, p.y);
       ctx.rotate(ang);
 
-      // Fiery wake triangle behind shell
-      ctx.fillStyle = p.oneHitKO ? '#FF4D36' : PALETTE.stripeGold;
+      // Wake triangle behind shell
+      ctx.fillStyle = p.knockbackOnly ? '#38BDF8' : (p.oneHitKO ? '#FF4D36' : PALETTE.stripeGold);
       ctx.beginPath();
       ctx.moveTo(-r * 0.4, -r * 0.65);
       ctx.lineTo(-r * (p.oneHitKO ? 2.6 : 1.9), 0);
@@ -564,7 +569,9 @@ export class CanvasRenderer {
       ctx.fill();
 
       // Solid cartoon cannon shell warhead with thick ink outline
-      ctx.fillStyle = p.oneHitKO ? '#FF3B30' : (p.owner === 1 ? PALETTE.red.body : PALETTE.blue.body);
+      ctx.fillStyle = p.knockbackOnly
+        ? '#0EA5E9'
+        : (p.oneHitKO ? '#FF3B30' : (p.owner === 1 ? PALETTE.red.body : PALETTE.blue.body));
       ctx.strokeStyle = PALETTE.ink;
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -572,7 +579,7 @@ export class CanvasRenderer {
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = PALETTE.stripeGold;
+      ctx.fillStyle = p.knockbackOnly ? '#E0F2FE' : PALETTE.stripeGold;
       ctx.beginPath();
       ctx.arc(r * 0.45, 0, r * 0.34, 0, Math.PI * 2);
       ctx.fill();

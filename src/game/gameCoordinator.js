@@ -182,7 +182,7 @@ export class CrashAheadGame {
       if (this.mode !== 'attract') this.sound.playSplash();
     };
     this.sim.onCannonFire = (idx, pt) => {
-      this.renderer.spawnMuzzleFlash(pt.x, pt.y, pt.dx, pt.dy, pt.mega);
+      this.renderer.spawnMuzzleFlash(pt.x, pt.y, pt.dx, pt.dy, pt.mega, pt.knockbackOnly);
       if (this.mode !== 'attract') this.sound.playCannonFire();
       if (this.mode === 'online_host') {
         this.net.sendEvent('cannon_fire', {
@@ -191,12 +191,13 @@ export class CrashAheadGame {
           y: Math.round(pt.y),
           dx: Math.round(pt.dx * 100) / 100,
           dy: Math.round(pt.dy * 100) / 100,
-          m: pt.mega ? 1 : 0
+          m: pt.mega ? 1 : 0,
+          kb: pt.knockbackOnly ? 1 : 0
         });
       }
     };
     this.sim.onCannonExplode = (pt) => {
-      this.renderer.spawnExplosion(pt.x, pt.y, pt.r, pt.mega || pt.oneHitKO);
+      this.renderer.spawnExplosion(pt.x, pt.y, pt.r, pt.mega || pt.oneHitKO, pt.knockbackOnly);
       if (this.mode !== 'attract') {
         this.sound.playExplosion(pt.oneHitKO || pt.mega);
         Haptics.bump();
@@ -206,7 +207,8 @@ export class CrashAheadGame {
           x: Math.round(pt.x),
           y: Math.round(pt.y),
           r: Math.round(pt.r),
-          m: (pt.oneHitKO || pt.mega) ? 1 : 0
+          m: (pt.oneHitKO || pt.mega) ? 1 : 0,
+          kb: pt.knockbackOnly ? 1 : 0
         });
       }
     };
@@ -332,10 +334,10 @@ export class CrashAheadGame {
             }
           }
         } else if (msg.kind === 'cannon_fire') {
-          this.renderer.spawnMuzzleFlash(msg.x, msg.y, msg.dx || 1, msg.dy || 0, !!msg.m);
+          this.renderer.spawnMuzzleFlash(msg.x, msg.y, msg.dx || 1, msg.dy || 0, !!msg.m, !!msg.kb);
           this.sound.playCannonFire();
         } else if (msg.kind === 'cannon_boom') {
-          this.renderer.spawnExplosion(msg.x, msg.y, msg.r || 112, !!msg.m);
+          this.renderer.spawnExplosion(msg.x, msg.y, msg.r || 112, !!msg.m, !!msg.kb);
           this.sound.playExplosion(!!msg.m);
           Haptics.bump();
         } else if (msg.kind === 'admin_fx') {
@@ -558,6 +560,12 @@ export class CrashAheadGame {
         this.sound.unlock();
         this.sound.playClick();
         this.admin.togglePower(key);
+        const eff = this.admin.getEffectiveState();
+        if (key === 'cannonKnockback') {
+          this.ui.showAdminToast(eff.cannonKnockback ? 'TANK FIRE: KNOCKBACK ONLY (NO DEATH)' : 'TANK FIRE: LETHAL DIRECT HIT', 1500);
+        } else if (key === 'noWaterRise') {
+          this.ui.showAdminToast(eff.noWaterRise ? 'DEV: NO WATER RISE ON' : 'DEV: WATER RISE NORMAL', 1300);
+        }
       },
       onAdminCycleGravity: () => {
         this.sound.unlock();
@@ -611,6 +619,9 @@ export class CrashAheadGame {
       onNoWaterRiseChanged: (eff) => {
         this.ui.showAdminToast(eff.noWaterRise ? 'DEV: NO WATER RISE ON' : 'DEV: WATER RISE NORMAL', 1300);
       },
+      onCannonKnockbackChanged: (eff) => {
+        this.ui.showAdminToast(eff.cannonKnockback ? 'TANK FIRE: KNOCKBACK ONLY (NO DEATH)' : 'TANK FIRE: LETHAL DIRECT HIT', 1500);
+      },
       onScaleChanged: (eff) => {
         this.ui.showAdminToast(`GIANT: ${eff.giantSelf ? 'ON' : 'OFF'} • TINY OPP: ${eff.miniOpp ? 'ON' : 'OFF'}`, 1400);
       },
@@ -625,7 +636,7 @@ export class CrashAheadGame {
   _triggerAdminCannonPulse() {
     if (!this.admin.unlocked || this.mode === 'attract' || this.phase !== 'FIGHT') return;
     const eff = this.admin.getEffectiveState();
-    if (!eff.active) {
+    if (!eff.active && !eff.tankCannon) {
       this.admin.setLevel(1);
     }
     const myCar = this.mode === 'online_client' ? this.sim.p2Car : this.sim.p1Car;
@@ -650,7 +661,7 @@ export class CrashAheadGame {
   _execAdminAction(cmd) {
     if (!this.admin.unlocked || this.mode === 'attract') return;
     const eff = this.admin.getEffectiveState();
-    if (!eff.active) {
+    if (!eff.active && !(cmd === 'cannon_once' && eff.tankCannon)) {
       this.admin.setLevel(1);
     }
     if (this.mode === 'online_client') {
@@ -780,9 +791,10 @@ export class CrashAheadGame {
     if (!eff || !eff.active) {
       car.infiniteJump = false;
       car.godMode = false;
-      car.cannonEnabled = false;
+      car.cannonEnabled = Boolean(eff && eff.unlocked && eff.tankCannon);
       car.rapidCannon = false;
       car.oneHitCannon = false;
+      car.cannonKnockbackOnly = Boolean(eff && eff.unlocked && eff.cannonKnockback);
       this.sim.scaleVehicle(car.playerIndex, 1.0);
       return;
     }
@@ -795,6 +807,7 @@ export class CrashAheadGame {
     car.cannonEnabled = Boolean(eff.tankCannon);
     car.rapidCannon = Boolean(eff.rapidFire);
     car.oneHitCannon = Boolean(eff.oneHitKO);
+    car.cannonKnockbackOnly = Boolean(eff.cannonKnockback);
     car.speedScale = Math.max(car.speedScale || 1.0, eff.speedMult || 1.0);
     car.accelScale = Math.max(car.accelScale || 1.0, eff.accelMult || 1.0);
     this.sim.scaleVehicle(car.playerIndex, eff.giantSelf ? 1.45 : 1.0);
@@ -831,7 +844,7 @@ export class CrashAheadGame {
       this.sim.setNoWaterRise(Boolean(localEff && localEff.noWaterRise));
     } else {
       this._applyAdminToCar(this.sim.p1Car, this.sim.p2Car, localEff);
-      if (this.mode === 'online_host' && this.remoteAdminState && this.remoteAdminState.active) {
+      if (this.mode === 'online_host' && this.remoteAdminState && (this.remoteAdminState.active || this.remoteAdminState.tankCannon)) {
         this._applyAdminToCar(this.sim.p2Car, this.sim.p1Car, this.remoteAdminState);
       }
       const gScale = localEff && localEff.active && localEff.gravityScale !== 1.0
@@ -964,7 +977,7 @@ export class CrashAheadGame {
         if (this.goBannerMs <= 0 && !this.koPending) this.bannerText = '';
       }
       this.p1Input = this.input.getP1();
-      if (this.p1Input.fire && this.sim.p1Car && this.sim.p1Car.model !== 'tank' && this.admin.getEffectiveState().active) {
+      if (this.p1Input.fire && this.sim.p1Car && this.sim.p1Car.model !== 'tank' && this.admin.getEffectiveState().tankCannon) {
         if (!this._lastNoTankToastAt || performance.now() - this._lastNoTankToastAt > 1400) {
           this._lastNoTankToastAt = performance.now();
           this.ui.showAdminToast('Press [T] for TANK mode to fire Cannon Blast!', 1400);
