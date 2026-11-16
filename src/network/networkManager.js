@@ -58,14 +58,14 @@ function encodeWireMsg(msg) {
     }
     arr.push(msg.lg1 ?? -99999, msg.lg2 ?? -99999);
     const hasAdminExt = Boolean(
-      msg.ij1 || msg.ij2 || msg.gm1 || msg.gm2 ||
+      msg.ij1 || msg.ij2 || msg.gm1 || msg.gm2 || msg.nw ||
       (typeof msg.gy === 'number' && Math.abs(msg.gy - 1) > 0.01) ||
       (typeof msg.sf1 === 'number' && Math.abs(msg.sf1 - 1) > 0.02) ||
       (typeof msg.sf2 === 'number' && Math.abs(msg.sf2 - 1) > 0.02) ||
       (Array.isArray(msg.pr) && msg.pr.length > 0)
     );
     if (hasAdminExt) {
-      const am = (msg.ij1 ? 1 : 0) | (msg.ij2 ? 2 : 0) | (msg.gm1 ? 4 : 0) | (msg.gm2 ? 8 : 0);
+      const am = (msg.ij1 ? 1 : 0) | (msg.ij2 ? 2 : 0) | (msg.gm1 ? 4 : 0) | (msg.gm2 ? 8 : 0) | (msg.nw ? 16 : 0);
       const prList = Array.isArray(msg.pr) ? msg.pr : [];
       arr.push(am, msg.gy ?? 1, msg.sf1 ?? 1, msg.sf2 ?? 1, prList.length);
       for (let i = 0; i < prList.length; i++) {
@@ -132,6 +132,7 @@ function decodeWireMsg(raw) {
       snap.ij2 = (am >> 1) & 1;
       snap.gm1 = (am >> 2) & 1;
       snap.gm2 = (am >> 3) & 1;
+      snap.nw = (am >> 4) & 1;
       snap.gy = raw[idx++];
       snap.sf1 = raw[idx++];
       snap.sf2 = raw[idx++];
@@ -1417,6 +1418,7 @@ export class NetworkManager {
       ij2: sim.p2Car.infiniteJump ? 1 : 0,
       gm1: sim.p1Car.godMode ? 1 : 0,
       gm2: sim.p2Car.godMode ? 1 : 0,
+      nw: sim.noWaterRise ? 1 : 0,
       gy: Math.round((sim.gravityScale ?? 1) * 100) / 100,
       sf1: Math.round((sim.p1Car.scaleFactor || 1) * 100) / 100,
       sf2: Math.round((sim.p2Car.scaleFactor || 1) * 100) / 100,

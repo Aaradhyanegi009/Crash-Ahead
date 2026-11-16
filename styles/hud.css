@@ -455,6 +455,10 @@
   color: var(--white);
 }
 
+.admin-chip-wide {
+  grid-column: 1 / -1;
+}
+
 .admin-act-btn {
   background: var(--blue);
   color: var(--white);

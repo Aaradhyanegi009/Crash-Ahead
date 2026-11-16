@@ -68,6 +68,7 @@ export class PhysicsSimulation {
     this.projectiles = [];
     this._nextProjId = 0;
     this.gravityScale = 1.0;
+    this.noWaterRise = false;
     this.grounded = { p1R: false, p1F: false, p2R: false, p2F: false };
     this._resetWheelContacts();
 
@@ -1150,10 +1151,11 @@ export class PhysicsSimulation {
       }));
     }
     if (typeof snap.rt === 'number') this.roundElapsedMs = snap.rt;
+    if (typeof snap.nw === 'number') this.noWaterRise = !!snap.nw;
     if (typeof snap.wy === 'number') {
       this.waterCrestY = snap.wy;
       this.waterHazardY = snap.wy + WATER_RISE.HAZARD_OFFSET_Y;
-      this.waterRising = this.roundElapsedMs >= WATER_RISE.DELAY_MS;
+      this.waterRising = !this.noWaterRise && this.roundElapsedMs >= WATER_RISE.DELAY_MS;
     }
     if (snap.sw && this.seesaws.length === snap.sw.length) {
       for (let i = 0; i < this.seesaws.length; i++) {
@@ -1349,6 +1351,12 @@ export class PhysicsSimulation {
   }
 
   _updateRisingWater() {
+    if (this.noWaterRise) {
+      this.waterRising = false;
+      this.waterCrestY = WATER_CREST_Y;
+      this.waterHazardY = WATER_HAZARD_Y;
+      return;
+    }
     if (this.roundElapsedMs >= WATER_RISE.DELAY_MS) {
       this.waterRising = true;
       const stepPx = (WATER_RISE.SPEED_PX_PER_SEC * FIXED_DT) / 1000;
@@ -1559,7 +1567,17 @@ export class PhysicsSimulation {
     this.engine.gravity.y = VEHICLE_PHYSICS.GRAVITY_Y * next;
   }
 
+  setNoWaterRise(enabled = false) {
+    this.noWaterRise = Boolean(enabled);
+    if (this.noWaterRise) {
+      this.waterRising = false;
+      this.waterCrestY = WATER_CREST_Y;
+      this.waterHazardY = WATER_HAZARD_Y;
+    }
+  }
+
   triggerRisingWaterNow() {
+    this.noWaterRise = false;
     this.roundElapsedMs = Math.max(this.roundElapsedMs, WATER_RISE.DELAY_MS);
     this.waterRising = true;
   }

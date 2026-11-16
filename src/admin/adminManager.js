@@ -18,6 +18,7 @@ export class AdminManager {
       miniOpp: null
     };
     this.aiFrozen = false;
+    this.noWaterRise = false;
     this.gravityMode = 'normal';
     this._keyBuffer = '';
     this._lastKeyAt = 0;
@@ -79,6 +80,7 @@ export class AdminManager {
     this.unlocked = false;
     this.drawerOpen = false;
     this.aiFrozen = false;
+    this.noWaterRise = false;
     this.gravityMode = 'normal';
     this._resetOverrides();
     this._saveState();
@@ -117,6 +119,8 @@ export class AdminManager {
     if (!this.unlocked) return false;
     if (key === 'aiFrozen') {
       this.aiFrozen = !this.aiFrozen;
+    } else if (key === 'noWaterRise') {
+      this.noWaterRise = !this.noWaterRise;
     } else if (Object.prototype.hasOwnProperty.call(this.overrides, key)) {
       const eff = this.getEffectiveState();
       this.overrides[key] = !eff[key];
@@ -170,6 +174,7 @@ export class AdminManager {
       giantSelf: resolve('giantSelf'),
       miniOpp: resolve('miniOpp'),
       aiFrozen: this.unlocked && this.aiFrozen,
+      noWaterRise: this.unlocked && this.noWaterRise,
       gravityMode: this.unlocked ? this.gravityMode : 'normal',
       gravityScale: this.unlocked ? (this.gravityMode === 'low' ? 0.36 : this.gravityMode === 'reverse' ? -0.46 : 1.0) : 1.0,
       speedMult: active ? meta.speedMult : 1.0,
@@ -229,7 +234,7 @@ export class AdminManager {
       }
 
       const eff = this.getEffectiveState();
-      if (!eff.active && !['KeyT', 'KeyG', 'KeyK', 'KeyH', 'KeyZ', 'KeyX', 'KeyV', 'KeyB', 'KeyN'].includes(e.code)) {
+      if (!eff.active && !['KeyT', 'KeyG', 'KeyK', 'KeyH', 'KeyU', 'KeyZ', 'KeyX', 'KeyV', 'KeyB', 'KeyN'].includes(e.code)) {
         return;
       }
 
@@ -246,6 +251,10 @@ export class AdminManager {
         case 'KeyH':
           this.togglePower('aiFrozen');
           if (actions.onAiFreezeChanged) actions.onAiFreezeChanged(this.getEffectiveState());
+          break;
+        case 'KeyU':
+          this.togglePower('noWaterRise');
+          if (actions.onNoWaterRiseChanged) actions.onNoWaterRiseChanged(this.getEffectiveState());
           break;
         case 'KeyZ':
           this.togglePower('miniOpp');

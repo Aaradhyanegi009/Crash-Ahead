@@ -608,6 +608,9 @@ export class CrashAheadGame {
       onAiFreezeChanged: (eff) => {
         this.ui.showAdminToast(eff.aiFrozen ? 'AI FROZEN!' : 'AI UNFROZEN', 1200);
       },
+      onNoWaterRiseChanged: (eff) => {
+        this.ui.showAdminToast(eff.noWaterRise ? 'DEV: NO WATER RISE ON' : 'DEV: WATER RISE NORMAL', 1300);
+      },
       onScaleChanged: (eff) => {
         this.ui.showAdminToast(`GIANT: ${eff.giantSelf ? 'ON' : 'OFF'} • TINY OPP: ${eff.miniOpp ? 'ON' : 'OFF'}`, 1400);
       },
@@ -672,8 +675,10 @@ export class CrashAheadGame {
     } else if (cmd === 'smite') {
       if (this.phase === 'FIGHT') this.sim.smiteOpponent(actorIdx, Boolean(msg.oneHitKO));
     } else if (cmd === 'flood') {
+      if (this.admin) this.admin.noWaterRise = false;
       this.sim.triggerRisingWaterNow();
       this.ui.showAdminToast('RISING WATER TRIGGERED!', 1300);
+      this._syncAdminState();
     } else if (cmd === 'insta_win') {
       if (this.phase === 'FIGHT') {
         const oppIdx = actorIdx === 1 ? 2 : 1;
@@ -816,12 +821,14 @@ export class CrashAheadGame {
 
     if (this.mode === 'attract') {
       this.sim.setWorldGravityScale(1.0);
+      this.sim.setNoWaterRise(false);
       return;
     }
     const localEff = this.admin ? this.admin.getEffectiveState() : null;
     if (this.mode === 'online_client') {
       this._applyAdminToCar(this.sim.p2Car, this.sim.p1Car, localEff);
       this.sim.setWorldGravityScale(localEff && localEff.active ? (localEff.gravityScale ?? 1.0) : 1.0);
+      this.sim.setNoWaterRise(Boolean(localEff && localEff.noWaterRise));
     } else {
       this._applyAdminToCar(this.sim.p1Car, this.sim.p2Car, localEff);
       if (this.mode === 'online_host' && this.remoteAdminState && this.remoteAdminState.active) {
@@ -831,6 +838,10 @@ export class CrashAheadGame {
         ? localEff.gravityScale
         : (this.remoteAdminState && this.remoteAdminState.active ? (this.remoteAdminState.gravityScale ?? 1.0) : 1.0);
       this.sim.setWorldGravityScale(gScale);
+      this.sim.setNoWaterRise(Boolean(
+        (localEff && localEff.noWaterRise) ||
+        (this.mode === 'online_host' && this.remoteAdminState && this.remoteAdminState.noWaterRise)
+      ));
     }
   }
 
@@ -1055,7 +1066,8 @@ export class CrashAheadGame {
       this.ui.updateWaterAlert(
         this.mode !== 'attract' && this.phase === 'FIGHT',
         this.sim.roundElapsedMs,
-        this.sim.waterRising
+        this.sim.waterRising,
+        Boolean(this.sim.noWaterRise)
       );
       this.ui.updateJumpPads(
         this.sim.getJumpCooldownRemaining(1),

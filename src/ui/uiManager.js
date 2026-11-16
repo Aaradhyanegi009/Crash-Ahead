@@ -335,8 +335,10 @@ export class UIManager {
     if (!unlocked) return;
 
     this.dom.adminDrawer.classList.toggle('hidden', !eff.drawerOpen);
-    this.dom.adminToggleBtn.classList.toggle('off', eff.level === 0);
-    this.dom.adminBadgeLbl.textContent = eff.level === 0 ? 'ADMIN OFF' : `ADMIN LVL ${eff.level}`;
+    this.dom.adminToggleBtn.classList.toggle('off', eff.level === 0 && !eff.noWaterRise);
+    this.dom.adminBadgeLbl.textContent = eff.level === 0
+      ? (eff.noWaterRise ? 'DEV: NO WATER' : 'ADMIN OFF')
+      : `ADMIN LVL ${eff.level}`;
     if (this.dom.adminLvlDesc) {
       this.dom.adminLvlDesc.textContent = eff.levelMeta ? eff.levelMeta.desc : '';
     }
@@ -383,8 +385,8 @@ export class UIManager {
     syncPad(this.dom.padP2Jump, this.dom.padP2JumpLbl, rem2Ms, p2JumpEnabled, p2Inf);
   }
 
-  updateWaterAlert(activeFight, roundElapsedMs, waterRising) {
-    if (!activeFight) {
+  updateWaterAlert(activeFight, roundElapsedMs, waterRising, noWaterRise = false) {
+    if (!activeFight || noWaterRise) {
       this.dom.waterAlert.classList.add('hidden');
       return;
     }
