@@ -1510,7 +1510,7 @@ export class NetworkManager {
     const estRttTicks = this.pingMs > 0 ? clamp(Math.round(this.pingMs / 16.7), 2, 28) : 4;
     const oneWayTicks = clamp(Math.round(estRttTicks * 0.5), 1, 14);
     if (snap.ph === 'FIGHT' && this.pendingInputs.length > 0) {
-      const hasActiveInput = this.pendingInputs.some((c) => c.l || c.r || c.j);
+      const hasActiveInput = this.pendingInputs.some((c) => c.l || c.r || c.j || c.fire);
       const replayCap = hasActiveInput ? clamp(estRttTicks + 4, 12, 30) : clamp(oneWayTicks + 2, 3, 14);
       const maxReplay = Math.min(this.pendingInputs.length, replayCap);
       const startIdx = this.pendingInputs.length - maxReplay;

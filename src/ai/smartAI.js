@@ -231,11 +231,78 @@ export class SmartAI {
 
   _canJump(sim, me, profile, gx) {
     const cdMs = profile.jumpCooldownMs ? (me.jumpCooldownMs || profile.jumpCooldownMs) : 0;
-    if (!cdMs || !me || me.dead) return false;
+    if (!cdMs || !me || me.dead || (me.jumpDisabled && !me.infiniteJump)) return false;
     if (!gx && me.airTicks > (profile.aggression >= 4.8 ? 6 : 5)) return false;
     const minStartMs = profile.aggression >= 4.8 ? 160 : (profile.aggression >= 3.2 ? 380 : 650);
     if (sim.roundElapsedMs < minStartMs) return false;
     return (sim.roundElapsedMs - me.lastJumpAtMs) >= cdMs;
+  }
+
+  _shouldFireTankCannon(sim, me, opp, arena) {
+    if (!me || !me.cannonEnabled || me.model !== 'tank' || me.dead || !opp || opp.dead) return false;
+    if (sim.roundElapsedMs < 420 || sim.getCannonCooldownRemaining(me.playerIndex) > 0) return false;
+    const muzzle = sim.getTankMuzzlePose(me);
+    if (!muzzle) return false;
+    const ox = opp.chassis.position.x;
+    const mx = me.chassis.position.x;
+    const dx = ox - muzzle.x;
+    const dy = opp.chassis.position.y - muzzle.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > 820) return false;
+    const forwardProj = dx * muzzle.dx + dy * muzzle.dy;
+    if (forwardProj < 22) return false;
+
+    // In close brawl on open-water maps, avoid knocking an inner enemy back uphill away from sea unless they are outside
+    if (dist < 115 && arena && this._isOpenWaterArena(arena) && arena.id !== 8) {
+      const oppOutside = (ox >= 640 && mx < ox) || (ox < 640 && mx > ox);
+      if (!oppOutside) return false;
+    }
+
+    const totalT = clamp(dist / 22.0, 1, 30);
+    // Avoid shelling directly into seesaws / bridges hanging in the flight arc
+    if (sim.seesaws && sim.seesaws.length > 0) {
+      for (const sw of sim.seesaws) {
+        if (!sw || !sw.body) continue;
+        const sa = sw.body.angle;
+        const cosA = Math.cos(sa);
+        const sinA = Math.sin(sa);
+        const hw = sw.w * 0.5;
+        for (let s = 1; s <= 4; s++) {
+          const st = totalT * (s / 5);
+          const sx = muzzle.x + muzzle.dx * 22.0 * st;
+          const sy = muzzle.y + muzzle.dy * 22.0 * st - 0.55 * st + 0.5 * 0.22 * st * st;
+          const rx = sx - sw.body.position.x;
+          const ry = sy - sw.body.position.y;
+          const localX = rx * cosA + ry * sinA;
+          const localY = -rx * sinA + ry * cosA;
+          if (Math.abs(localX) <= hw + 12 && Math.abs(localY) <= 28) return false;
+        }
+      }
+    }
+
+    const predShellY = muzzle.y + muzzle.dy * 22.0 * totalT - 0.55 * totalT + 0.5 * 0.22 * totalT * totalT;
+    const oppPredY = opp.chassis.position.y + opp.chassis.velocity.y * totalT * 0.5;
+    if (Math.abs(predShellY - oppPredY) >= 66) return false;
+
+    // Prevent firing straight into a steep mound right outside our barrel on ridged/cavern arenas (Maps 3+)
+    if (sim.Query && sim.driveSurfaces && dist > 145 && arena && arena.id >= 3) {
+      const surfaces = sim.driveSurfaces.filter((b) => !b.isHiddenFiller);
+      if (surfaces.length > 0) {
+        const shellPos = (t) => ({
+          x: muzzle.x + muzzle.dx * 22.0 * t,
+          y: muzzle.y + muzzle.dy * 22.0 * t - 0.55 * t + 0.5 * 0.22 * t * t
+        });
+        const maxT = Math.min(2.75, Math.max(1.0, totalT - 1.5));
+        for (let s = 0; s < 2; s++) {
+          const a = shellPos(maxT * (s / 2));
+          const b = shellPos(maxT * ((s + 1) / 2));
+          const hits = sim.Query.ray(surfaces, a, b, 3);
+          if (hits && hits.length > 0) return false;
+        }
+      }
+    }
+
+    return true;
   }
 
   decide(sim, aiIsP1 = false) {
@@ -281,13 +348,15 @@ export class SmartAI {
       }
     }
 
+    const wantFire = this._shouldFireTankCannon(sim, me, opp, arena);
+
     // Hard reacts slightly slower between ticks; Extreme & Death react every single frame
     if (profile.reactionCadence > 1 && (this.decisionTick % profile.reactionCadence) !== 0) {
-      return { l: this._lastCmd.l, r: this._lastCmd.r, jump: false };
+      return { l: this._lastCmd.l, r: this._lastCmd.r, jump: false, fire: wantFire };
     }
 
     const emit = (cmd) => {
-      this._lastCmd = { l: !!cmd.l, r: !!cmd.r, jump: !!cmd.jump };
+      this._lastCmd = { l: !!cmd.l, r: !!cmd.r, jump: !!cmd.jump, fire: wantFire || !!cmd.fire };
       return this._lastCmd;
     };
 
@@ -472,10 +541,12 @@ export class SmartAI {
       return emit(this.commitDir < 0 ? this._moveLeft(false) : this._moveRight(false));
     }
     const oppAng = opp.chassis ? normalizeAngle(opp.chassis.angle) : 0;
+    const isNonJumpTank = me.model === 'tank' && !canJump;
+    const cornerFlipAng = isNonJumpTank ? 1.44 : 1.38;
     if (
       gx &&
       Math.abs(ox - mx) < 75 &&
-      ((ox < 245 && oppAng > 1.38) || (ox > 1035 && oppAng < -1.38))
+      ((ox < 245 && oppAng > cornerFlipAng) || (ox > 1035 && oppAng < -cornerFlipAng))
     ) {
       this.commitDir = ox < 640 ? 1 : -1;
       this.commitTicks = 16;
@@ -485,7 +556,7 @@ export class SmartAI {
     const oppForTrap = me === sim.p1Car ? sim.p2Car : sim.p1Car;
     const oppPinnedHigh = !isOpenWater && arena.id !== 8 && oppForTrap && oppForTrap.chassis && (
       ox < 320 || ox > 960 || Math.abs(oppForTrap.chassis.angle) > 0.36
-    ) && Math.abs(oppForTrap.chassis.angle) < 1.35;
+    ) && Math.abs(oppForTrap.chassis.angle) < (isNonJumpTank ? 1.85 : 1.35);
     if (this._stuckTicks >= 18 && gx && Math.abs(ox - mx) < 95 && !oppPinnedHigh) {
       this._stuckTicks = 0;
       this.commitDir = ox >= mx ? -1 : 1;
@@ -692,20 +763,41 @@ export class SmartAI {
       }
     }
 
+    // Heavy non-jumping Tank: step back from beneath an airborne/plummeting enemy falling onto the turret (never abort upward wall pins)
+    if (
+      gx &&
+      me.model === 'tank' &&
+      !canJump &&
+      isOpenWater &&
+      arena.id !== 8 &&
+      oy < my - 40 &&
+      opp.chassis &&
+      opp.chassis.velocity.y > 1.8 &&
+      Math.abs(oppAng) < 1.15 &&
+      Math.abs(ox - mx) < 88 &&
+      ((ox < 640 && mx <= ox + 88) || (ox >= 640 && mx >= ox - 88))
+    ) {
+      return emit(ox < 640 ? this._moveRight(false) : this._moveLeft(false));
+    }
+
     // Anti-Clothesline / Elevated-Opponent Head Protection: never drive skull-first under an elevated enemy chassis/wheels
     const onOrNearBridge = arena.seesaws && arena.seesaws.some((s) => s.isBridge && Math.abs(mx - s.x) < s.w * 0.5 + 75);
     const sameSideArena = arena.id !== 8 || ((mx < 640) === (ox < 640));
+    const tankCrushingLip = me.model === 'tank' && !canJump && oppG && ((ox < 245 && ox <= mx - 32 && oppAng > 0.40) || (ox > 1035 && ox >= mx + 32 && oppAng < -0.40));
     if (
       gx &&
       !onOrNearBridge &&
       sameSideArena &&
+      !tankCrushingLip &&
       Math.abs(ox - mx) < 72 &&
       ((!oppG && oy < my - 18) || oy < my - 24)
     ) {
       if (canJump && !blockedOverhead && Math.abs(angle) < 0.42 && Math.abs(ox - mx) >= 52 && oy > my - 65) {
         return emit(chaseDir < 0 ? this._moveLeft(true) : this._moveRight(true));
       }
-      const awayDir = ox >= mx ? -1 : 1;
+      const awayDir = (me.model === 'tank' && !canJump && (ox < 245 || ox > 1035))
+        ? (mx < 640 ? 1 : -1)
+        : (ox >= mx ? -1 : 1);
       const b = isOpenWater ? this._getOpenEdgeBounds(arena) : null;
       const cliffBlocked = isOpenWater && ((awayDir < 0 && mx < b.minX + 68) || (awayDir > 0 && mx > b.maxX - 68));
       if (!cliffBlocked) {

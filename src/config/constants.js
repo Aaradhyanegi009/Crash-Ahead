@@ -14,6 +14,7 @@ export const DOUBLE_KO_WINDOW_MS = 100;
 export const JUMP_COOLDOWN_MS = 5000;
 export const EXTREME_JUMP_COOLDOWN_MS = 2000;
 export const DEATH_JUMP_COOLDOWN_MS = 1000;
+export const NORMAL_TANK_CANNON_COOLDOWN_MS = 4000;
 export const PEER_PREFIX = 'crash-ahead-p2p-';
 
 export const WATER_CREST_Y = WORLD_H - 62;  // 658

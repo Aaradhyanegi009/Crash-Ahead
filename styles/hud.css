@@ -534,3 +534,32 @@
   background: var(--ink);
   color: var(--yellow);
 }
+
+.pad-jump.pad-cannon {
+  background: #FF6B35;
+  box-shadow: inset 0 -7px 0 #C44518;
+}
+
+.pad-jump.pad-cannon svg {
+  stroke: var(--white);
+}
+
+.pad-jump.pad-cannon .jump-tag {
+  background: var(--ink);
+  color: #38BDF8;
+}
+
+.pad-jump.pad-cannon.on-cooldown {
+  background: #D5D9DF;
+  box-shadow: none;
+  opacity: 0.92;
+}
+
+.pad-jump.pad-cannon.on-cooldown svg {
+  stroke: #686E78;
+}
+
+.pad-jump.pad-cannon.on-cooldown .jump-tag {
+  background: var(--slate);
+  color: var(--white);
+}

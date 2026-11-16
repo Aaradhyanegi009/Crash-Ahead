@@ -3,6 +3,7 @@ import {
   WORLD_H,
   FIXED_DT,
   JUMP_COOLDOWN_MS,
+  NORMAL_TANK_CANNON_COOLDOWN_MS,
   WATER_CREST_Y,
   WATER_HAZARD_Y,
   WATER_RISE,
@@ -855,15 +856,16 @@ export class PhysicsSimulation {
       driving: false,
       speedScale: 1.0,
       accelScale: 1.0,
-      jumpDisabled: false,
+      jumpDisabled: spec.id === 'tank',
       jumpCooldownMs: JUMP_COOLDOWN_MS,
       lastJumpAtMs: -99999,
       infiniteJump: false,
       godMode: false,
-      cannonEnabled: false,
+      cannonEnabled: spec.id === 'tank',
       rapidCannon: false,
       oneHitCannon: false,
-      cannonKnockbackOnly: false,
+      cannonKnockbackOnly: spec.id === 'tank',
+      cannonCooldownMs: spec.id === 'tank' ? NORMAL_TANK_CANNON_COOLDOWN_MS : ADMIN_CONFIG.CANNON_COOLDOWN_MS,
       scaleFactor: 1.0,
       lastCannonAtMs: -99999,
       _prevJumpHeld: false,
@@ -890,6 +892,16 @@ export class PhysicsSimulation {
     const elapsedSince = this.roundElapsedMs - car.lastJumpAtMs;
     if (elapsedSince >= cooldownMs) return 0;
     return Math.max(0, cooldownMs - elapsedSince);
+  }
+
+  getCannonCooldownRemaining(playerIndex) {
+    const car = playerIndex === 1 ? this.p1Car : this.p2Car;
+    if (!car || car.dead || !car.cannonEnabled || car.model !== 'tank') return 0;
+    const baseCd = car.rapidCannon
+      ? ADMIN_CONFIG.CANNON_RAPID_COOLDOWN_MS
+      : (car.cannonCooldownMs || ADMIN_CONFIG.CANNON_COOLDOWN_MS);
+    const elapsed = this.roundElapsedMs - (car.lastCannonAtMs ?? -99999);
+    return Math.max(0, baseCd - elapsed);
   }
 
   triggerRelativeJump(car, chaseDir = 0) {
@@ -1664,10 +1676,11 @@ export class PhysicsSimulation {
       lastJumpAtMs: oldCar.lastJumpAtMs,
       infiniteJump: oldCar.infiniteJump,
       godMode: oldCar.godMode,
-      cannonEnabled: oldCar.cannonEnabled,
+      cannonEnabled: oldCar.cannonEnabled || modelId === 'tank',
       rapidCannon: oldCar.rapidCannon,
       oneHitCannon: oldCar.oneHitCannon,
-      cannonKnockbackOnly: oldCar.cannonKnockbackOnly,
+      cannonKnockbackOnly: oldCar.cannonEnabled ? oldCar.cannonKnockbackOnly : (modelId === 'tank'),
+      cannonCooldownMs: oldCar.cannonEnabled ? (oldCar.cannonCooldownMs || ADMIN_CONFIG.CANNON_COOLDOWN_MS) : (modelId === 'tank' ? NORMAL_TANK_CANNON_COOLDOWN_MS : ADMIN_CONFIG.CANNON_COOLDOWN_MS),
       scaleFactor: oldCar.scaleFactor || 1.0
     };
 
@@ -1721,8 +1734,12 @@ export class PhysicsSimulation {
   fireTankCannon(playerIndex) {
     const car = playerIndex === 1 ? this.p1Car : this.p2Car;
     if (!car || car.dead || !car.cannonEnabled || car.model !== 'tank') return false;
-    const baseCd = car.rapidCannon ? ADMIN_CONFIG.CANNON_RAPID_COOLDOWN_MS : ADMIN_CONFIG.CANNON_COOLDOWN_MS;
-    const cd = car._prevFireHeld ? baseCd : Math.min(baseCd, 220);
+    const baseCd = car.rapidCannon
+      ? ADMIN_CONFIG.CANNON_RAPID_COOLDOWN_MS
+      : (car.cannonCooldownMs || ADMIN_CONFIG.CANNON_COOLDOWN_MS);
+    const cd = (car.rapidCannon || baseCd <= 1000) && !car._prevFireHeld
+      ? Math.min(baseCd, 220)
+      : baseCd;
     if (this.roundElapsedMs - (car.lastCannonAtMs ?? -99999) < cd) return false;
 
     const muzzle = this.getTankMuzzlePose(car);
@@ -1796,13 +1813,30 @@ export class PhysicsSimulation {
     const hy = hitPt.y;
 
     for (const sw of this.seesaws) {
-      if (!sw || !sw.body) continue;
-      const dx = sw.body.position.x - hx;
-      const dy = sw.body.position.y - hy;
-      const d = Math.hypot(dx, dy);
-      if (d < sw.w * 0.5 + radius * 0.6) {
-        const torqueSign = dx >= 0 ? -1 : 1;
-        this.Body.setAngularVelocity(sw.body, clamp(sw.body.angularVelocity + torqueSign * 0.08, -0.18, 0.18));
+      if (!sw || !sw.body || sw.isBridge) continue;
+      const sx = sw.body.position.x;
+      const sy = sw.body.position.y;
+      const ca = Math.cos(sw.body.angle);
+      const sa = Math.sin(sw.body.angle);
+      const hw = sw.w * 0.5;
+      const rx = hx - sx;
+      const ry = hy - sy;
+      const clampedX = clamp(rx * ca + ry * sa, -hw, hw);
+      const px = sx + clampedX * ca;
+      const py = sy + clampedX * sa;
+      const d = Math.hypot(px - hx, py - hy);
+      if (d <= radius * 0.85 && Math.abs(clampedX) > 12) {
+        const pushX = d > 1 ? (px - hx) / d : 0;
+        const pushY = d > 1 ? (py - hy) / d : (ry >= 0 ? -1 : 1);
+        const cross = (px - sx) * pushY - (py - sy) * pushX;
+        const torqueDir = Math.sign(cross);
+        const falloffSw = clamp(1 - d / (radius * 0.9), 0.2, 1.0);
+        if (torqueDir !== 0) {
+          this.Body.setAngularVelocity(
+            sw.body,
+            clamp(sw.body.angularVelocity + torqueDir * 0.065 * falloffSw, -0.18, 0.18)
+          );
+        }
       }
     }
 
@@ -1819,11 +1853,11 @@ export class PhysicsSimulation {
         const nx = kbOnly && directOppIdx === oppIdx ? shotDir : (dist > 1 ? dx / dist : shotDir);
         const ny = dist > 1 ? dy / dist : -0.6;
         const falloff = clamp(1.15 - minD / (radius * 1.2), 0.35, 1.0);
-        const basePower = isMega ? 25 : (kbOnly && directOppIdx === oppIdx ? 21.5 : 17.5);
+        const basePower = isMega ? 25 : (kbOnly && directOppIdx === oppIdx ? 20.5 : 17.5);
         const blastPower = basePower * falloff;
         const pushVx = nx * blastPower + proj.vx * (kbOnly ? 0.22 : 0.25);
         const pushVy = kbOnly
-          ? Math.min(ny, 0.05) * blastPower * 0.32 - 8.2 * falloff
+          ? Math.min(ny, 0.05) * blastPower * 0.25 - 8.2 * falloff
           : ny * blastPower * 0.72 - 7.8 * falloff;
         for (const b of [opp.chassis, opp.wheelR, opp.wheelF, opp.head]) {
           if (!b) continue;
@@ -1833,7 +1867,7 @@ export class PhysicsSimulation {
           });
         }
         const spin = kbOnly
-          ? (nx >= 0 ? 1 : -1) * (0.055 + 0.035 * falloff)
+          ? (nx >= 0 ? 1 : -1) * (0.06 + 0.03 * falloff)
           : (nx >= 0 ? 1 : -1) * (0.22 + 0.12 * falloff);
         this.Body.setAngularVelocity(opp.chassis, clamp(opp.chassis.angularVelocity + spin, -0.35, 0.35));
 

@@ -366,13 +366,15 @@ export class UIManager {
     }
   }
 
-  updateJumpPads(rem1Ms, rem2Ms, activeFight, p1JumpEnabled = true, p2JumpEnabled = true, p1Inf = false, p2Inf = false) {
-    const syncPad = (btn, lbl, remMs, enabled = true, isInf = false) => {
+  updateJumpPads(rem1Ms, rem2Ms, activeFight, p1JumpEnabled = true, p2JumpEnabled = true, p1Inf = false, p2Inf = false, p1CannonRemMs = null, p2CannonRemMs = null) {
+    const syncPad = (btn, lbl, remMs, enabled = true, isInf = false, cannonRemMs = null) => {
       if (!btn || !lbl) return;
-      const effEnabled = Boolean(enabled || isInf);
+      const isCannonMode = cannonRemMs !== null && !isInf;
+      const effEnabled = Boolean(enabled || isInf || isCannonMode);
       btn.disabled = !effEnabled;
       btn.classList.toggle('jump-disabled', !effEnabled);
       btn.classList.toggle('inf-jump', Boolean(isInf));
+      btn.classList.toggle('pad-cannon', Boolean(isCannonMode));
       if (!effEnabled) {
         btn.classList.remove('on-cooldown');
         if (lbl.textContent !== 'NO JMP') lbl.textContent = 'NO JMP';
@@ -383,13 +385,20 @@ export class UIManager {
         if (lbl.textContent !== 'INF JMP') lbl.textContent = 'INF JMP';
         return;
       }
+      if (isCannonMode) {
+        const cooling = activeFight && cannonRemMs > 0;
+        btn.classList.toggle('on-cooldown', cooling);
+        const nextText = cooling ? `${(cannonRemMs / 1000).toFixed(1)}s` : 'FIRE';
+        if (lbl.textContent !== nextText) lbl.textContent = nextText;
+        return;
+      }
       const cooling = activeFight && remMs > 0;
       btn.classList.toggle('on-cooldown', cooling);
       const nextText = cooling ? `${(remMs / 1000).toFixed(1)}s` : 'JUMP';
       if (lbl.textContent !== nextText) lbl.textContent = nextText;
     };
-    syncPad(this.dom.padP1Jump, this.dom.padP1JumpLbl, rem1Ms, p1JumpEnabled, p1Inf);
-    syncPad(this.dom.padP2Jump, this.dom.padP2JumpLbl, rem2Ms, p2JumpEnabled, p2Inf);
+    syncPad(this.dom.padP1Jump, this.dom.padP1JumpLbl, rem1Ms, p1JumpEnabled, p1Inf, p1CannonRemMs);
+    syncPad(this.dom.padP2Jump, this.dom.padP2JumpLbl, rem2Ms, p2JumpEnabled, p2Inf, p2CannonRemMs);
   }
 
   updateWaterAlert(activeFight, roundElapsedMs, waterRising, noWaterRise = false) {

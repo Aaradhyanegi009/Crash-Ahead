@@ -3,12 +3,14 @@ import {
   WIN_SCORE,
   ROUND_COUNTDOWN_MS,
   JUMP_COOLDOWN_MS,
+  NORMAL_TANK_CANNON_COOLDOWN_MS,
   KO_FREEZE_MS,
   KO_SLOWMO_SCALE,
   DOUBLE_KO_WINDOW_MS,
   VEHICLE_PHYSICS,
   CAR_MODEL_IDS,
   CAR_MODELS,
+  ADMIN_CONFIG,
   PALETTE
 } from '../config/constants.js';
 import { clamp } from '../utils/math.js';
@@ -184,6 +186,7 @@ export class CrashAheadGame {
     this.sim.onCannonFire = (idx, pt) => {
       this.renderer.spawnMuzzleFlash(pt.x, pt.y, pt.dx, pt.dy, pt.mega, pt.knockbackOnly);
       if (this.mode !== 'attract') this.sound.playCannonFire();
+      if (this.mode === 'online_client' && idx === 2) this._lastLocalClientFireAt = performance.now();
       if (this.mode === 'online_host') {
         this.net.sendEvent('cannon_fire', {
           p: idx,
@@ -240,10 +243,13 @@ export class CrashAheadGame {
         this._countdownElapsedMs = 0;
         this.net.pendingInputs = [];
         this.sim.resetArena(snap.ai || 0, snapM1, snapM2);
+        this._applyDifficultySpeeds();
         this.renderer.clearEffects();
       } else {
-        if (snapM1 !== this.sim.p1Model) this.sim.morphVehicle(1, snapM1);
-        if (snapM2 !== this.sim.p2Model) this.sim.morphVehicle(2, snapM2);
+        let morphed = false;
+        if (snapM1 !== this.sim.p1Model) { this.sim.morphVehicle(1, snapM1); morphed = true; }
+        if (snapM2 !== this.sim.p2Model) { this.sim.morphVehicle(2, snapM2); morphed = true; }
+        if (morphed) this._applyDifficultySpeeds();
       }
       if (snap.sc[0] !== this.scores[0] || snap.sc[1] !== this.scores[1]) {
         this.scores = [snap.sc[0], snap.sc[1]];
@@ -334,8 +340,10 @@ export class CrashAheadGame {
             }
           }
         } else if (msg.kind === 'cannon_fire') {
-          this.renderer.spawnMuzzleFlash(msg.x, msg.y, msg.dx || 1, msg.dy || 0, !!msg.m, !!msg.kb);
-          this.sound.playCannonFire();
+          if (!(this.mode === 'online_client' && msg.p === 2 && (performance.now() - (this._lastLocalClientFireAt || 0)) < 400)) {
+            this.renderer.spawnMuzzleFlash(msg.x, msg.y, msg.dx || 1, msg.dy || 0, !!msg.m, !!msg.kb);
+            this.sound.playCannonFire();
+          }
         } else if (msg.kind === 'cannon_boom') {
           this.renderer.spawnExplosion(msg.x, msg.y, msg.r || 112, !!msg.m, !!msg.kb);
           this.sound.playExplosion(!!msg.m);
@@ -780,7 +788,10 @@ export class CrashAheadGame {
 
   _isPlayerJumpEnabled() {
     const eff = this.admin ? this.admin.getEffectiveState() : null;
+    const myCar = this.mode === 'online_client' ? this.sim?.p2Car : this.sim?.p1Car;
+    if (myCar && myCar.infiniteJump) return true;
     if (eff && eff.active && eff.infiniteJump && this.mode !== 'online_client') return true;
+    if (myCar && myCar.model === 'tank') return false;
     if (this.mode !== 'ai') return true;
     const prof = this.ai.getProfile();
     return !prof || prof.playerCanJump !== false;
@@ -788,13 +799,13 @@ export class CrashAheadGame {
 
   _applyAdminToCar(car, oppCar, eff) {
     if (!car) return;
+    const isTank = car.model === 'tank';
     if (!eff || !eff.active) {
-      car.infiniteJump = false;
-      car.godMode = false;
-      car.cannonEnabled = Boolean(eff && eff.unlocked && eff.tankCannon);
-      car.rapidCannon = false;
-      car.oneHitCannon = false;
-      car.cannonKnockbackOnly = Boolean(eff && eff.unlocked && eff.cannonKnockback);
+      if (eff && eff.unlocked && eff.cannonKnockback) {
+        car.cannonEnabled = true;
+        car.cannonKnockbackOnly = true;
+        car.cannonCooldownMs = ADMIN_CONFIG.CANNON_COOLDOWN_MS;
+      }
       this.sim.scaleVehicle(car.playerIndex, 1.0);
       return;
     }
@@ -804,10 +815,11 @@ export class CrashAheadGame {
       car.jumpCooldownMs = 0;
     }
     car.godMode = Boolean(eff.godMode);
-    car.cannonEnabled = Boolean(eff.tankCannon);
+    car.cannonEnabled = Boolean(eff.tankCannon || isTank);
     car.rapidCannon = Boolean(eff.rapidFire);
     car.oneHitCannon = Boolean(eff.oneHitKO);
     car.cannonKnockbackOnly = Boolean(eff.cannonKnockback);
+    car.cannonCooldownMs = ADMIN_CONFIG.CANNON_COOLDOWN_MS;
     car.speedScale = Math.max(car.speedScale || 1.0, eff.speedMult || 1.0);
     car.accelScale = Math.max(car.accelScale || 1.0, eff.accelMult || 1.0);
     this.sim.scaleVehicle(car.playerIndex, eff.giantSelf ? 1.45 : 1.0);
@@ -818,21 +830,34 @@ export class CrashAheadGame {
 
   _applyDifficultySpeeds() {
     const prof = this.mode === 'ai' ? this.ai.getProfile() : null;
-    const playerCanJump = this._isPlayerJumpEnabled();
+    const isAttract = this.mode === 'attract';
+    const applyBaseTankDefaults = (car, jumpAllowed) => {
+      if (!car) return;
+      const isTank = car.model === 'tank';
+      car.infiniteJump = false;
+      car.godMode = false;
+      car.rapidCannon = false;
+      car.jumpDisabled = isTank ? true : !jumpAllowed;
+      car.cannonEnabled = !isAttract && isTank;
+      car.cannonKnockbackOnly = isTank;
+      car.oneHitCannon = false;
+      car.cannonCooldownMs = isTank ? NORMAL_TANK_CANNON_COOLDOWN_MS : ADMIN_CONFIG.CANNON_COOLDOWN_MS;
+    };
+
     if (this.sim.p1Car) {
       this.sim.p1Car.speedScale = 1.0;
       this.sim.p1Car.accelScale = 1.0;
       this.sim.p1Car.jumpCooldownMs = JUMP_COOLDOWN_MS;
-      this.sim.p1Car.jumpDisabled = !playerCanJump;
+      applyBaseTankDefaults(this.sim.p1Car, this.mode !== 'ai' || !prof || prof.playerCanJump !== false);
     }
     if (this.sim.p2Car) {
       this.sim.p2Car.speedScale = prof ? prof.speedScale : 1.0;
       this.sim.p2Car.accelScale = prof ? prof.accelScale : 1.0;
       this.sim.p2Car.jumpCooldownMs = (prof && prof.jumpCooldownMs) ? prof.jumpCooldownMs : JUMP_COOLDOWN_MS;
-      this.sim.p2Car.jumpDisabled = false;
+      applyBaseTankDefaults(this.sim.p2Car, true);
     }
 
-    if (this.mode === 'attract') {
+    if (isAttract) {
       this.sim.setWorldGravityScale(1.0);
       this.sim.setNoWaterRise(false);
       return;
@@ -903,6 +928,7 @@ export class CrashAheadGame {
         const nextIdx = this._pickArenaIndex(this.sim.arenaIndex);
         const [m1, m2] = this._pickRandomCarPair();
         this.sim.resetArena(nextIdx, m1, m2);
+        this._applyDifficultySpeeds();
         this.renderer.clearEffects();
       }
     } else {
@@ -911,6 +937,7 @@ export class CrashAheadGame {
         this.attractMapTicks = 0;
         const [m1, m2] = this._pickRandomCarPair();
         this.sim.resetArena(this._pickArenaIndex(this.sim.arenaIndex), m1, m2);
+        this._applyDifficultySpeeds();
         this.renderer.clearEffects();
       }
       this.sim.step(this.ai.decide(this.sim, true), this.ai.decide(this.sim, false), true, false);
@@ -976,7 +1003,7 @@ export class CrashAheadGame {
         this.goBannerMs -= FIXED_DT;
         if (this.goBannerMs <= 0 && !this.koPending) this.bannerText = '';
       }
-      this.p1Input = this.input.getP1();
+      this.p1Input = this._mapTankActionInput(this.sim.p1Car, this.input.getP1());
       if (this.p1Input.fire && this.sim.p1Car && this.sim.p1Car.model !== 'tank' && this.admin.getEffectiveState().tankCannon) {
         if (!this._lastNoTankToastAt || performance.now() - this._lastNoTankToastAt > 1400) {
           this._lastNoTankToastAt = performance.now();
@@ -990,7 +1017,7 @@ export class CrashAheadGame {
         const eff = this.admin.getEffectiveState();
         this.p2Input = eff.aiFrozen ? { l: false, r: false, jump: false, fire: false } : this.ai.decide(this.sim, false);
       } else if (this.mode === 'local') {
-        this.p2Input = this.input.getP2();
+        this.p2Input = this._mapTankActionInput(this.sim.p2Car, this.input.getP2());
       } else if (this.mode === 'online_host') {
         this.net.tickHostWatchdog();
         this.p2Input = this.net.remoteInput;
@@ -1013,6 +1040,14 @@ export class CrashAheadGame {
     }
   }
 
+  _mapTankActionInput(car, inp) {
+    if (!inp) return inp;
+    if (car && car.model === 'tank' && car.cannonEnabled && car.jumpDisabled && !car.infiniteJump && inp.jumpBtn) {
+      return { ...inp, fire: true, jump: false };
+    }
+    return inp;
+  }
+
   _stepClientPredictedTick() {
     if (this.phase === 'MATCH_OVER') return;
     if (this.phase !== 'FIGHT') {
@@ -1026,7 +1061,10 @@ export class CrashAheadGame {
       }
       return;
     }
-    const rawP2 = this.input.getP2();
+    let rawP2 = this._mapTankActionInput(this.sim.p2Car, this.input.getP2());
+    if (!this._isPlayerJumpEnabled()) {
+      rawP2 = { ...rawP2, jump: false };
+    }
     this.p2Input = rawP2;
     const cmd = this.net.queueClientInput(rawP2);
     this.net.hostInputPredictTicks = (this.net.hostInputPredictTicks || 0) + 1;
@@ -1082,14 +1120,24 @@ export class CrashAheadGame {
         this.sim.waterRising,
         Boolean(this.sim.noWaterRise)
       );
+      const isTankPad1 = Boolean(
+        this.sim.p1Car && this.sim.p1Car.model === 'tank' && this.sim.p1Car.cannonEnabled &&
+        this.sim.p1Car.jumpDisabled && !this.sim.p1Car.infiniteJump
+      );
+      const isTankPad2 = Boolean(
+        this.sim.p2Car && this.sim.p2Car.model === 'tank' && this.sim.p2Car.cannonEnabled &&
+        this.sim.p2Car.jumpDisabled && !this.sim.p2Car.infiniteJump
+      );
       this.ui.updateJumpPads(
         this.sim.getJumpCooldownRemaining(1),
         this.sim.getJumpCooldownRemaining(2),
         this.mode !== 'attract' && this.phase === 'FIGHT',
         this._isPlayerJumpEnabled(),
-        true,
+        !isTankPad2,
         Boolean(this.sim.p1Car && this.sim.p1Car.infiniteJump),
-        Boolean(this.sim.p2Car && this.sim.p2Car.infiniteJump)
+        Boolean(this.sim.p2Car && this.sim.p2Car.infiniteJump),
+        isTankPad1 ? this.sim.getCannonCooldownRemaining(1) : null,
+        isTankPad2 ? this.sim.getCannonCooldownRemaining(2) : null
       );
       const eff = this.admin.getEffectiveState();
       const myCar = this.mode === 'online_client' ? this.sim.p2Car : this.sim.p1Car;
