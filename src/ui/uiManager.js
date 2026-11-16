@@ -47,9 +47,21 @@ export class UIManager {
       padP1Jump: document.getElementById('pad-p1-jump'),
       padP1JumpLbl: document.getElementById('pad-p1-jump-lbl'),
       padP2Jump: document.getElementById('pad-p2-jump'),
-      padP2JumpLbl: document.getElementById('pad-p2-jump-lbl')
+      padP2JumpLbl: document.getElementById('pad-p2-jump-lbl'),
+
+      adminWrap: document.getElementById('admin-hud-wrap'),
+      adminToggleBtn: document.getElementById('btn-admin-toggle'),
+      adminBadgeLbl: document.getElementById('admin-badge-label'),
+      adminFireBtn: document.getElementById('btn-admin-fire'),
+      adminDrawer: document.getElementById('admin-drawer'),
+      adminLvlDesc: document.getElementById('admin-lvl-desc'),
+      adminLvlBtns: Array.from(document.querySelectorAll('.admin-lvl-btn')),
+      adminChips: Array.from(document.querySelectorAll('.admin-chip[data-pwr]')),
+      adminGravBtn: document.getElementById('adm-btn-grav'),
+      adminToast: document.getElementById('admin-toast')
     };
     this.discoveredLocalRoom = '';
+    this._toastTimer = null;
   }
 
   suggestLocalRoom(code) {
@@ -111,6 +123,40 @@ export class UIManager {
     this.dom.btnExit.addEventListener('click', h.onExit);
     this.dom.btnRematch.addEventListener('click', h.onRematch);
     document.getElementById('btn-victory-menu').addEventListener('click', h.onVictoryMenu);
+
+    if (this.dom.adminToggleBtn) {
+      this.dom.adminToggleBtn.addEventListener('click', () => h.onAdminToggleDrawer && h.onAdminToggleDrawer());
+    }
+    if (this.dom.adminFireBtn) {
+      this.dom.adminFireBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        if (h.onAdminFireHold) h.onAdminFireHold(true);
+      });
+      const releaseFire = () => h.onAdminFireHold && h.onAdminFireHold(false);
+      this.dom.adminFireBtn.addEventListener('pointerup', releaseFire);
+      this.dom.adminFireBtn.addEventListener('pointercancel', releaseFire);
+      this.dom.adminFireBtn.addEventListener('pointerleave', releaseFire);
+    }
+    for (const btn of this.dom.adminLvlBtns) {
+      btn.addEventListener('click', () => h.onAdminSelectLevel && h.onAdminSelectLevel(Number(btn.dataset.lvl)));
+    }
+    for (const chip of this.dom.adminChips) {
+      chip.addEventListener('click', () => h.onAdminTogglePower && h.onAdminTogglePower(chip.dataset.pwr));
+    }
+    if (this.dom.adminGravBtn) {
+      this.dom.adminGravBtn.addEventListener('click', () => h.onAdminCycleGravity && h.onAdminCycleGravity());
+    }
+    const bindAdmAct = (id, fn) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', () => fn && fn());
+    };
+    bindAdmAct('adm-act-cannon', h.onAdminCannonOnce);
+    bindAdmAct('adm-act-tank', h.onAdminMorphTank);
+    bindAdmAct('adm-act-shock', h.onAdminShockwave);
+    bindAdmAct('adm-act-smite', h.onAdminSmite);
+    bindAdmAct('adm-act-flood', h.onAdminTriggerFlood);
+    bindAdmAct('adm-act-win', h.onAdminInstantWin);
+    bindAdmAct('adm-btn-lock', h.onAdminLock);
   }
 
   copyWithFeedback(text, btn, originalText) {
@@ -272,14 +318,60 @@ export class UIManager {
     this.dom.scoreP2.textContent = String(scores[1]);
   }
 
-  updateJumpPads(rem1Ms, rem2Ms, activeFight, p1JumpEnabled = true) {
-    const syncPad = (btn, lbl, remMs, enabled = true) => {
+  showAdminToast(text, durationMs = 2000) {
+    if (!this.dom.adminToast) return;
+    this.dom.adminToast.textContent = text;
+    this.dom.adminToast.classList.remove('hidden');
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      this.dom.adminToast.classList.add('hidden');
+    }, durationMs);
+  }
+
+  updateAdminUI(eff, isTankFight = false) {
+    if (!this.dom.adminWrap) return;
+    const unlocked = Boolean(eff && eff.unlocked);
+    this.dom.adminWrap.classList.toggle('hidden', !unlocked);
+    if (!unlocked) return;
+
+    this.dom.adminDrawer.classList.toggle('hidden', !eff.drawerOpen);
+    this.dom.adminToggleBtn.classList.toggle('off', eff.level === 0);
+    this.dom.adminBadgeLbl.textContent = eff.level === 0 ? 'ADMIN OFF' : `ADMIN LVL ${eff.level}`;
+    if (this.dom.adminLvlDesc) {
+      this.dom.adminLvlDesc.textContent = eff.levelMeta ? eff.levelMeta.desc : '';
+    }
+    if (this.dom.adminFireBtn) {
+      this.dom.adminFireBtn.classList.toggle('hidden', !(eff.active && eff.tankCannon && isTankFight));
+    }
+    for (const btn of this.dom.adminLvlBtns) {
+      btn.classList.toggle('active', Number(btn.dataset.lvl) === eff.level);
+    }
+    for (const chip of this.dom.adminChips) {
+      const k = chip.dataset.pwr;
+      chip.classList.toggle('on', Boolean(eff[k]));
+    }
+    if (this.dom.adminGravBtn) {
+      const gLabel = eff.gravityMode === 'low' ? 'MOON' : eff.gravityMode === 'reverse' ? 'REV' : 'NORM';
+      this.dom.adminGravBtn.textContent = `GRAV: ${gLabel} [V]`;
+      this.dom.adminGravBtn.classList.toggle('on', eff.gravityMode !== 'normal');
+    }
+  }
+
+  updateJumpPads(rem1Ms, rem2Ms, activeFight, p1JumpEnabled = true, p2JumpEnabled = true, p1Inf = false, p2Inf = false) {
+    const syncPad = (btn, lbl, remMs, enabled = true, isInf = false) => {
       if (!btn || !lbl) return;
-      btn.disabled = !enabled;
-      btn.classList.toggle('jump-disabled', !enabled);
-      if (!enabled) {
+      const effEnabled = Boolean(enabled || isInf);
+      btn.disabled = !effEnabled;
+      btn.classList.toggle('jump-disabled', !effEnabled);
+      btn.classList.toggle('inf-jump', Boolean(isInf));
+      if (!effEnabled) {
         btn.classList.remove('on-cooldown');
         if (lbl.textContent !== 'NO JMP') lbl.textContent = 'NO JMP';
+        return;
+      }
+      if (isInf) {
+        btn.classList.remove('on-cooldown');
+        if (lbl.textContent !== 'INF JMP') lbl.textContent = 'INF JMP';
         return;
       }
       const cooling = activeFight && remMs > 0;
@@ -287,8 +379,8 @@ export class UIManager {
       const nextText = cooling ? `${(remMs / 1000).toFixed(1)}s` : 'JUMP';
       if (lbl.textContent !== nextText) lbl.textContent = nextText;
     };
-    syncPad(this.dom.padP1Jump, this.dom.padP1JumpLbl, rem1Ms, p1JumpEnabled);
-    syncPad(this.dom.padP2Jump, this.dom.padP2JumpLbl, rem2Ms, true);
+    syncPad(this.dom.padP1Jump, this.dom.padP1JumpLbl, rem1Ms, p1JumpEnabled, p1Inf);
+    syncPad(this.dom.padP2Jump, this.dom.padP2JumpLbl, rem2Ms, p2JumpEnabled, p2Inf);
   }
 
   updateWaterAlert(activeFight, roundElapsedMs, waterRising) {

@@ -6,10 +6,10 @@ import {
   CENTER_OF_MASS_OFFSET
 } from '../config/constants.js';
 
-function drawHelmet(ctx, head, facing, isRedPlayer, isKO = false) {
+function drawHelmet(ctx, head, facing, isRedPlayer, isKO = false, scaleFactor = 1.0, showCrown = false) {
   if (!head) return;
   const colors = isRedPlayer ? PALETTE.red : PALETTE.blue;
-  const r = CAR_SPEC.headRadius;
+  const r = CAR_SPEC.headRadius * scaleFactor;
   ctx.save();
   ctx.translate(head.position.x, head.position.y);
   ctx.rotate(head.angle);
@@ -94,6 +94,23 @@ function drawHelmet(ctx, head, facing, isRedPlayer, isKO = false) {
   ctx.arc(0.06 * r, -0.02 * r, 0.14 * r, 0, Math.PI * 2);
   ctx.fill();
 
+  if (showCrown && !isKO) {
+    ctx.fillStyle = PALETTE.stripeGold;
+    ctx.strokeStyle = PALETTE.ink;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(-0.55 * r, -1.04 * r);
+    ctx.lineTo(-0.70 * r, -1.62 * r);
+    ctx.lineTo(-0.22 * r, -1.32 * r);
+    ctx.lineTo(0.05 * r, -1.78 * r);
+    ctx.lineTo(0.32 * r, -1.32 * r);
+    ctx.lineTo(0.76 * r, -1.58 * r);
+    ctx.lineTo(0.55 * r, -1.04 * r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
@@ -156,14 +173,14 @@ export function drawRagdoll(ctx, rag) {
   drawLimb(rag.armR, 5.6 * CAR_SCALE, 15 * CAR_SCALE, colors.body, true);
 }
 
-function drawDriverAndNeck(ctx, carState, colors, spec) {
+function drawDriverAndNeck(ctx, carState, colors, spec, sf = 1.0) {
   const { facing, chassis, head, headSevered, driverState } = carState;
   if (headSevered) return;
 
   const sinC = Math.sin(chassis.angle);
   const cosC = Math.cos(chassis.angle);
-  const collarLocalX = (spec.collarX || 0) * facing;
-  const collarLocalY = (spec.collarY ?? (-4 * CAR_SCALE)) - CENTER_OF_MASS_OFFSET;
+  const collarLocalX = (spec.collarX || 0) * facing * sf;
+  const collarLocalY = ((spec.collarY ?? (-4 * CAR_SCALE)) - CENTER_OF_MASS_OFFSET) * sf;
   const collarX = chassis.position.x + cosC * collarLocalX - sinC * collarLocalY;
   const collarY = chassis.position.y + sinC * collarLocalX + cosC * collarLocalY;
   const lean = driverState ? driverState.lean : 0;
@@ -172,14 +189,14 @@ function drawDriverAndNeck(ctx, carState, colors, spec) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = PALETTE.ink;
-  ctx.lineWidth = 14 * CAR_SCALE;
+  ctx.lineWidth = 14 * CAR_SCALE * sf;
   ctx.beginPath();
   ctx.moveTo(collarX, collarY);
   ctx.lineTo(head.position.x, head.position.y);
   ctx.stroke();
 
   ctx.strokeStyle = PALETTE.charcoal;
-  ctx.lineWidth = 8.5 * CAR_SCALE;
+  ctx.lineWidth = 8.5 * CAR_SCALE * sf;
   ctx.beginPath();
   ctx.moveTo(collarX, collarY);
   ctx.lineTo(head.position.x, head.position.y);
@@ -187,8 +204,8 @@ function drawDriverAndNeck(ctx, carState, colors, spec) {
 
   ctx.translate(chassis.position.x, chassis.position.y);
   ctx.rotate(chassis.angle);
-  ctx.translate(0, -CENTER_OF_MASS_OFFSET);
-  ctx.scale(facing * CAR_SCALE, CAR_SCALE);
+  ctx.translate(0, -CENTER_OF_MASS_OFFSET * sf);
+  ctx.scale(facing * CAR_SCALE * sf, CAR_SCALE * sf);
   ctx.translate((spec.collarX || 0) / CAR_SCALE, ((spec.collarY ?? (-4 * CAR_SCALE)) / CAR_SCALE) + 4);
 
   ctx.save();
@@ -1268,7 +1285,19 @@ export function drawVehicle(ctx, carState, isRedPlayer, roundElapsedMs = 0) {
   const colors = isRedPlayer ? PALETTE.red : PALETTE.blue;
   const spec = carState.spec || CAR_MODELS[carState.model] || CAR_SPEC;
   const model = spec.id || 'roadster';
+  const sf = carState.scaleFactor || 1.0;
   const { facing, chassis, wheelR, wheelF, head, headSevered } = carState;
+
+  if (carState.godMode && !carState.dead) {
+    ctx.save();
+    const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.06;
+    ctx.strokeStyle = 'rgba(247, 181, 56, 0.72)';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.arc(chassis.position.x, chassis.position.y, 44 * CAR_SCALE * sf * pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // 80ms suspension strut compression -> smooth spring expansion on relative jump takeoff
   let wheelLift = 0;
@@ -1277,13 +1306,13 @@ export function drawVehicle(ctx, carState, isRedPlayer, roundElapsedMs = 0) {
     const dtJump = roundElapsedMs - carState.jumpSquashAtMs;
     if (dtJump <= 80) {
       const compress = 0.45 + 0.55 * Math.sin((dtJump / 80) * Math.PI);
-      wheelLift = compress * 4.2 * CAR_SCALE;
-      chassisDrop = compress * 2.0 * CAR_SCALE;
+      wheelLift = compress * 4.2 * CAR_SCALE * sf;
+      chassisDrop = compress * 2.0 * CAR_SCALE * sf;
     } else if (dtJump <= 185) {
       const u = (dtJump - 80) / 105;
       const curve = (1 - u) * 0.45 - Math.sin(u * Math.PI) * 0.28;
-      wheelLift = curve * 4.2 * CAR_SCALE;
-      chassisDrop = curve * 2.0 * CAR_SCALE;
+      wheelLift = curve * 4.2 * CAR_SCALE * sf;
+      chassisDrop = curve * 2.0 * CAR_SCALE * sf;
     }
   }
   const cosA = Math.cos(chassis.angle);
@@ -1294,7 +1323,7 @@ export function drawVehicle(ctx, carState, isRedPlayer, roundElapsedMs = 0) {
   const wheelOffY = carUpY * wheelLift;
 
   // 0. Mechanical Suspension Struts connecting chassis mounts to wheel hubs
-  const mountLocalY = 2 * CAR_SCALE - CENTER_OF_MASS_OFFSET;
+  const mountLocalY = (2 * CAR_SCALE - CENTER_OF_MASS_OFFSET) * sf;
   const drawStrut = (mxLocal, wheel) => {
     if (!wheel) return;
     const ax = chassis.position.x + mxLocal * cosA - mountLocalY * sinA - carUpX * chassisDrop;
@@ -1303,37 +1332,37 @@ export function drawVehicle(ctx, carState, isRedPlayer, roundElapsedMs = 0) {
     const wy = wheel.position.y + wheelOffY;
     ctx.save();
     ctx.strokeStyle = PALETTE.ink;
-    ctx.lineWidth = 4.2 * CAR_SCALE;
+    ctx.lineWidth = 4.2 * CAR_SCALE * sf;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.lineTo(wx, wy);
     ctx.stroke();
     ctx.strokeStyle = '#9aa5b1';
-    ctx.lineWidth = 1.8 * CAR_SCALE;
+    ctx.lineWidth = 1.8 * CAR_SCALE * sf;
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.lineTo((ax + wx) * 0.5, (ay + wy) * 0.5);
     ctx.stroke();
     ctx.restore();
   };
-  drawStrut(-spec.wheelOffsetX, wheelR);
-  drawStrut(spec.wheelOffsetX, wheelF);
+  drawStrut(-spec.wheelOffsetX * sf, wheelR);
+  drawStrut(spec.wheelOffsetX * sf, wheelF);
 
   // 1. Seated Charcoal Torso, Expressive Flailing Arms & Elastic Neck
-  drawDriverAndNeck(ctx, carState, colors, spec);
+  drawDriverAndNeck(ctx, carState, colors, spec, sf);
 
   // 2. Helmet Head (drawn attached here while driver is intact; severed head renders inside drawRagdoll)
   if (!headSevered) {
-    drawHelmet(ctx, head, facing, isRedPlayer, false);
+    drawHelmet(ctx, head, facing, isRedPlayer, false, sf, Boolean(carState.godMode || carState.infiniteJump));
   }
 
   // 3. Model-specific Vehicle Chassis Body
   ctx.save();
   ctx.translate(chassis.position.x - carUpX * chassisDrop, chassis.position.y - carUpY * chassisDrop);
   ctx.rotate(chassis.angle);
-  ctx.translate(0, -CENTER_OF_MASS_OFFSET);
-  ctx.scale(facing * CAR_SCALE, CAR_SCALE);
+  ctx.translate(0, -CENTER_OF_MASS_OFFSET * sf);
+  ctx.scale(facing * CAR_SCALE * sf, CAR_SCALE * sf);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 

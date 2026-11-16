@@ -55,6 +55,53 @@
       <svg class="fs-icon-exit" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
     </button>
 
+    <!-- Laptop Admin Perms Floating Badge & Collapsible Chaos Panel (hidden unless unlocked) -->
+    <div id="admin-hud-wrap" class="admin-hud-wrap hidden">
+      <div class="admin-top-bar">
+        <button id="btn-admin-toggle" class="admin-badge-btn" type="button" title="Toggle Admin Panel (`)">
+          <span class="admin-crown">&#9733;</span>
+          <span id="admin-badge-label">ADMIN LVL 1</span>
+        </button>
+        <button id="btn-admin-fire" class="admin-fire-btn hidden" type="button" title="Fire Tank Cannon [F]">CANNON [F]</button>
+      </div>
+      <div id="admin-drawer" class="admin-drawer hidden">
+        <div class="admin-sec-title">ADMIN POWER LEVEL <span id="admin-lvl-desc" class="admin-lvl-desc">Infinite Jump + Tank Cannon</span></div>
+        <div class="admin-lvl-row">
+          <button class="admin-lvl-btn" data-lvl="0" type="button">0 OFF</button>
+          <button class="admin-lvl-btn active" data-lvl="1" type="button">1 OP</button>
+          <button class="admin-lvl-btn" data-lvl="2" type="button">2 GOD</button>
+          <button class="admin-lvl-btn" data-lvl="3" type="button">3 TANK</button>
+          <button class="admin-lvl-btn" data-lvl="4" type="button">4 TYRANT</button>
+          <button class="admin-lvl-btn" data-lvl="5" type="button">5 MAX</button>
+        </div>
+        <div class="admin-sec-title">PASSIVE ABUSE TOGGLES</div>
+        <div class="admin-grid">
+          <button id="adm-tgl-infjump" class="admin-chip" data-pwr="infiniteJump" type="button">INF JUMP</button>
+          <button id="adm-tgl-god" class="admin-chip" data-pwr="godMode" type="button">GOD MODE</button>
+          <button id="adm-tgl-rapid" class="admin-chip" data-pwr="rapidFire" type="button">RAPID GUN</button>
+          <button id="adm-tgl-ohko" class="admin-chip" data-pwr="oneHitKO" type="button">1-HIT KO</button>
+          <button id="adm-tgl-giant" class="admin-chip" data-pwr="giantSelf" type="button">GIANT [X]</button>
+          <button id="adm-tgl-mini" class="admin-chip" data-pwr="miniOpp" type="button">TINY OPP [Z]</button>
+          <button id="adm-tgl-freeze" class="admin-chip" data-pwr="aiFrozen" type="button">FREEZE AI [H]</button>
+          <button id="adm-btn-grav" class="admin-chip" type="button">GRAV: NORM [V]</button>
+        </div>
+        <div class="admin-sec-title">INSTANT CHAOS POWERS</div>
+        <div class="admin-grid">
+          <button id="adm-act-cannon" class="admin-act-btn admin-warn" type="button">CANNON [F]</button>
+          <button id="adm-act-tank" class="admin-act-btn" type="button">TANK NOW [T]</button>
+          <button id="adm-act-shock" class="admin-act-btn" type="button">SHOCKWAVE [G]</button>
+          <button id="adm-act-smite" class="admin-act-btn admin-warn" type="button">SMITE OPP [K]</button>
+          <button id="adm-act-flood" class="admin-act-btn" type="button">FLOOD [B]</button>
+          <button id="adm-act-win" class="admin-act-btn admin-gold" type="button">INSTA WIN [N]</button>
+        </div>
+        <div class="admin-foot">
+          <span class="admin-hint">Keys: 0-5 Lvl &bull; ` Panel &bull; F Cannon &bull; T Tank</span>
+          <button id="adm-btn-lock" class="admin-lock-btn" type="button">LOCK</button>
+        </div>
+      </div>
+    </div>
+    <div id="admin-toast" class="admin-toast hidden" aria-live="polite"></div>
+
     <!-- Unified Touch & Pointer Circular Cartoon Controls -->
     <div id="touch-controls">
       <div id="group-p1" class="btn-pair left-pair">

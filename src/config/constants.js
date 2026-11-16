@@ -359,3 +359,104 @@ export const CAR_MODELS = Object.freeze({
 });
 
 export const CAR_SPEC = CAR_MODELS.roadster;
+
+export const ADMIN_CONFIG = Object.freeze({
+  STORAGE_KEY: 'crashahead_admin_v1',
+  LEVEL_STORAGE_KEY: 'crashahead_admin_lvl_v1',
+  UNLOCK_TOKEN: 'overlord_v1',
+  SECRET_PHRASES: Object.freeze(['adminop', 'overlord']),
+  URL_PARAM: 'admin',
+  URL_TOKENS: Object.freeze(['overlord', 'adminop']),
+  CANNON_COOLDOWN_MS: 540,
+  CANNON_RAPID_COOLDOWN_MS: 165,
+  CANNON_SHELL_SPEED: 22.5,
+  CANNON_SHELL_GRAVITY: 0.22,
+  CANNON_BLAST_RADIUS: 112,
+  CANNON_MEGA_RADIUS: 148,
+  LEVELS: Object.freeze([
+    Object.freeze({
+      level: 0,
+      name: 'LVL 0: FAIR',
+      desc: 'Admin dormant • Fair match physics',
+      infiniteJump: false,
+      tankCannon: false,
+      godMode: false,
+      rapidFire: false,
+      oneHitKO: false,
+      giantSelf: false,
+      miniOpp: false,
+      speedMult: 1.0,
+      accelMult: 1.0
+    }),
+    Object.freeze({
+      level: 1,
+      name: 'LVL 1: PILOT OP',
+      desc: 'Infinite Jump (0ms CD) + Tank Cannon [F]',
+      infiniteJump: true,
+      tankCannon: true,
+      godMode: false,
+      rapidFire: false,
+      oneHitKO: false,
+      giantSelf: false,
+      miniOpp: false,
+      speedMult: 1.05,
+      accelMult: 1.1
+    }),
+    Object.freeze({
+      level: 2,
+      name: 'LVL 2: GOD ARMOR',
+      desc: '+ God Mode Immunity + 1.85x Turbo & Mass',
+      infiniteJump: true,
+      tankCannon: true,
+      godMode: true,
+      rapidFire: false,
+      oneHitKO: false,
+      giantSelf: false,
+      miniOpp: false,
+      speedMult: 1.85,
+      accelMult: 2.15
+    }),
+    Object.freeze({
+      level: 3,
+      name: 'LVL 3: RAPID TANK',
+      desc: '+ Rapid Cannon + Shockwave [G] + Tank Morph [T]',
+      infiniteJump: true,
+      tankCannon: true,
+      godMode: true,
+      rapidFire: true,
+      oneHitKO: false,
+      giantSelf: false,
+      miniOpp: false,
+      speedMult: 2.0,
+      accelMult: 2.35
+    }),
+    Object.freeze({
+      level: 4,
+      name: 'LVL 4: TYRANT',
+      desc: '+ Giant Me [X] + Tiny Opp [Z] + Smite [K]',
+      infiniteJump: true,
+      tankCannon: true,
+      godMode: true,
+      rapidFire: true,
+      oneHitKO: false,
+      giantSelf: true,
+      miniOpp: true,
+      speedMult: 2.18,
+      accelMult: 2.55
+    }),
+    Object.freeze({
+      level: 5,
+      name: 'LVL 5: OVERLORD',
+      desc: 'FULL ADMIN ABUSE • 1-Hit KO Cannon + All Chaos',
+      infiniteJump: true,
+      tankCannon: true,
+      godMode: true,
+      rapidFire: true,
+      oneHitKO: true,
+      giantSelf: true,
+      miniOpp: true,
+      speedMult: 2.45,
+      accelMult: 2.9
+    })
+  ])
+});

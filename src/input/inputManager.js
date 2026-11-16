@@ -1,8 +1,14 @@
 export class InputManager {
   constructor(sound) {
     this.sound = sound;
-    this.state = { p1_l: false, p1_r: false, p1_jump: false, p2_l: false, p2_r: false, p2_jump: false };
-    this.pressTimes = { p1_l: 0, p1_r: 0, p1_jump: 0, p2_l: 0, p2_r: 0, p2_jump: 0 };
+    this.state = {
+      p1_l: false, p1_r: false, p1_jump: false, p1_fire: false,
+      p2_l: false, p2_r: false, p2_jump: false, p2_fire: false
+    };
+    this.pressTimes = {
+      p1_l: 0, p1_r: 0, p1_jump: 0, p1_fire: 0,
+      p2_l: 0, p2_r: 0, p2_jump: 0, p2_fire: 0
+    };
     this.heldCodes = new Map();
     this.activePointers = new Map();
     this.chordWindowMs = 65;
@@ -43,7 +49,8 @@ export class InputManager {
     if (this.mode === 'local') {
       if (code === 'KeyA' || code === 'KeyS') return 'p1_l';
       if (code === 'KeyD') return 'p1_r';
-      if (code === 'KeyW') return 'p1_jump';
+      if (code === 'KeyW' || code === 'Space') return 'p1_jump';
+      if (code === 'KeyF' || code === 'KeyE') return 'p1_fire';
       if (code === 'ArrowLeft') return 'p2_l';
       if (code === 'ArrowRight' || code === 'ArrowDown') return 'p2_r';
       if (code === 'ArrowUp') return 'p2_jump';
@@ -53,17 +60,25 @@ export class InputManager {
       if (code === 'KeyA' || code === 'ArrowLeft' || code === 'KeyS' || code === 'ArrowDown') return 'p2_l';
       if (code === 'KeyD' || code === 'ArrowRight') return 'p2_r';
       if (code === 'KeyW' || code === 'ArrowUp' || code === 'Space') return 'p2_jump';
+      if (code === 'KeyF' || code === 'KeyE') return 'p2_fire';
       return null;
     }
     if (code === 'KeyA' || code === 'ArrowLeft' || code === 'KeyS' || code === 'ArrowDown') return 'p1_l';
     if (code === 'KeyD' || code === 'ArrowRight') return 'p1_r';
     if (code === 'KeyW' || code === 'ArrowUp' || code === 'Space') return 'p1_jump';
+    if (code === 'KeyF' || code === 'KeyE') return 'p1_fire';
     return null;
   }
 
   _recomputeState() {
-    const next = { p1_l: false, p1_r: false, p1_jump: false, p2_l: false, p2_r: false, p2_jump: false };
-    const earliest = { p1_l: 0, p1_r: 0, p1_jump: 0, p2_l: 0, p2_r: 0, p2_jump: 0 };
+    const next = {
+      p1_l: false, p1_r: false, p1_jump: false, p1_fire: false,
+      p2_l: false, p2_r: false, p2_jump: false, p2_fire: false
+    };
+    const earliest = {
+      p1_l: 0, p1_r: 0, p1_jump: 0, p1_fire: 0,
+      p2_l: 0, p2_r: 0, p2_jump: 0, p2_fire: 0
+    };
 
     const applyEntry = (key, startTime) => {
       if (!key) return;
@@ -280,6 +295,11 @@ export class InputManager {
     return Math.max(0, Math.round(now - this.pressTimes[key]));
   }
 
+  triggerAdminFirePulse(hold = true) {
+    if (this.mode === 'online_client') this._virtualFireP2 = Boolean(hold);
+    else this._virtualFireP1 = Boolean(hold);
+  }
+
   getP1() {
     const now = performance.now();
     if (this.mode === 'ai' || this.mode === 'online_host') {
@@ -287,17 +307,19 @@ export class InputManager {
       const r = this.state.p1_r || this.state.p2_r;
       const chordJump = now <= this.chordState.p1.pulseUntil || now <= this.chordState.p2.pulseUntil;
       const jump = this.state.p1_jump || this.state.p2_jump || chordJump;
+      const fire = this.state.p1_fire || this.state.p2_fire || !!this._virtualFireP1;
       const lHoldMs = Math.max(this._getHoldMsFor('p1_l', now), this._getHoldMsFor('p2_l', now));
       const rHoldMs = Math.max(this._getHoldMsFor('p1_r', now), this._getHoldMsFor('p2_r', now));
-      return { l, r, jump, chordJump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
+      return { l, r, jump, fire, chordJump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
     }
     const l = this.state.p1_l;
     const r = this.state.p1_r;
     const chordJump = now <= this.chordState.p1.pulseUntil;
     const jump = this.state.p1_jump || chordJump;
+    const fire = this.state.p1_fire || !!this._virtualFireP1;
     const lHoldMs = this._getHoldMsFor('p1_l', now);
     const rHoldMs = this._getHoldMsFor('p1_r', now);
-    return { l, r, jump, chordJump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
+    return { l, r, jump, fire, chordJump, lHoldMs, rHoldMs, holdMs: r && !l ? rHoldMs : l && !r ? lHoldMs : 0 };
   }
 
   getP2() {
@@ -307,9 +329,10 @@ export class InputManager {
       const r = this.state.p1_r || this.state.p2_r;
       const chordJump = now <= this.chordState.p1.pulseUntil || now <= this.chordState.p2.pulseUntil;
       const jump = this.state.p1_jump || this.state.p2_jump || chordJump;
+      const fire = this.state.p1_fire || this.state.p2_fire || !!this._virtualFireP2;
       const lHoldMs = Math.max(this._getHoldMsFor('p1_l', now), this._getHoldMsFor('p2_l', now));
       const rHoldMs = Math.max(this._getHoldMsFor('p1_r', now), this._getHoldMsFor('p2_r', now));
-      return { l, r, jump, chordJump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
+      return { l, r, jump, fire, chordJump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
     }
     const l = this.state.p2_l;
     const r = this.state.p2_r;
@@ -317,6 +340,6 @@ export class InputManager {
     const jump = this.state.p2_jump || chordJump;
     const lHoldMs = this._getHoldMsFor('p2_l', now);
     const rHoldMs = this._getHoldMsFor('p2_r', now);
-    return { l, r, jump, chordJump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
+    return { l, r, jump, fire: false, chordJump, lHoldMs, rHoldMs, holdMs: l && !r ? lHoldMs : r && !l ? rHoldMs : 0 };
   }
 }

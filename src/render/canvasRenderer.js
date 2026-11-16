@@ -50,6 +50,8 @@ export class CanvasRenderer {
     this.dpr = 1;
     this.smoke = [];
     this.splashes = [];
+    this.blasts = [];
+    this.bolts = [];
     this.popStar = null;
     this.tickCount = 0;
     this.resize();
@@ -64,6 +66,8 @@ export class CanvasRenderer {
   clearEffects() {
     this.smoke = [];
     this.splashes = [];
+    this.blasts = [];
+    this.bolts = [];
     this.popStar = null;
   }
 
@@ -136,6 +140,55 @@ export class CanvasRenderer {
     }
   }
 
+  spawnMuzzleFlash(x, y, dx, dy, mega = false) {
+    for (let i = 0; i < (mega ? 7 : 5); i++) {
+      const spread = (i - 2) * 0.22;
+      const ca = Math.cos(spread);
+      const sa = Math.sin(spread);
+      const vx = (dx * ca - dy * sa) * (4.2 + (i % 3) * 1.4);
+      const vy = (dx * sa + dy * ca) * (4.2 + (i % 3) * 1.4);
+      this.smoke.push({ x, y, vx, vy, r: mega ? 7 : 5, life: 0.72, isRing: false });
+    }
+    this.blasts.push({ x, y, maxR: mega ? 34 : 24, life: 1.0, kind: 'muzzle' });
+  }
+
+  spawnExplosion(x, y, r = 112, mega = false) {
+    this.blasts.push({ x, y, maxR: r, life: 1.0, kind: mega ? 'mega' : 'boom' });
+    for (let i = 0; i < (mega ? 14 : 9); i++) {
+      const ang = (i / (mega ? 14 : 9)) * Math.PI * 2;
+      const spd = (mega ? 6.4 : 4.6) + (i % 3) * 1.2;
+      this.smoke.push({
+        x,
+        y,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd - 1.0,
+        r: mega ? 8.5 : 6.2,
+        life: 0.95,
+        isRing: i % 2 === 0
+      });
+    }
+  }
+
+  spawnShockwave(x, y, r = 240) {
+    this.blasts.push({ x, y, maxR: r, life: 1.0, kind: 'shock' });
+  }
+
+  spawnSmiteLightning(x, y) {
+    const pts = [];
+    const segs = 7;
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const jitter = i === 0 || i === segs ? 0 : ((i % 2 === 0 ? 1 : -1) * (16 + (i * 7) % 14));
+      pts.push({ x: x + jitter, y: t * y });
+    }
+    this.bolts.push({ pts, life: 1.0 });
+    this.blasts.push({ x, y, maxR: 88, life: 1.0, kind: 'mega' });
+  }
+
+  spawnGodShield(x, y) {
+    this.blasts.push({ x, y, maxR: 54, life: 1.0, kind: 'god' });
+  }
+
   updateEffects(dtScale = 1, sim = null) {
     this.tickCount++;
     if (sim) {
@@ -143,6 +196,13 @@ export class CanvasRenderer {
         if (!car || car.dead) continue;
         const cadence = car.driving ? 4 : 26;
         if (this.tickCount % cadence === 0) this.spawnExhaustPuff(car);
+      }
+      if (sim.projectiles) {
+        for (const p of sim.projectiles) {
+          if (this.tickCount % 2 === 0) {
+            this.smoke.push({ x: p.x, y: p.y, vx: -p.vx * 0.08, vy: -p.vy * 0.08 - 0.35, r: 4.2, life: 0.55 });
+          }
+        }
       }
     }
 
@@ -162,6 +222,17 @@ export class CanvasRenderer {
       d.y += d.vy * dtScale;
       d.life -= 0.03 * dtScale;
       if (d.life <= 0) this.splashes.splice(i, 1);
+    }
+
+    for (let i = this.blasts.length - 1; i >= 0; i--) {
+      const b = this.blasts[i];
+      b.life -= (b.kind === 'muzzle' ? 0.14 : 0.065) * dtScale;
+      if (b.life <= 0) this.blasts.splice(i, 1);
+    }
+
+    for (let i = this.bolts.length - 1; i >= 0; i--) {
+      this.bolts[i].life -= 0.075 * dtScale;
+      if (this.bolts[i].life <= 0) this.bolts.splice(i, 1);
     }
 
     if (this.popStar) {
@@ -376,6 +447,65 @@ export class CanvasRenderer {
       ctx.stroke();
     }
 
+    for (const b of this.blasts) {
+      const prog = 1 - b.life;
+      const curR = Math.max(4, b.maxR * (0.25 + prog * 0.78));
+      const a = Math.max(0, b.life);
+      ctx.save();
+      if (b.kind === 'shock') {
+        ctx.strokeStyle = `rgba(247, 181, 56, ${a.toFixed(3)})`;
+        ctx.lineWidth = 7 * a + 2;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, curR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(255, 255, 255, ${(a * 0.85).toFixed(3)})`;
+        ctx.lineWidth = 3 * a + 1;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, curR * 0.82, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (b.kind === 'god') {
+        ctx.strokeStyle = `rgba(255, 232, 120, ${a.toFixed(3)})`;
+        ctx.fillStyle = `rgba(247, 181, 56, ${(a * 0.35).toFixed(3)})`;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, curR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        const innerR = curR * 0.56;
+        ctx.fillStyle = b.kind === 'mega'
+          ? `rgba(255, 86, 48, ${(a * 0.78).toFixed(3)})`
+          : `rgba(247, 181, 56, ${(a * 0.85).toFixed(3)})`;
+        ctx.strokeStyle = `rgba(17, 17, 17, ${(a * 0.85).toFixed(3)})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, curR * 0.65, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = `rgba(255, 244, 180, ${a.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, innerR * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    for (const bolt of this.bolts) {
+      const a = Math.max(0, bolt.life);
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = `rgba(17, 17, 17, ${a.toFixed(3)})`;
+      ctx.lineWidth = 10 * a + 2;
+      ctx.beginPath();
+      bolt.pts.forEach((pt, idx) => (idx === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)));
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(255, 234, 92, ${a.toFixed(3)})`;
+      ctx.lineWidth = 5 * a + 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+
     if (this.popStar) {
       const { x, y, life } = this.popStar;
       const s = (1.3 - life * 0.4) * 32;
@@ -416,6 +546,40 @@ export class CanvasRenderer {
     }
   }
 
+  _drawProjectiles(ctx, projectiles) {
+    for (const p of projectiles) {
+      const ang = Math.atan2(p.vy, p.vx);
+      const r = p.r || 8;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(ang);
+
+      // Fiery wake triangle behind shell
+      ctx.fillStyle = p.oneHitKO ? '#FF4D36' : PALETTE.stripeGold;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.4, -r * 0.65);
+      ctx.lineTo(-r * (p.oneHitKO ? 2.6 : 1.9), 0);
+      ctx.lineTo(-r * 0.4, r * 0.65);
+      ctx.closePath();
+      ctx.fill();
+
+      // Solid cartoon cannon shell warhead with thick ink outline
+      ctx.fillStyle = p.oneHitKO ? '#FF3B30' : (p.owner === 1 ? PALETTE.red.body : PALETTE.blue.body);
+      ctx.strokeStyle = PALETTE.ink;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(-r * 0.9, -r * 0.72, r * 2.1, r * 1.44, r * 0.72);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = PALETTE.stripeGold;
+      ctx.beginPath();
+      ctx.arc(r * 0.45, 0, r * 0.34, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   render(sim, bannerText = '') {
     const ctx = this.ctx;
     ctx.save();
@@ -425,6 +589,9 @@ export class CanvasRenderer {
     this._drawArenaTerrain(ctx, sim);
     if (sim.p1Car) drawVehicle(ctx, sim.p1Car, true, sim.roundElapsedMs);
     if (sim.p2Car) drawVehicle(ctx, sim.p2Car, false, sim.roundElapsedMs);
+    if (sim.projectiles && sim.projectiles.length > 0) {
+      this._drawProjectiles(ctx, sim.projectiles);
+    }
     if (sim.ragdolls) {
       for (const rag of sim.ragdolls) drawRagdoll(ctx, rag);
     }

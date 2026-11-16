@@ -11,7 +11,8 @@ import {
   SUSPENSION_DAMPING,
   VEHICLE_PHYSICS,
   CAR_SPEC,
-  CAR_MODELS
+  CAR_MODELS,
+  ADMIN_CONFIG
 } from '../config/constants.js';
 import { ARENAS } from '../maps/arenas.js';
 import { clamp, lerp, lerpAngle, sampleArcPoints } from '../utils/math.js';
@@ -64,6 +65,9 @@ export class PhysicsSimulation {
     this.seesaws = [];
     this.driveSurfaces = [];
     this.ragdolls = [];
+    this.projectiles = [];
+    this._nextProjId = 0;
+    this.gravityScale = 1.0;
     this.grounded = { p1R: false, p1F: false, p2R: false, p2F: false };
     this._resetWheelContacts();
 
@@ -79,6 +83,9 @@ export class PhysicsSimulation {
     this.onCarBump = null;
     this.onJump = null;
     this.onRagdollSplash = null;
+    this.onCannonFire = null;
+    this.onCannonExplode = null;
+    this.onAdminFx = null;
 
     this._bindCollisions();
   }
@@ -176,11 +183,16 @@ export class PhysicsSimulation {
 
         const checkHeadHit = (headLabel, playerIdx, oppTag) => {
           if (la !== headLabel && lb !== headLabel) return;
+          const car = playerIdx === 1 ? this.p1Car : this.p2Car;
           const headBody = la === headLabel ? a : b;
           const other = la === headLabel ? b : a;
           const ol = other.label || '';
           if (ol === 'island' || ol === 'seesaw' || ol.endsWith(oppTag) || ol.includes(`${oppTag}_`)) {
             const pt = (pair.collision.supports && pair.collision.supports[0]) || headBody.position;
+            if (car && car.godMode) {
+              if (this.onAdminFx) this.onAdminFx('god_block', { x: pt.x, y: pt.y, p: playerIdx });
+              return;
+            }
             if (this.onHeadKO) this.onHeadKO(playerIdx, pt);
           }
         };
@@ -629,9 +641,11 @@ export class PhysicsSimulation {
 
     this.Composite.clear(this.engine.world, false);
     this.engine.timing.timeScale = 1.0;
+    this.engine.gravity.y = VEHICLE_PHYSICS.GRAVITY_Y * (this.gravityScale ?? 1.0);
     this.seesaws = [];
     this.driveSurfaces = [];
     this.ragdolls = [];
+    this.projectiles = [];
     this.grounded = { p1R: false, p1F: false, p2R: false, p2F: false };
     this._resetWheelContacts();
 
@@ -684,7 +698,8 @@ export class PhysicsSimulation {
         restitution: 0.0,
         slop: 0.004,
         label: 'island',
-        isBackside: Boolean(blk.hiddenVisual)
+        isBackside: Boolean(blk.hiddenVisual),
+        isHiddenFiller: Boolean(blk.hiddenVisual)
       });
       this.Composite.add(this.engine.world, rect);
       this.driveSurfaces.push(rect);
@@ -819,6 +834,7 @@ export class PhysicsSimulation {
       head,
       spawnParts: [chassis, wheelR, wheelF, head].map((b) => ({ x: b.position.x, y: b.position.y })),
       headConstraints: [neckSpine, neckL, neckR],
+      suspConstraints: [suspRVert, suspRArm, suspFVert, suspFArm],
       headSevered: false,
       ragdollSpawned: false,
       dead: false,
@@ -841,6 +857,15 @@ export class PhysicsSimulation {
       jumpDisabled: false,
       jumpCooldownMs: JUMP_COOLDOWN_MS,
       lastJumpAtMs: -99999,
+      infiniteJump: false,
+      godMode: false,
+      cannonEnabled: false,
+      rapidCannon: false,
+      oneHitCannon: false,
+      scaleFactor: 1.0,
+      lastCannonAtMs: -99999,
+      _prevJumpHeld: false,
+      _prevFireHeld: false,
       driverState: {
         lean: 0,
         leanVel: 0,
@@ -856,7 +881,9 @@ export class PhysicsSimulation {
 
   getJumpCooldownRemaining(playerIndex) {
     const car = playerIndex === 1 ? this.p1Car : this.p2Car;
-    if (!car || car.jumpDisabled) return Infinity;
+    if (!car) return Infinity;
+    if (car.infiniteJump) return 0;
+    if (car.jumpDisabled) return Infinity;
     const cooldownMs = car.jumpCooldownMs || JUMP_COOLDOWN_MS;
     const elapsedSince = this.roundElapsedMs - car.lastJumpAtMs;
     if (elapsedSince >= cooldownMs) return 0;
@@ -864,14 +891,17 @@ export class PhysicsSimulation {
   }
 
   triggerRelativeJump(car, chaseDir = 0) {
-    if (!car || car.dead || car.jumpDisabled) return false;
-    const cooldownMs = car.jumpCooldownMs || JUMP_COOLDOWN_MS;
+    if (!car || car.dead) return false;
+    const infJump = !!car.infiniteJump;
+    if (!infJump && car.jumpDisabled) return false;
+
+    const cooldownMs = infJump ? (car._prevJumpHeld ? 145 : 0) : (car.jumpCooldownMs || JUMP_COOLDOWN_MS);
     if (this.roundElapsedMs - car.lastJumpAtMs < cooldownMs) return false;
 
     const lastG = typeof car.lastGroundedAtMs === 'number' ? car.lastGroundedAtMs : -99999;
     const coyoteElapsed = this.roundElapsedMs - lastG;
     const withinCoyote = coyoteElapsed >= 0 && coyoteElapsed <= VEHICLE_PHYSICS.JUMP_COYOTE_MS;
-    if (car.isAirborne && !withinCoyote) return false;
+    if (!infJump && car.isAirborne && !withinCoyote) return false;
 
     // Car-local "Roof" direction away from wheels: V_roof = (sin(theta), -cos(theta))
     const theta = car.chassis.angle;
@@ -1084,6 +1114,11 @@ export class PhysicsSimulation {
       if (typeof snap.ad1 === 'number') this.p1Car.accelDir = snap.ad1;
       if (typeof snap.lj1 === 'number') this.p1Car.lastJumpAtMs = snap.lj1;
       if (typeof snap.lg1 === 'number') this.p1Car.lastGroundedAtMs = snap.lg1;
+      if (typeof snap.ij1 === 'number') this.p1Car.infiniteJump = !!snap.ij1;
+      if (typeof snap.gm1 === 'number') this.p1Car.godMode = !!snap.gm1;
+      if (typeof snap.sf1 === 'number' && Math.abs((this.p1Car.scaleFactor || 1) - snap.sf1) > 0.04) {
+        this.scaleVehicle(1, snap.sf1);
+      }
     }
     if (this.p2Car) {
       this.p2Car.driving = !!snap.dr2;
@@ -1091,6 +1126,28 @@ export class PhysicsSimulation {
       if (typeof snap.ad2 === 'number') this.p2Car.accelDir = snap.ad2;
       if (typeof snap.lj2 === 'number') this.p2Car.lastJumpAtMs = snap.lj2;
       if (typeof snap.lg2 === 'number') this.p2Car.lastGroundedAtMs = snap.lg2;
+      if (typeof snap.ij2 === 'number') this.p2Car.infiniteJump = !!snap.ij2;
+      if (typeof snap.gm2 === 'number') this.p2Car.godMode = !!snap.gm2;
+      if (typeof snap.sf2 === 'number' && Math.abs((this.p2Car.scaleFactor || 1) - snap.sf2) > 0.04) {
+        this.scaleVehicle(2, snap.sf2);
+      }
+    }
+    if (typeof snap.gy === 'number' && Number.isFinite(snap.gy)) {
+      this.setWorldGravityScale(snap.gy);
+    }
+    if (Array.isArray(snap.pr)) {
+      this.projectiles = snap.pr.map((row, idx) => ({
+        id: row[5] ?? idx,
+        owner: row[4] || 1,
+        x: row[0],
+        y: row[1],
+        vx: row[2],
+        vy: row[3],
+        r: row[6] || 8,
+        oneHitKO: !!row[7],
+        mega: !!row[7],
+        lifeMs: 2000
+      }));
     }
     if (typeof snap.rt === 'number') this.roundElapsedMs = snap.rt;
     if (typeof snap.wy === 'number') {
@@ -1352,14 +1409,25 @@ export class PhysicsSimulation {
     const g1 = this.vehicleController.updateVehicle(this.p1Car, activeP1, this.wheelContacts.p1, this.driveSurfaces, this.roundElapsedMs);
     const g2 = this.vehicleController.updateVehicle(this.p2Car, activeP2, this.wheelContacts.p2, this.driveSurfaces, this.roundElapsedMs);
 
-    if (canControl && activeP1.jump && this.p1Car && !this.p1Car.dead && !this.p1Car.jumpDisabled) {
+    if (canControl && activeP1.jump && this.p1Car && !this.p1Car.dead && (!this.p1Car.jumpDisabled || this.p1Car.infiniteJump)) {
       const chaseDir1 = (activeP1.r ? 1 : 0) - (activeP1.l ? 1 : 0);
       this.triggerRelativeJump(this.p1Car, chaseDir1);
     }
-    if (canControl && activeP2.jump && this.p2Car && !this.p2Car.dead && !this.p2Car.jumpDisabled) {
+    if (canControl && activeP2.jump && this.p2Car && !this.p2Car.dead && (!this.p2Car.jumpDisabled || this.p2Car.infiniteJump)) {
       const chaseDir2 = (activeP2.r ? 1 : 0) - (activeP2.l ? 1 : 0);
       this.triggerRelativeJump(this.p2Car, chaseDir2);
     }
+    if (this.p1Car) this.p1Car._prevJumpHeld = Boolean(canControl && activeP1.jump);
+    if (this.p2Car) this.p2Car._prevJumpHeld = Boolean(canControl && activeP2.jump);
+
+    if (canControl && activeP1.fire && this.p1Car) {
+      this.fireTankCannon(1);
+    }
+    if (canControl && activeP2.fire && this.p2Car) {
+      this.fireTankCannon(2);
+    }
+    if (this.p1Car) this.p1Car._prevFireHeld = Boolean(canControl && activeP1.fire);
+    if (this.p2Car) this.p2Car._prevFireHeld = Boolean(canControl && activeP2.fire);
 
     this.grounded.p1R = g1.rearGrounded;
     this.grounded.p1F = g1.frontGrounded;
@@ -1372,6 +1440,7 @@ export class PhysicsSimulation {
     this.vehicleController.clampAirborneAndMaxSpeed(this.p2Car);
     this._updateDriverSpring(this.p1Car);
     this._updateDriverSpring(this.p2Car);
+    this._stepProjectiles(canControl);
 
     for (const rag of this.ragdolls) {
       if (!rag.splashed && rag.torso.position.y > this.waterHazardY - 4 && rag.torso.velocity.y > 1.2) {
@@ -1444,12 +1513,441 @@ export class PhysicsSimulation {
       const checkWater = (car, idx) => {
         if (!car || car.dead) return;
         const outX = car.chassis.position.x < -140 || car.chassis.position.x > WORLD_W + 140;
-        if (car.head.position.y > this.waterHazardY || car.chassis.position.y > this.waterHazardY || outX) {
-          if (this.onWaterKO) this.onWaterKO(idx, { x: clamp(car.chassis.position.x, 40, WORLD_W - 40), y: this.waterCrestY });
+        const outSky = this.gravityScale < 0 && car.chassis.position.y < -150;
+        const inWater = car.head.position.y > this.waterHazardY || car.chassis.position.y > this.waterHazardY;
+        if (inWater || outX || outSky) {
+          if (car.godMode) {
+            const safeX = clamp(car.chassis.position.x, 220, WORLD_W - 220);
+            const safeY = outSky ? 95 : Math.min(this.waterCrestY - 46, 510);
+            const curX = car.chassis.position.x;
+            const curY = car.chassis.position.y;
+            const dx = safeX - curX;
+            const dy = safeY - curY;
+            const bounceVy = outSky ? 7.5 : -12.5;
+            const bounceVx = curX < 180 ? 5.0 : curX > WORLD_W - 180 ? -5.0 : car.chassis.velocity.x * 0.5;
+            for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+              if (!b) continue;
+              this.Body.translate(b, { x: dx, y: dy });
+              this.Body.setVelocity(b, { x: bounceVx, y: bounceVy });
+            }
+            if (this.onAdminFx) this.onAdminFx('god_block', { x: safeX, y: this.waterCrestY, p: idx });
+            return;
+          }
+          if (this.onWaterKO) this.onWaterKO(idx, { x: clamp(car.chassis.position.x, 40, WORLD_W - 40), y: outSky ? 60 : this.waterCrestY });
         }
       };
       checkWater(this.p1Car, 1);
       checkWater(this.p2Car, 2);
+    } else if (this.p1Car || this.p2Car) {
+      // Client-side local God Mode guard before host snapshot confirms
+      for (const [car, idx] of [[this.p1Car, 1], [this.p2Car, 2]]) {
+        if (car && !car.dead && car.godMode && car.chassis.position.y > this.waterHazardY) {
+          const dy = Math.min(this.waterCrestY - 42, 510) - car.chassis.position.y;
+          for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+            if (!b) continue;
+            this.Body.translate(b, { x: 0, y: dy });
+            this.Body.setVelocity(b, { x: b.velocity.x * 0.6, y: -11.5 });
+          }
+        }
+      }
     }
+  }
+
+  setWorldGravityScale(scale = 1.0) {
+    const next = clamp(Number.isFinite(scale) ? scale : 1.0, -0.8, 2.5);
+    this.gravityScale = next;
+    this.engine.gravity.y = VEHICLE_PHYSICS.GRAVITY_Y * next;
+  }
+
+  triggerRisingWaterNow() {
+    this.roundElapsedMs = Math.max(this.roundElapsedMs, WATER_RISE.DELAY_MS);
+    this.waterRising = true;
+  }
+
+  scaleVehicle(playerIndex, targetFactor = 1.0) {
+    const car = playerIndex === 1 ? this.p1Car : this.p2Car;
+    if (!car || car.dead) return false;
+    const prev = car.scaleFactor || 1.0;
+    const next = clamp(targetFactor, 0.50, 1.65);
+    const rel = next / prev;
+    if (Math.abs(rel - 1.0) < 0.02) return false;
+
+    const cx = car.chassis.position.x;
+    const cy = car.chassis.position.y;
+    const parts = [car.chassis, car.wheelR, car.wheelF, car.head];
+    for (const b of parts) {
+      if (!b) continue;
+      if (b !== car.chassis) {
+        this.Body.setPosition(b, {
+          x: cx + (b.position.x - cx) * rel,
+          y: cy + (b.position.y - cy) * rel
+        });
+      }
+      this.Body.scale(b, rel, rel);
+    }
+    for (const c of [...(car.suspConstraints || []), ...(car.headConstraints || [])]) {
+      if (!c) continue;
+      if (c.pointA) {
+        c.pointA.x *= rel;
+        c.pointA.y *= rel;
+      }
+      if (c.pointB) {
+        c.pointB.x *= rel;
+        c.pointB.y *= rel;
+      }
+      if (c.length) c.length *= rel;
+    }
+    car.wheelRadiusR *= rel;
+    car.wheelRadiusF *= rel;
+    car.scaleFactor = next;
+    if (car.spawnParts && car.spawnParts.length > 0 && car.spawnParts[0]) {
+      const sp0 = car.spawnParts[0];
+      for (let i = 1; i < car.spawnParts.length; i++) {
+        const sp = car.spawnParts[i];
+        if (!sp) continue;
+        sp.x = sp0.x + (sp.x - sp0.x) * rel;
+        sp.y = sp0.y + (sp.y - sp0.y) * rel;
+      }
+    }
+    if (rel > 1.0) {
+      const liftY = -18 * (rel - 1.0);
+      for (const b of parts) {
+        if (b) this.Body.translate(b, { x: 0, y: liftY });
+      }
+      if (car.spawnParts) {
+        for (const sp of car.spawnParts) {
+          if (sp) sp.y += liftY;
+        }
+      }
+    }
+    return true;
+  }
+
+  morphVehicle(playerIndex, modelId = 'tank') {
+    const oldCar = playerIndex === 1 ? this.p1Car : this.p2Car;
+    if (!oldCar || oldCar.dead || !CAR_MODELS[modelId]) return false;
+    if (oldCar.model === modelId) return false;
+
+    const cx = oldCar.chassis.position.x;
+    const cy = Math.min(oldCar.chassis.position.y - 6, this.waterCrestY - 50);
+    const vx = oldCar.chassis.velocity.x;
+    const vy = oldCar.chassis.velocity.y;
+    const ang = oldCar.chassis.angle;
+    const av = oldCar.chassis.angularVelocity;
+    const oldMeta = {
+      speedScale: oldCar.speedScale,
+      accelScale: oldCar.accelScale,
+      jumpDisabled: oldCar.jumpDisabled,
+      jumpCooldownMs: oldCar.jumpCooldownMs,
+      lastJumpAtMs: oldCar.lastJumpAtMs,
+      infiniteJump: oldCar.infiniteJump,
+      godMode: oldCar.godMode,
+      cannonEnabled: oldCar.cannonEnabled,
+      rapidCannon: oldCar.rapidCannon,
+      oneHitCannon: oldCar.oneHitCannon,
+      scaleFactor: oldCar.scaleFactor || 1.0
+    };
+
+    const toRemove = [
+      oldCar.chassis, oldCar.wheelR, oldCar.wheelF, oldCar.head,
+      ...(oldCar.headConstraints || []),
+      ...(oldCar.suspConstraints || [])
+    ].filter(Boolean);
+    this.Composite.remove(this.engine.world, toRemove);
+
+    const newCar = this._buildVehicle(playerIndex, cx, cy, modelId);
+    Object.assign(newCar, oldMeta);
+    for (const b of [newCar.chassis, newCar.wheelR, newCar.wheelF, newCar.head]) {
+      if (!b) continue;
+      this.Body.setVelocity(b, { x: vx, y: vy });
+      if (b === newCar.chassis) {
+        this.Body.setAngle(b, ang);
+        this.Body.setAngularVelocity(b, av);
+      }
+    }
+    if (playerIndex === 1) {
+      this.p1Car = newCar;
+      this.p1Model = modelId;
+    } else {
+      this.p2Car = newCar;
+      this.p2Model = modelId;
+    }
+    if (Math.abs((oldMeta.scaleFactor || 1.0) - 1.0) >= 0.02) {
+      newCar.scaleFactor = 1.0;
+      this.scaleVehicle(playerIndex, oldMeta.scaleFactor);
+    }
+    this.snapshotPrevRenderState();
+    return true;
+  }
+
+  getTankMuzzlePose(car) {
+    if (!car || !car.chassis) return null;
+    const sf = car.scaleFactor || 1.0;
+    const theta = car.chassis.angle;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    const lx = 48 * CAR_SCALE * sf * car.facing;
+    const ly = -14.2 * CAR_SCALE * sf - CENTER_OF_MASS_OFFSET * sf;
+    const x = car.chassis.position.x + lx * cos - ly * sin;
+    const y = car.chassis.position.y + lx * sin + ly * cos;
+    const dx = cos * car.facing;
+    const dy = sin * car.facing;
+    return { x, y, dx, dy };
+  }
+
+  fireTankCannon(playerIndex) {
+    const car = playerIndex === 1 ? this.p1Car : this.p2Car;
+    if (!car || car.dead || !car.cannonEnabled || car.model !== 'tank') return false;
+    const baseCd = car.rapidCannon ? ADMIN_CONFIG.CANNON_RAPID_COOLDOWN_MS : ADMIN_CONFIG.CANNON_COOLDOWN_MS;
+    const cd = car._prevFireHeld ? baseCd : Math.min(baseCd, 220);
+    if (this.roundElapsedMs - (car.lastCannonAtMs ?? -99999) < cd) return false;
+
+    const muzzle = this.getTankMuzzlePose(car);
+    if (!muzzle) return false;
+    car.lastCannonAtMs = this.roundElapsedMs;
+
+    const sf = car.scaleFactor || 1.0;
+    const spd = ADMIN_CONFIG.CANNON_SHELL_SPEED * (car.oneHitCannon ? 1.15 : 1.0);
+    const proj = {
+      id: ++this._nextProjId,
+      owner: playerIndex,
+      x: muzzle.x + muzzle.dx * 6,
+      y: muzzle.y + muzzle.dy * 6,
+      vx: muzzle.dx * spd + car.chassis.velocity.x * 0.22,
+      vy: muzzle.dy * spd + car.chassis.velocity.y * 0.12 - 0.55,
+      r: (car.oneHitCannon ? 10.5 : 7.8) * clamp(sf, 0.85, 1.4),
+      oneHitKO: !!car.oneHitCannon,
+      mega: !!car.oneHitCannon || !!car.rapidCannon,
+      lifeMs: 2600
+    };
+    this.projectiles.push(proj);
+
+    // Barrel recoil kickback on the Panzer Tank
+    const recoilForce = car.oneHitCannon ? 2.4 : 1.7;
+    for (const b of [car.chassis, car.wheelR, car.wheelF, car.head]) {
+      if (!b) continue;
+      this.Body.setVelocity(b, {
+        x: b.velocity.x - muzzle.dx * recoilForce,
+        y: b.velocity.y - muzzle.dy * recoilForce * 0.65 - 0.3
+      });
+    }
+    this.Body.setAngularVelocity(
+      car.chassis,
+      clamp(car.chassis.angularVelocity - car.facing * 0.032, -0.15, 0.15)
+    );
+
+    if (this.onCannonFire) {
+      this.onCannonFire(playerIndex, {
+        x: muzzle.x,
+        y: muzzle.y,
+        dx: muzzle.dx,
+        dy: muzzle.dy,
+        mega: proj.mega,
+        oneHitKO: proj.oneHitKO
+      });
+    }
+    return true;
+  }
+
+  _distPtToSegment(px, py, x1, y1, x2, y2) {
+    const vx = x2 - x1;
+    const vy = y2 - y1;
+    const wx = px - x1;
+    const wy = py - y1;
+    const lenSq = vx * vx + vy * vy;
+    const t = lenSq > 0.0001 ? clamp((wx * vx + wy * vy) / lenSq, 0, 1) : 0;
+    const cx = x1 + vx * t;
+    const cy = y1 + vy * t;
+    return { dist: Math.hypot(px - cx, py - cy), cx, cy };
+  }
+
+  _detonateProjectile(proj, hitPt, directOppIdx = 0, hitPart = '') {
+    const isMega = !!proj.oneHitKO;
+    const radius = isMega ? ADMIN_CONFIG.CANNON_MEGA_RADIUS : ADMIN_CONFIG.CANNON_BLAST_RADIUS;
+    const hx = hitPt.x;
+    const hy = hitPt.y;
+
+    for (const sw of this.seesaws) {
+      if (!sw || !sw.body) continue;
+      const dx = sw.body.position.x - hx;
+      const dy = sw.body.position.y - hy;
+      const d = Math.hypot(dx, dy);
+      if (d < sw.w * 0.5 + radius * 0.6) {
+        const torqueSign = dx >= 0 ? -1 : 1;
+        this.Body.setAngularVelocity(sw.body, clamp(sw.body.angularVelocity + torqueSign * 0.08, -0.18, 0.18));
+      }
+    }
+
+    const oppIdx = proj.owner === 1 ? 2 : 1;
+    const opp = oppIdx === 1 ? this.p1Car : this.p2Car;
+    if (opp && !opp.dead && !opp.godMode) {
+      const dx = opp.chassis.position.x - hx;
+      const dy = opp.chassis.position.y - hy;
+      const dist = Math.hypot(dx, dy);
+      const headDist = opp.head ? Math.hypot(opp.head.position.x - hx, opp.head.position.y - hy) : dist;
+      const minD = Math.min(dist, headDist);
+      if (minD <= radius + 24) {
+        const nx = dist > 1 ? dx / dist : (proj.vx >= 0 ? 1 : -1);
+        const ny = dist > 1 ? dy / dist : -0.6;
+        const falloff = clamp(1.15 - minD / (radius * 1.2), 0.35, 1.0);
+        const blastPower = (isMega ? 25 : 17.5) * falloff;
+        const pushVx = nx * blastPower + proj.vx * 0.25;
+        const pushVy = ny * blastPower * 0.72 - 7.8 * falloff;
+        for (const b of [opp.chassis, opp.wheelR, opp.wheelF, opp.head]) {
+          if (!b) continue;
+          this.Body.setVelocity(b, {
+            x: clamp(b.velocity.x + pushVx, -28, 28),
+            y: clamp(b.velocity.y + pushVy, -24, 24)
+          });
+        }
+        const spin = (nx >= 0 ? 1 : -1) * (0.22 + 0.12 * falloff);
+        this.Body.setAngularVelocity(opp.chassis, clamp(opp.chassis.angularVelocity + spin, -0.35, 0.35));
+
+        const lethal =
+          this.isHostSide &&
+          (hitPart === 'head' ||
+            isMega ||
+            (directOppIdx === oppIdx && minD < 48));
+        if (lethal && this.onHeadKO) {
+          this.onHeadKO(oppIdx, { x: hx, y: hy });
+        }
+      }
+    }
+
+    if (this.onCannonExplode) {
+      this.onCannonExplode({ x: hx, y: hy, r: radius, mega: proj.mega, oneHitKO: isMega, owner: proj.owner });
+    }
+  }
+
+  _stepProjectiles(canControl) {
+    if (!this.projectiles || this.projectiles.length === 0) return;
+    if (!canControl && this.projectiles.length === 0) return;
+    const terrainBodies = this.driveSurfaces.filter((b) => !b.isHiddenFiller);
+
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const p = this.projectiles[i];
+      p.lifeMs -= FIXED_DT;
+      const x0 = p.x;
+      const y0 = p.y;
+      p.vy += ADMIN_CONFIG.CANNON_SHELL_GRAVITY * this.gravityScale;
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.lifeMs <= 0 || p.x < -140 || p.x > WORLD_W + 140 || p.y < -320) {
+        this.projectiles.splice(i, 1);
+        continue;
+      }
+
+      if (p.y >= this.waterCrestY + 4) {
+        this._detonateProjectile(p, { x: clamp(p.x, 40, WORLD_W - 40), y: this.waterCrestY }, 0, '');
+        if (this.onRagdollSplash) this.onRagdollSplash(p.x, this.waterCrestY);
+        this.projectiles.splice(i, 1);
+        continue;
+      }
+
+      // Check opponent car body sweep first
+      const oppIdx = p.owner === 1 ? 2 : 1;
+      const opp = oppIdx === 1 ? this.p1Car : this.p2Car;
+      let hitCar = false;
+      if (opp && !opp.dead) {
+        const oppSf = opp.scaleFactor || 1.0;
+        const checks = [
+          { b: opp.head, r: (opp.spec.headRadius || 10) * oppSf + p.r + 3, name: 'head' },
+          { b: opp.chassis, r: Math.max(opp.spec.width, opp.spec.height) * 0.40 * oppSf + p.r, name: 'chassis' },
+          { b: opp.wheelR, r: (opp.wheelRadiusR || 12) + p.r, name: 'wheel' },
+          { b: opp.wheelF, r: (opp.wheelRadiusF || 12) + p.r, name: 'wheel' }
+        ];
+        for (const ch of checks) {
+          if (!ch.b) continue;
+          const res = this._distPtToSegment(ch.b.position.x, ch.b.position.y, x0, y0, p.x, p.y);
+          if (res.dist <= ch.r) {
+            this._detonateProjectile(p, { x: res.cx, y: res.cy }, oppIdx, ch.name);
+            this.projectiles.splice(i, 1);
+            hitCar = true;
+            break;
+          }
+        }
+      }
+      if (hitCar) continue;
+
+      // Swept ray check against visible arena terrain & seesaws (3 substeps for accurate contact point)
+      if (terrainBodies.length > 0) {
+        let hitPt = null;
+        for (let s = 1; s <= 3; s++) {
+          const sx0 = lerp(x0, p.x, (s - 1) / 3);
+          const sy0 = lerp(y0, p.y, (s - 1) / 3);
+          const sx1 = lerp(x0, p.x, s / 3);
+          const sy1 = lerp(y0, p.y, s / 3);
+          const hits = this.Query.ray(terrainBodies, { x: sx0, y: sy0 }, { x: sx1, y: sy1 }, Math.max(2, p.r));
+          if (hits && hits.length > 0) {
+            const sup = hits[0].supports && hits[0].supports[0];
+            hitPt = sup ? { x: sup.x, y: sup.y } : { x: (sx0 + sx1) * 0.5, y: (sy0 + sy1) * 0.5 };
+            break;
+          }
+        }
+        if (hitPt) {
+          this._detonateProjectile(p, hitPt, 0, 'terrain');
+          this.projectiles.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  triggerShockwave(playerIndex) {
+    const car = playerIndex === 1 ? this.p1Car : this.p2Car;
+    if (!car || car.dead) return false;
+    const cx = car.chassis.position.x;
+    const cy = car.chassis.position.y;
+    const oppIdx = playerIndex === 1 ? 2 : 1;
+    const opp = oppIdx === 1 ? this.p1Car : this.p2Car;
+    const radius = 250;
+
+    if (opp && !opp.dead && !opp.godMode) {
+      const dx = opp.chassis.position.x - cx;
+      const dy = opp.chassis.position.y - cy;
+      const d = Math.hypot(dx, dy) || 1;
+      const power = d < radius ? clamp(1.3 - d / radius, 0.5, 1.3) * 19 : 9.5;
+      const nx = d > 1 ? dx / d : (oppIdx === 2 ? 1 : -1);
+      for (const b of [opp.chassis, opp.wheelR, opp.wheelF, opp.head]) {
+        if (!b) continue;
+        this.Body.setVelocity(b, {
+          x: clamp(nx * power, -26, 26),
+          y: clamp((dy / d) * power * 0.45 - 11.5, -24, 24)
+        });
+      }
+      this.Body.setAngularVelocity(opp.chassis, (nx >= 0 ? 1 : -1) * 0.28);
+    }
+
+    for (const sw of this.seesaws) {
+      if (!sw || !sw.body) continue;
+      if (Math.hypot(sw.body.position.x - cx, sw.body.position.y - cy) < radius + sw.w * 0.5) {
+        this.Body.setAngularVelocity(sw.body, (sw.body.position.x >= cx ? 1 : -1) * 0.14);
+      }
+    }
+    this.projectiles = this.projectiles.filter((p) => p.owner === playerIndex || Math.hypot(p.x - cx, p.y - cy) > radius);
+
+    if (this.onAdminFx) this.onAdminFx('shockwave', { x: cx, y: cy, p: playerIndex, r: radius });
+    return true;
+  }
+
+  smiteOpponent(attackerIndex, lethal = false) {
+    const oppIdx = attackerIndex === 1 ? 2 : 1;
+    const opp = oppIdx === 1 ? this.p1Car : this.p2Car;
+    if (!opp || opp.dead) return false;
+    const ox = opp.chassis.position.x;
+    const oy = opp.chassis.position.y;
+    if (!opp.godMode) {
+      const flingDir = ox >= 640 ? 1 : -1;
+      for (const b of [opp.chassis, opp.wheelR, opp.wheelF, opp.head]) {
+        if (!b) continue;
+        this.Body.setVelocity(b, { x: flingDir * 14, y: -15.5 });
+      }
+      this.Body.setAngularVelocity(opp.chassis, flingDir * 0.34);
+      if (this.isHostSide && lethal && this.onHeadKO) {
+        this.onHeadKO(oppIdx, { x: ox, y: oy });
+      }
+    }
+    if (this.onAdminFx) this.onAdminFx('smite', { x: ox, y: oy, p: oppIdx });
+    return true;
   }
 }

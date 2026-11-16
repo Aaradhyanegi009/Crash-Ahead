@@ -29,12 +29,12 @@ function encodeWireMsg(msg) {
   if (!msg || typeof msg !== 'object') return msg;
   if (msg.t === 'input') {
     const m = (msg.l ? 1 : 0) | (msg.r ? 2 : 0) | (msg.j ? 4 : 0) |
-      (msg.pl ? 8 : 0) | (msg.pr ? 16 : 0) | (msg.pj ? 32 : 0);
+      (msg.pl ? 8 : 0) | (msg.pr ? 16 : 0) | (msg.pj ? 32 : 0) | (msg.fire ? 64 : 0);
     return ['I', msg.ep || 1, msg.seq || 0, m, msg.jc || 0, msg.holdMs || 0];
   }
   if (msg.t === 'snap') {
     const i1 = msg.i1 || [0, 0, 0, 0];
-    const i1m = (i1[0] ? 1 : 0) | (i1[1] ? 2 : 0) | (i1[3] ? 4 : 0);
+    const i1m = (i1[0] ? 1 : 0) | (i1[1] ? 2 : 0) | (i1[3] ? 4 : 0) | (i1[4] ? 8 : 0);
     const flags = (msg.d1 ? 1 : 0) | (msg.d2 ? 2 : 0) | (msg.dr1 ? 4 : 0) | (msg.dr2 ? 8 : 0);
     const sw = Array.isArray(msg.sw) ? msg.sw : [];
     const arr = [
@@ -57,6 +57,22 @@ function encodeWireMsg(msg) {
       else arr.push(0, 0, 0, 0, 0, 0);
     }
     arr.push(msg.lg1 ?? -99999, msg.lg2 ?? -99999);
+    const hasAdminExt = Boolean(
+      msg.ij1 || msg.ij2 || msg.gm1 || msg.gm2 ||
+      (typeof msg.gy === 'number' && Math.abs(msg.gy - 1) > 0.01) ||
+      (typeof msg.sf1 === 'number' && Math.abs(msg.sf1 - 1) > 0.02) ||
+      (typeof msg.sf2 === 'number' && Math.abs(msg.sf2 - 1) > 0.02) ||
+      (Array.isArray(msg.pr) && msg.pr.length > 0)
+    );
+    if (hasAdminExt) {
+      const am = (msg.ij1 ? 1 : 0) | (msg.ij2 ? 2 : 0) | (msg.gm1 ? 4 : 0) | (msg.gm2 ? 8 : 0);
+      const prList = Array.isArray(msg.pr) ? msg.pr : [];
+      arr.push(am, msg.gy ?? 1, msg.sf1 ?? 1, msg.sf2 ?? 1, prList.length);
+      for (let i = 0; i < prList.length; i++) {
+        const pr = prList[i];
+        arr.push(pr[0], pr[1], pr[2], pr[3], pr[4], pr[5], pr[6], pr[7]);
+      }
+    }
     return arr;
   }
   if (msg.t === 'ping') {
@@ -79,6 +95,7 @@ function decodeWireMsg(raw) {
       t: 'input', ep: raw[1], seq: raw[2],
       l: !!(m & 1), r: !!(m & 2), j: !!(m & 4),
       pl: !!(m & 8), pr: !!(m & 16), pj: !!(m & 32),
+      fire: !!(m & 64),
       jc: raw[4] || 0, holdMs: raw[5] || 0
     };
   }
@@ -95,7 +112,7 @@ function decodeWireMsg(raw) {
       t: 'snap', ep: raw[1], sq: raw[2], ak: raw[3], ai: raw[4],
       m1: raw[5], m2: raw[6], sc: [raw[7], raw[8]], rn: raw[9],
       ph: wireToPhase(raw[10]), bt: raw[11], rt: raw[12], wy: raw[13],
-      i1: [i1m & 1, (i1m >> 1) & 1, raw[15], (i1m >> 2) & 1],
+      i1: [i1m & 1, (i1m >> 1) & 1, raw[15], (i1m >> 2) & 1, (i1m >> 3) & 1],
       d1: flags & 1, d2: (flags >> 1) & 1, dr1: (flags >> 2) & 1, dr2: (flags >> 3) & 1,
       hm1: raw[17], hm2: raw[18], ad1: raw[19], ad2: raw[20],
       lj1: raw[21], lj2: raw[22], sw
@@ -108,6 +125,25 @@ function decodeWireMsg(raw) {
     if (raw.length >= idx + 2) {
       snap.lg1 = raw[idx++];
       snap.lg2 = raw[idx++];
+    }
+    if (raw.length >= idx + 5) {
+      const am = raw[idx++] || 0;
+      snap.ij1 = am & 1;
+      snap.ij2 = (am >> 1) & 1;
+      snap.gm1 = (am >> 2) & 1;
+      snap.gm2 = (am >> 3) & 1;
+      snap.gy = raw[idx++];
+      snap.sf1 = raw[idx++];
+      snap.sf2 = raw[idx++];
+      const prLen = raw[idx++] || 0;
+      const pr = [];
+      for (let i = 0; i < prLen; i++) {
+        pr.push([
+          raw[idx++], raw[idx++], raw[idx++], raw[idx++],
+          raw[idx++], raw[idx++], raw[idx++], raw[idx++]
+        ]);
+      }
+      snap.pr = pr;
     }
     return snap;
   }
@@ -205,14 +241,14 @@ export class NetworkManager {
     this.lastRemoteAt = 0;
 
     this.matchEpoch = 1;
-    this.remoteInput = { seq: 0, l: false, r: false, j: false, jump: false, holdMs: 0 };
+    this.remoteInput = { seq: 0, l: false, r: false, j: false, jump: false, fire: false, holdMs: 0 };
     this.remoteInputAt = 0;
-    this.lastHostP1Input = { l: false, r: false, jump: false, holdMs: 0 };
+    this.lastHostP1Input = { l: false, r: false, jump: false, fire: false, holdMs: 0 };
     this.hostInputPredictTicks = 0;
     this.inputSeq = 0;
     this.inputSendTick = 0;
     this.releaseBurstLeft = 0;
-    this.lastInputSent = { l: false, r: false, j: false };
+    this.lastInputSent = { l: false, r: false, j: false, fire: false };
     this.jumpPressCount = 0;
     this.prevClientJ = false;
     this.lastRemoteJumpCount = 0;
@@ -758,12 +794,12 @@ export class NetworkManager {
   }
 
   resetRoundInput() {
-    this.remoteInput = { seq: this.remoteInput.seq || 0, l: false, r: false, j: false, jump: false, holdMs: 0 };
+    this.remoteInput = { seq: this.remoteInput.seq || 0, l: false, r: false, j: false, jump: false, fire: false, holdMs: 0 };
     this.remoteInputAt = 0;
-    this.lastHostP1Input = { l: false, r: false, jump: false, holdMs: 0 };
+    this.lastHostP1Input = { l: false, r: false, jump: false, fire: false, holdMs: 0 };
     this.hostInputPredictTicks = 0;
     this.releaseBurstLeft = 0;
-    this.lastInputSent = { l: false, r: false, j: false };
+    this.lastInputSent = { l: false, r: false, j: false, fire: false };
     this.prevClientJ = false;
     this.pendingRemoteJumpTicks = 0;
     this._latestRemoteJ = false;
@@ -772,14 +808,14 @@ export class NetworkManager {
 
   resetPredictionState(nextEpoch = null) {
     if (typeof nextEpoch === 'number') this.matchEpoch = nextEpoch;
-    this.remoteInput = { seq: 0, l: false, r: false, j: false, jump: false, holdMs: 0 };
+    this.remoteInput = { seq: 0, l: false, r: false, j: false, jump: false, fire: false, holdMs: 0 };
     this.remoteInputAt = 0;
-    this.lastHostP1Input = { l: false, r: false, jump: false, holdMs: 0 };
+    this.lastHostP1Input = { l: false, r: false, jump: false, fire: false, holdMs: 0 };
     this.hostInputPredictTicks = 0;
     this.inputSeq = 0;
     this.inputSendTick = 0;
     this.releaseBurstLeft = 0;
-    this.lastInputSent = { l: false, r: false, j: false };
+    this.lastInputSent = { l: false, r: false, j: false, fire: false };
     this.jumpPressCount = 0;
     this.prevClientJ = false;
     this.lastRemoteJumpCount = 0;
@@ -801,12 +837,13 @@ export class NetworkManager {
     const staleLimit = (isRelay || this.pingMs > 120)
       ? clamp((this.pingMs || 180) * 2.5, 520, 1400)
       : 460;
-    if ((this.remoteInput.l || this.remoteInput.r || this.remoteInput.j) && this.remoteInputAt > 0) {
+    if ((this.remoteInput.l || this.remoteInput.r || this.remoteInput.j || this.remoteInput.fire) && this.remoteInputAt > 0) {
       if (performance.now() - this.remoteInputAt > staleLimit) {
         this.remoteInput.l = false;
         this.remoteInput.r = false;
         this.remoteInput.j = false;
         this.remoteInput.jump = false;
+        this.remoteInput.fire = false;
         this.remoteInput.holdMs = 0;
         this._latestRemoteJ = false;
         this.pendingRemoteJumpTicks = 0;
@@ -1190,7 +1227,7 @@ export class NetworkManager {
         if (seq >= this.remoteInput.seq || seq === 0) {
           this._latestRemoteJ = !!msg.j;
           const effJ = this._latestRemoteJ || this.pendingRemoteJumpTicks > 0;
-          this.remoteInput = { seq, l: !!msg.l, r: !!msg.r, j: effJ, jump: effJ, holdMs: msg.holdMs || 0 };
+          this.remoteInput = { seq, l: !!msg.l, r: !!msg.r, j: effJ, jump: effJ, fire: !!msg.fire, holdMs: msg.holdMs || 0 };
           this.remoteInputAt = performance.now();
         }
         break;
@@ -1233,6 +1270,9 @@ export class NetworkManager {
         }
         this.cb.onGameEvent(msg);
         break;
+      case 'admin_cmd':
+        if (this.cb.onAdminCommand) this.cb.onAdminCommand(msg.cmd, msg);
+        break;
       case 'rematch':
         this.cb.onRematchSignal();
         break;
@@ -1241,15 +1281,15 @@ export class NetworkManager {
 
   flushClientRelease() {
     if (!this.isConnected()) return;
-    if (this.lastInputSent.l || this.lastInputSent.r || this.lastInputSent.j) {
+    if (this.lastInputSent.l || this.lastInputSent.r || this.lastInputSent.j || this.lastInputSent.fire) {
       const seq = ++this.inputSeq;
       const pl = this.lastInputSent.l, pr = this.lastInputSent.r, pj = this.lastInputSent.j;
-      this.lastInputSent = { l: false, r: false, j: false };
+      this.lastInputSent = { l: false, r: false, j: false, fire: false };
       this.prevClientJ = false;
       this.releaseBurstLeft = 3;
       this._sendRaw({
         t: 'input', ep: this.matchEpoch, seq,
-        l: false, r: false, j: false, pl, pr, pj,
+        l: false, r: false, j: false, fire: false, pl, pr, pj,
         jc: this.jumpPressCount, holdMs: 0
       }, true);
     }
@@ -1260,30 +1300,35 @@ export class NetworkManager {
     const l = !!(inp && inp.l);
     const r = !!(inp && inp.r);
     const j = !!(inp && inp.jump);
+    const fire = !!(inp && inp.fire);
     const holdMs = (inp && inp.holdMs) || 0;
     const risingJump = j && !this.prevClientJ;
     if (risingJump) this.jumpPressCount++;
     this.prevClientJ = j;
 
-    const cmd = { seq, l, r, j, jump: j, holdMs };
+    const cmd = { seq, l, r, j, jump: j, fire, holdMs };
     this.pendingInputs.push(cmd);
     if (this.pendingInputs.length > 75) this.pendingInputs.shift();
 
     if (this.isConnected()) {
       this.inputSendTick++;
-      const changed = l !== this.lastInputSent.l || r !== this.lastInputSent.r || j !== this.lastInputSent.j;
-      if (changed && !l && !r && !j) this.releaseBurstLeft = 3;
+      const changed =
+        l !== this.lastInputSent.l ||
+        r !== this.lastInputSent.r ||
+        j !== this.lastInputSent.j ||
+        fire !== this.lastInputSent.fire;
+      if (changed && !l && !r && !j && !fire) this.releaseBurstLeft = 3;
       const relayOnly = this.transportName() === 'relay';
-      const heldSend = (l || r || j) && (this.inputSendTick % (relayOnly ? 3 : 2) === 0);
-      const releaseEcho = !l && !r && !j && this.releaseBurstLeft > 0;
+      const heldSend = (l || r || j || fire) && (this.inputSendTick % (relayOnly ? 3 : 2) === 0);
+      const releaseEcho = !l && !r && !j && !fire && this.releaseBurstLeft > 0;
       const idleHeartbeat = this.inputSendTick % (relayOnly ? 8 : 4) === 0;
       if (changed || risingJump || heldSend || releaseEcho || idleHeartbeat) {
         if (releaseEcho) this.releaseBurstLeft--;
         const pl = this.lastInputSent.l, pr = this.lastInputSent.r, pj = this.lastInputSent.j;
-        this.lastInputSent = { l, r, j };
+        this.lastInputSent = { l, r, j, fire };
         this._sendRaw({
           t: 'input', ep: this.matchEpoch, seq,
-          l, r, j, pl, pr, pj,
+          l, r, j, fire, pl, pr, pj,
           jc: this.jumpPressCount, holdMs
         }, true);
       }
@@ -1322,6 +1367,10 @@ export class NetworkManager {
     this.sendReliable('evt', { kind, ...data });
   }
 
+  sendAdminCommand(cmd, data = {}) {
+    this.sendReliable('admin_cmd', { cmd, ...data });
+  }
+
   sendRematch() {
     this.sendReliable('rematch', {});
   }
@@ -1351,7 +1400,7 @@ export class NetworkManager {
       bt: meta.bannerText,
       rt: Math.round(sim.roundElapsedMs),
       wy: Math.round(sim.waterCrestY * 10) / 10,
-      i1: p1 ? [p1.l ? 1 : 0, p1.r ? 1 : 0, p1.holdMs || 0, p1.jump ? 1 : 0] : [0, 0, 0, 0],
+      i1: p1 ? [p1.l ? 1 : 0, p1.r ? 1 : 0, p1.holdMs || 0, p1.jump ? 1 : 0, p1.fire ? 1 : 0] : [0, 0, 0, 0, 0],
       d1: sim.p1Car.dead ? 1 : 0,
       d2: sim.p2Car.dead ? 1 : 0,
       dr1: sim.p1Car.driving ? 1 : 0,
@@ -1364,6 +1413,23 @@ export class NetworkManager {
       lj2: Math.round(sim.p2Car.lastJumpAtMs || -99999),
       lg1: Math.round(sim.p1Car.lastGroundedAtMs ?? -99999),
       lg2: Math.round(sim.p2Car.lastGroundedAtMs ?? -99999),
+      ij1: sim.p1Car.infiniteJump ? 1 : 0,
+      ij2: sim.p2Car.infiniteJump ? 1 : 0,
+      gm1: sim.p1Car.godMode ? 1 : 0,
+      gm2: sim.p2Car.godMode ? 1 : 0,
+      gy: Math.round((sim.gravityScale ?? 1) * 100) / 100,
+      sf1: Math.round((sim.p1Car.scaleFactor || 1) * 100) / 100,
+      sf2: Math.round((sim.p2Car.scaleFactor || 1) * 100) / 100,
+      pr: Array.isArray(sim.projectiles) ? sim.projectiles.map((p) => [
+        Math.round(p.x * 10) / 10,
+        Math.round(p.y * 10) / 10,
+        Math.round(p.vx * 100) / 100,
+        Math.round(p.vy * 100) / 100,
+        p.owner || 1,
+        p.id || 0,
+        Math.round((p.r || 8) * 10) / 10,
+        p.oneHitKO ? 1 : 0
+      ]) : [],
       sw: sim.seesaws.map((s) => [
         Math.round(s.body.angle * 1000) / 1000,
         Math.round(s.body.angularVelocity * 1000) / 1000
@@ -1415,9 +1481,9 @@ export class NetworkManager {
       this.pendingInputs = this.pendingInputs.filter((cmd) => cmd.seq > ackSeq);
     }
     if (Array.isArray(snap.i1)) {
-      this.lastHostP1Input = { l: !!snap.i1[0], r: !!snap.i1[1], holdMs: snap.i1[2] || 0, jump: !!snap.i1[3] };
+      this.lastHostP1Input = { l: !!snap.i1[0], r: !!snap.i1[1], holdMs: snap.i1[2] || 0, jump: !!snap.i1[3], fire: !!snap.i1[4] };
     } else {
-      this.lastHostP1Input = snap.i1 || { l: false, r: false, jump: false, holdMs: 0 };
+      this.lastHostP1Input = snap.i1 || { l: false, r: false, jump: false, fire: false, holdMs: 0 };
     }
     this.hostInputPredictTicks = 0;
 
@@ -1438,12 +1504,21 @@ export class NetworkManager {
       const p1HoldLimit = (!sim.p1Car?.dead && !sim.p2Car?.dead) ? clamp(Math.round(oneWayTicks * 0.75), 2, 7) : 3;
       const coast = { l: false, r: false, jump: false, holdMs: 0 };
       const savedOnJump = sim.onJump;
+      const savedOnFire = sim.onCannonFire;
+      const savedOnExplode = sim.onCannonExplode;
+      const savedOnAdminFx = sim.onAdminFx;
       sim.onJump = null;
+      sim.onCannonFire = null;
+      sim.onCannonExplode = null;
+      sim.onAdminFx = null;
       for (let i = startIdx; i < this.pendingInputs.length; i++) {
         const p1Step = (i - startIdx) < p1HoldLimit ? this.lastHostP1Input : coast;
         sim.step(p1Step, this.pendingInputs[i], true, false);
       }
       sim.onJump = savedOnJump;
+      sim.onCannonFire = savedOnFire;
+      sim.onCannonExplode = savedOnExplode;
+      sim.onAdminFx = savedOnAdminFx;
     }
 
     // Step 3: Progressive error convergence scaled to jitter without cycling teleports

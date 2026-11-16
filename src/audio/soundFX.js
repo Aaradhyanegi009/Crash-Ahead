@@ -215,6 +215,103 @@ export class SoundFX {
     osc.start(t);
     osc.stop(t + 0.17);
   }
+
+  _playNoiseBurst(dur, freqStart, freqEnd, gainVal, filterType = 'lowpass', q = 1.0) {
+    if (this.muted || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let lfsr = 0x71C5A2D3;
+    for (let i = 0; i < data.length; i++) {
+      lfsr ^= lfsr << 13;
+      lfsr ^= lfsr >>> 17;
+      lfsr ^= lfsr << 5;
+      data[i] = (((lfsr >>> 0) / 4294967295) * 2 - 1) * Math.exp(-i / (data.length * 0.32));
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = filterType;
+    filt.frequency.setValueAtTime(freqStart, t);
+    filt.frequency.exponentialRampToValueAtTime(Math.max(40, freqEnd), t + dur);
+    filt.Q.value = q;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(gainVal, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(filt);
+    filt.connect(gain);
+    gain.connect(this.ctx.destination);
+    src.start(t);
+  }
+
+  playCannonFire() {
+    if (this.muted || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._playNoiseBurst(0.16, 1400, 180, 0.24, 'lowpass', 1.2);
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(210, t);
+    osc.frequency.exponentialRampToValueAtTime(48, t + 0.16);
+    gain.gain.setValueAtTime(0.24, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.19);
+  }
+
+  playExplosion(mega = false) {
+    if (this.muted || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._playNoiseBurst(mega ? 0.42 : 0.28, 950, 75, mega ? 0.34 : 0.26, 'lowpass', 0.9);
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(mega ? 120 : 145, t);
+    osc.frequency.exponentialRampToValueAtTime(32, t + (mega ? 0.36 : 0.24));
+    gain.gain.setValueAtTime(mega ? 0.32 : 0.25, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + (mega ? 0.38 : 0.26));
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + (mega ? 0.4 : 0.28));
+  }
+
+  playSmite() {
+    if (this.muted || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._playNoiseBurst(0.22, 3200, 320, 0.25, 'bandpass', 1.4);
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(980, t);
+    osc.frequency.exponentialRampToValueAtTime(110, t + 0.20);
+    gain.gain.setValueAtTime(0.20, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.23);
+  }
+
+  playPowerUp() {
+    if (this.muted || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    [440, 554.37, 659.25, 880].forEach((f, i) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      const s = t + i * 0.045;
+      osc.frequency.setValueAtTime(f, s);
+      gain.gain.setValueAtTime(0.11, s);
+      gain.gain.exponentialRampToValueAtTime(0.001, s + 0.14);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(s);
+      osc.stop(s + 0.15);
+    });
+  }
 }
 
 export const Haptics = {

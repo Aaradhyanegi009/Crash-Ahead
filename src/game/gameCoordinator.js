@@ -20,6 +20,7 @@ import { SmartAI } from '../ai/smartAI.js';
 import { InputManager } from '../input/inputManager.js';
 import { NetworkManager } from '../network/networkManager.js';
 import { UIManager } from '../ui/uiManager.js';
+import { AdminManager } from '../admin/adminManager.js';
 
 export class CrashAheadGame {
   constructor() {
@@ -31,6 +32,22 @@ export class CrashAheadGame {
     this.aiDifficulty = 'hard';
     this.ai = new SmartAI(this.aiDifficulty);
     this.sim = new PhysicsSimulation(true);
+    this.remoteAdminState = null;
+    this.admin = new AdminManager({
+      onUnlock: (eff) => {
+        this.sound.unlock();
+        this.sound.playPowerUp();
+        this.ui.showAdminToast(`ADMIN PERMS UNLOCKED! (${eff.levelMeta.name})`, 2600);
+        this._syncAdminState();
+      },
+      onLock: () => {
+        this.ui.showAdminToast('ADMIN PERMS LOCKED', 1500);
+        this._syncAdminState();
+      },
+      onStateChange: () => {
+        this._syncAdminState();
+      }
+    });
 
     this.mode = 'attract'; // 'attract' | 'ai' | 'local' | 'online_host' | 'online_client'
     this.phase = 'MENU';   // 'MENU' | 'COUNTDOWN' | 'FIGHT' | 'KO' | 'MATCH_OVER'
@@ -61,12 +78,14 @@ export class CrashAheadGame {
     this._bindSimCallbacks();
     this._initNetwork();
     this._bindUI();
+    this._bindAdminHotkeys();
 
     window.addEventListener('resize', () => this.renderer.resize());
     window.addEventListener('orientationchange', () => setTimeout(() => this.renderer.resize(), 120));
 
     this._startAttractMode();
     this._checkUrlAutoJoin();
+    this._syncAdminState();
     this._startMainLoop();
   }
 
@@ -162,6 +181,50 @@ export class CrashAheadGame {
       this.renderer.spawnWaterSplash(x, crestY);
       if (this.mode !== 'attract') this.sound.playSplash();
     };
+    this.sim.onCannonFire = (idx, pt) => {
+      this.renderer.spawnMuzzleFlash(pt.x, pt.y, pt.dx, pt.dy, pt.mega);
+      if (this.mode !== 'attract') this.sound.playCannonFire();
+      if (this.mode === 'online_host') {
+        this.net.sendEvent('cannon_fire', {
+          p: idx,
+          x: Math.round(pt.x),
+          y: Math.round(pt.y),
+          dx: Math.round(pt.dx * 100) / 100,
+          dy: Math.round(pt.dy * 100) / 100,
+          m: pt.mega ? 1 : 0
+        });
+      }
+    };
+    this.sim.onCannonExplode = (pt) => {
+      this.renderer.spawnExplosion(pt.x, pt.y, pt.r, pt.mega || pt.oneHitKO);
+      if (this.mode !== 'attract') {
+        this.sound.playExplosion(pt.oneHitKO || pt.mega);
+        Haptics.bump();
+      }
+      if (this.mode === 'online_host') {
+        this.net.sendEvent('cannon_boom', {
+          x: Math.round(pt.x),
+          y: Math.round(pt.y),
+          r: Math.round(pt.r),
+          m: (pt.oneHitKO || pt.mega) ? 1 : 0
+        });
+      }
+    };
+    this.sim.onAdminFx = (kind, pt) => {
+      if (kind === 'shockwave') {
+        this.renderer.spawnShockwave(pt.x, pt.y, pt.r || 240);
+        if (this.mode !== 'attract') this.sound.playSmite();
+      } else if (kind === 'smite') {
+        this.renderer.spawnSmiteLightning(pt.x, pt.y);
+        if (this.mode !== 'attract') this.sound.playSmite();
+      } else if (kind === 'god_block') {
+        this.renderer.spawnGodShield(pt.x, pt.y);
+        if (this.mode !== 'attract') this.sound.playPowerUp();
+      }
+      if (this.mode === 'online_host') {
+        this.net.sendEvent('admin_fx', { k: kind, x: Math.round(pt.x), y: Math.round(pt.y), r: Math.round(pt.r || 0) });
+      }
+    };
   }
 
   _initNetwork() {
@@ -169,18 +232,16 @@ export class CrashAheadGame {
       if (this.mode !== 'online_client') return;
       const snapM1 = typeof snap.m1 === 'number' ? (CAR_MODEL_IDS[snap.m1] || 'roadster') : this.sim.p1Model;
       const snapM2 = typeof snap.m2 === 'number' ? (CAR_MODEL_IDS[snap.m2] || 'roadster') : this.sim.p2Model;
-      if (
-        snap.rn !== this.roundNumber ||
-        snap.ai !== this.sim.arenaIndex ||
-        snapM1 !== this.sim.p1Model ||
-        snapM2 !== this.sim.p2Model
-      ) {
+      if (snap.rn !== this.roundNumber || snap.ai !== this.sim.arenaIndex) {
         this.roundNumber = snap.rn;
         this.koPendingRound = 0;
         this._countdownElapsedMs = 0;
         this.net.pendingInputs = [];
         this.sim.resetArena(snap.ai || 0, snapM1, snapM2);
         this.renderer.clearEffects();
+      } else {
+        if (snapM1 !== this.sim.p1Model) this.sim.morphVehicle(1, snapM1);
+        if (snapM2 !== this.sim.p2Model) this.sim.morphVehicle(2, snapM2);
       }
       if (snap.sc[0] !== this.scores[0] || snap.sc[1] !== this.scores[1]) {
         this.scores = [snap.sc[0], snap.sc[1]];
@@ -262,10 +323,31 @@ export class CrashAheadGame {
           this.sound.playSplash();
           Haptics.ko();
         } else if (msg.kind === 'jump') {
-          if (msg.p === 1) {
-            if (this.sim.p1Car) this.sim.p1Car.jumpSquashAtMs = this.sim.roundElapsedMs;
-            this.renderer.spawnJumpBurst(msg);
-            this.sound.playJump();
+          if (msg.p === 1 || msg.p === 2) {
+            const car = msg.p === 1 ? this.sim.p1Car : this.sim.p2Car;
+            if (car) car.jumpSquashAtMs = this.sim.roundElapsedMs;
+            if (msg.p === 1) {
+              this.renderer.spawnJumpBurst(msg);
+              this.sound.playJump();
+            }
+          }
+        } else if (msg.kind === 'cannon_fire') {
+          this.renderer.spawnMuzzleFlash(msg.x, msg.y, msg.dx || 1, msg.dy || 0, !!msg.m);
+          this.sound.playCannonFire();
+        } else if (msg.kind === 'cannon_boom') {
+          this.renderer.spawnExplosion(msg.x, msg.y, msg.r || 112, !!msg.m);
+          this.sound.playExplosion(!!msg.m);
+          Haptics.bump();
+        } else if (msg.kind === 'admin_fx') {
+          if (msg.k === 'shockwave') {
+            this.renderer.spawnShockwave(msg.x, msg.y, msg.r || 240);
+            this.sound.playSmite();
+          } else if (msg.k === 'smite') {
+            this.renderer.spawnSmiteLightning(msg.x, msg.y);
+            this.sound.playSmite();
+          } else if (msg.k === 'god_block') {
+            this.renderer.spawnGodShield(msg.x, msg.y);
+            this.sound.playPowerUp();
           }
         } else if (msg.kind === 'match_over') {
           this.scores = msg.scores;
@@ -284,6 +366,15 @@ export class CrashAheadGame {
           else this.ui.setVictoryNote('Opponent wants a rematch!');
         } else {
           this.ui.setVictoryNote('Host wants a rematch!');
+        }
+      },
+      onAdminCommand: (cmd, msg) => {
+        if (this.mode !== 'online_host') return;
+        if (cmd === 'sync_state') {
+          this.remoteAdminState = msg.state || null;
+          this._applyDifficultySpeeds();
+        } else {
+          this._execHostAdminAction(cmd, 2, msg);
         }
       },
       onDisconnected: (reason) => {
@@ -450,6 +541,43 @@ export class CrashAheadGame {
         this.sound.playClick();
         this.net.destroy();
         this._startAttractMode();
+      },
+      onAdminToggleDrawer: () => {
+        this.sound.unlock();
+        this.sound.playClick();
+        this.admin.toggleDrawer();
+      },
+      onAdminSelectLevel: (lvl) => {
+        this.sound.unlock();
+        this.sound.playPowerUp();
+        this.admin.setLevel(lvl);
+        const eff = this.admin.getEffectiveState();
+        this.ui.showAdminToast(`${eff.levelMeta.name}: ${eff.levelMeta.desc}`, 2000);
+      },
+      onAdminTogglePower: (key) => {
+        this.sound.unlock();
+        this.sound.playClick();
+        this.admin.togglePower(key);
+      },
+      onAdminCycleGravity: () => {
+        this.sound.unlock();
+        this.sound.playClick();
+        const gMode = this.admin.cycleGravity();
+        this.ui.showAdminToast(`GRAVITY: ${gMode.toUpperCase()}`, 1400);
+      },
+      onAdminFireHold: (held) => {
+        this.sound.unlock();
+        this.input.triggerAdminFirePulse(held);
+      },
+      onAdminCannonOnce: () => this._triggerAdminCannonPulse(),
+      onAdminMorphTank: () => this._execAdminAction('morph_tank'),
+      onAdminShockwave: () => this._execAdminAction('shockwave'),
+      onAdminSmite: () => this._execAdminAction('smite'),
+      onAdminTriggerFlood: () => this._execAdminAction('flood'),
+      onAdminInstantWin: () => this._execAdminAction('insta_win'),
+      onAdminLock: () => {
+        this.sound.playClick();
+        this.admin.lock();
       }
     });
 
@@ -459,6 +587,102 @@ export class CrashAheadGame {
     document.addEventListener('fullscreenchange', syncFs);
     document.addEventListener('webkitfullscreenchange', syncFs);
     syncFs();
+  }
+
+  _bindAdminHotkeys() {
+    this.admin.attachKeyboardListener({
+      onUnlockToast: () => {
+        this.sound.unlock();
+        this.sound.playPowerUp();
+        const eff = this.admin.getEffectiveState();
+        this.ui.showAdminToast(`LAPTOP ADMIN UNLOCKED • ${eff.levelMeta.name}`, 2600);
+      },
+      onLevelChanged: (eff) => {
+        this.sound.unlock();
+        this.sound.playPowerUp();
+        this.ui.showAdminToast(`${eff.levelMeta.name}: ${eff.levelMeta.desc}`, 1800);
+      },
+      onMorphTank: () => this._execAdminAction('morph_tank'),
+      onShockwave: () => this._execAdminAction('shockwave'),
+      onSmite: () => this._execAdminAction('smite'),
+      onAiFreezeChanged: (eff) => {
+        this.ui.showAdminToast(eff.aiFrozen ? 'AI FROZEN!' : 'AI UNFROZEN', 1200);
+      },
+      onScaleChanged: (eff) => {
+        this.ui.showAdminToast(`GIANT: ${eff.giantSelf ? 'ON' : 'OFF'} • TINY OPP: ${eff.miniOpp ? 'ON' : 'OFF'}`, 1400);
+      },
+      onGravityChanged: (eff) => {
+        this.ui.showAdminToast(`GRAVITY: ${eff.gravityMode.toUpperCase()}`, 1300);
+      },
+      onTriggerFlood: () => this._execAdminAction('flood'),
+      onInstantWin: () => this._execAdminAction('insta_win')
+    });
+  }
+
+  _triggerAdminCannonPulse() {
+    if (!this.admin.unlocked || this.mode === 'attract' || this.phase !== 'FIGHT') return;
+    const eff = this.admin.getEffectiveState();
+    if (!eff.active) {
+      this.admin.setLevel(1);
+    }
+    const myCar = this.mode === 'online_client' ? this.sim.p2Car : this.sim.p1Car;
+    if (myCar && myCar.model !== 'tank') {
+      this.ui.showAdminToast('Press [T] for TANK mode to fire Cannon Blast!', 1500);
+      return;
+    }
+    this._execAdminAction('cannon_once');
+  }
+
+  _syncAdminState() {
+    const eff = this.admin.getEffectiveState();
+    this._applyDifficultySpeeds();
+    if (this.mode === 'online_client' && this.net && this.net.isConnected()) {
+      this.net.sendAdminCommand('sync_state', { state: eff });
+    }
+    const myCar = this.mode === 'online_client' ? this.sim.p2Car : this.sim.p1Car;
+    const isTankFight = this.mode !== 'attract' && this.phase === 'FIGHT' && Boolean(myCar && myCar.model === 'tank');
+    this.ui.updateAdminUI(eff, isTankFight);
+  }
+
+  _execAdminAction(cmd) {
+    if (!this.admin.unlocked || this.mode === 'attract') return;
+    const eff = this.admin.getEffectiveState();
+    if (!eff.active) {
+      this.admin.setLevel(1);
+    }
+    if (this.mode === 'online_client') {
+      this.net.sendAdminCommand(cmd, { oneHitKO: Boolean(eff.oneHitKO) });
+      return;
+    }
+    this._execHostAdminAction(cmd, 1, { oneHitKO: Boolean(eff.oneHitKO) });
+  }
+
+  _execHostAdminAction(cmd, actorIdx = 1, msg = {}) {
+    if (!this.sim || this.mode === 'attract') return;
+    if (cmd === 'morph_tank') {
+      if (this.sim.morphVehicle(actorIdx, 'tank')) {
+        this._applyDifficultySpeeds();
+        this.sound.playPowerUp();
+        this.ui.showAdminToast('MORPHED INTO PANZER TANK!', 1300);
+      }
+    } else if (cmd === 'cannon_once') {
+      if (this.phase === 'FIGHT') this.sim.fireTankCannon(actorIdx);
+    } else if (cmd === 'shockwave') {
+      if (this.phase === 'FIGHT') this.sim.triggerShockwave(actorIdx);
+    } else if (cmd === 'smite') {
+      if (this.phase === 'FIGHT') this.sim.smiteOpponent(actorIdx, Boolean(msg.oneHitKO));
+    } else if (cmd === 'flood') {
+      this.sim.triggerRisingWaterNow();
+      this.ui.showAdminToast('RISING WATER TRIGGERED!', 1300);
+    } else if (cmd === 'insta_win') {
+      if (this.phase === 'FIGHT') {
+        const oppIdx = actorIdx === 1 ? 2 : 1;
+        const opp = oppIdx === 1 ? this.sim.p1Car : this.sim.p2Car;
+        if (opp && !opp.dead && this.sim.onHeadKO) {
+          this.sim.onHeadKO(oppIdx, opp.head ? opp.head.position : opp.chassis.position);
+        }
+      }
+    }
   }
 
   _openOnlineModal(tab) {
@@ -508,6 +732,7 @@ export class CrashAheadGame {
     this.koPendingRound = 0;
     this.localRematchWant = false;
     this.remoteRematchWant = false;
+    this.remoteAdminState = null;
 
     this.ui.showGameplayHUD(mode === 'online_host' || mode === 'online_client');
     this.sim.isHostSide = mode !== 'online_client';
@@ -518,6 +743,9 @@ export class CrashAheadGame {
       ? explicitArenaIdx
       : this._pickArenaIndex(this.sim ? this.sim.arenaIndex : -1);
     this._resetRound(startIdx, explicitModels);
+    if (mode === 'online_client' && this.admin.unlocked) {
+      setTimeout(() => this._syncAdminState(), 120);
+    }
   }
 
   _triggerOnlineRematch() {
@@ -535,9 +763,39 @@ export class CrashAheadGame {
   }
 
   _isPlayerJumpEnabled() {
+    const eff = this.admin ? this.admin.getEffectiveState() : null;
+    if (eff && eff.active && eff.infiniteJump && this.mode !== 'online_client') return true;
     if (this.mode !== 'ai') return true;
     const prof = this.ai.getProfile();
     return !prof || prof.playerCanJump !== false;
+  }
+
+  _applyAdminToCar(car, oppCar, eff) {
+    if (!car) return;
+    if (!eff || !eff.active) {
+      car.infiniteJump = false;
+      car.godMode = false;
+      car.cannonEnabled = false;
+      car.rapidCannon = false;
+      car.oneHitCannon = false;
+      this.sim.scaleVehicle(car.playerIndex, 1.0);
+      return;
+    }
+    car.infiniteJump = Boolean(eff.infiniteJump);
+    if (car.infiniteJump) {
+      car.jumpDisabled = false;
+      car.jumpCooldownMs = 0;
+    }
+    car.godMode = Boolean(eff.godMode);
+    car.cannonEnabled = Boolean(eff.tankCannon);
+    car.rapidCannon = Boolean(eff.rapidFire);
+    car.oneHitCannon = Boolean(eff.oneHitKO);
+    car.speedScale = Math.max(car.speedScale || 1.0, eff.speedMult || 1.0);
+    car.accelScale = Math.max(car.accelScale || 1.0, eff.accelMult || 1.0);
+    this.sim.scaleVehicle(car.playerIndex, eff.giantSelf ? 1.45 : 1.0);
+    if (oppCar && !oppCar.godMode) {
+      this.sim.scaleVehicle(oppCar.playerIndex, eff.miniOpp ? 0.58 : 1.0);
+    }
   }
 
   _applyDifficultySpeeds() {
@@ -554,6 +812,25 @@ export class CrashAheadGame {
       this.sim.p2Car.accelScale = prof ? prof.accelScale : 1.0;
       this.sim.p2Car.jumpCooldownMs = (prof && prof.jumpCooldownMs) ? prof.jumpCooldownMs : JUMP_COOLDOWN_MS;
       this.sim.p2Car.jumpDisabled = false;
+    }
+
+    if (this.mode === 'attract') {
+      this.sim.setWorldGravityScale(1.0);
+      return;
+    }
+    const localEff = this.admin ? this.admin.getEffectiveState() : null;
+    if (this.mode === 'online_client') {
+      this._applyAdminToCar(this.sim.p2Car, this.sim.p1Car, localEff);
+      this.sim.setWorldGravityScale(localEff && localEff.active ? (localEff.gravityScale ?? 1.0) : 1.0);
+    } else {
+      this._applyAdminToCar(this.sim.p1Car, this.sim.p2Car, localEff);
+      if (this.mode === 'online_host' && this.remoteAdminState && this.remoteAdminState.active) {
+        this._applyAdminToCar(this.sim.p2Car, this.sim.p1Car, this.remoteAdminState);
+      }
+      const gScale = localEff && localEff.active && localEff.gravityScale !== 1.0
+        ? localEff.gravityScale
+        : (this.remoteAdminState && this.remoteAdminState.active ? (this.remoteAdminState.gravityScale ?? 1.0) : 1.0);
+      this.sim.setWorldGravityScale(gScale);
     }
   }
 
@@ -676,12 +953,21 @@ export class CrashAheadGame {
         if (this.goBannerMs <= 0 && !this.koPending) this.bannerText = '';
       }
       this.p1Input = this.input.getP1();
+      if (this.p1Input.fire && this.sim.p1Car && this.sim.p1Car.model !== 'tank' && this.admin.getEffectiveState().active) {
+        if (!this._lastNoTankToastAt || performance.now() - this._lastNoTankToastAt > 1400) {
+          this._lastNoTankToastAt = performance.now();
+          this.ui.showAdminToast('Press [T] for TANK mode to fire Cannon Blast!', 1400);
+        }
+      }
       if (!this._isPlayerJumpEnabled()) {
         this.p1Input = { ...this.p1Input, jump: false };
       }
-      if (this.mode === 'ai') this.p2Input = this.ai.decide(this.sim, false);
-      else if (this.mode === 'local') this.p2Input = this.input.getP2();
-      else if (this.mode === 'online_host') {
+      if (this.mode === 'ai') {
+        const eff = this.admin.getEffectiveState();
+        this.p2Input = eff.aiFrozen ? { l: false, r: false, jump: false, fire: false } : this.ai.decide(this.sim, false);
+      } else if (this.mode === 'local') {
+        this.p2Input = this.input.getP2();
+      } else if (this.mode === 'online_host') {
         this.net.tickHostWatchdog();
         this.p2Input = this.net.remoteInput;
       }
@@ -775,8 +1061,15 @@ export class CrashAheadGame {
         this.sim.getJumpCooldownRemaining(1),
         this.sim.getJumpCooldownRemaining(2),
         this.mode !== 'attract' && this.phase === 'FIGHT',
-        this._isPlayerJumpEnabled()
+        this._isPlayerJumpEnabled(),
+        true,
+        Boolean(this.sim.p1Car && this.sim.p1Car.infiniteJump),
+        Boolean(this.sim.p2Car && this.sim.p2Car.infiniteJump)
       );
+      const eff = this.admin.getEffectiveState();
+      const myCar = this.mode === 'online_client' ? this.sim.p2Car : this.sim.p1Car;
+      const isTankFight = this.mode !== 'attract' && this.phase === 'FIGHT' && Boolean(myCar && myCar.model === 'tank');
+      this.ui.updateAdminUI(eff, isTankFight);
       return {
         elapsed,
         alpha: this.phase === 'MATCH_OVER' ? 1 : clamp(acc / FIXED_DT, 0, 1)

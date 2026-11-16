@@ -318,3 +318,215 @@
     height: 18px;
   }
 }
+
+/* Laptop Admin Perms Floating Badge & Chaos Drawer (hidden unless unlocked) */
+.admin-hud-wrap {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  left: max(12px, env(safe-area-inset-left, 0px));
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  pointer-events: none;
+}
+
+.admin-top-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.admin-badge-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 3.5px solid var(--ink);
+  background: var(--yellow);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  box-shadow: 0 3px 0 var(--ink);
+}
+
+.admin-badge-btn.off {
+  background: #E2E5EB;
+  color: #4A4F55;
+}
+
+.admin-badge-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ink);
+}
+
+.admin-crown {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.admin-fire-btn {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 3.5px solid var(--ink);
+  background: var(--red);
+  color: var(--white);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 3px 0 var(--ink);
+}
+
+.admin-fire-btn:active {
+  transform: translateY(2px);
+}
+
+.admin-drawer {
+  width: 286px;
+  max-width: calc(100vw - 24px);
+  background: rgba(255, 255, 255, 0.96);
+  border: 4px solid var(--ink);
+  border-radius: 18px;
+  padding: 10px 11px;
+  box-shadow: 0 6px 0 var(--ink);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.admin-sec-title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: var(--slate);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.admin-lvl-desc {
+  font-size: 10px;
+  font-weight: 700;
+  color: #C93B33;
+}
+
+.admin-lvl-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.admin-lvl-btn,
+.admin-chip,
+.admin-act-btn {
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 5px 4px;
+  border-radius: 9px;
+  border: 2.5px solid var(--ink);
+  background: #F4F5F7;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: center;
+}
+
+.admin-lvl-btn.active {
+  background: var(--yellow);
+  box-shadow: inset 0 -2px 0 var(--yellow-dark);
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+
+.admin-chip.on {
+  background: #22C55E;
+  color: var(--white);
+}
+
+.admin-act-btn {
+  background: var(--blue);
+  color: var(--white);
+}
+
+.admin-act-btn.admin-warn {
+  background: var(--red);
+  color: var(--white);
+}
+
+.admin-act-btn.admin-gold {
+  background: var(--yellow);
+  color: var(--ink);
+}
+
+.admin-act-btn:active,
+.admin-chip:active,
+.admin-lvl-btn:active {
+  transform: translateY(1px);
+}
+
+.admin-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.admin-hint {
+  font-size: 9px;
+  font-weight: 700;
+  color: #5A5F66;
+}
+
+.admin-lock-btn {
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background: #EEF1F4;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.admin-toast {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 6px 16px;
+  border-radius: 999px;
+  border: 3.5px solid var(--ink);
+  background: var(--yellow);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  box-shadow: 0 4px 0 var(--ink);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.pad-jump.inf-jump {
+  background: var(--yellow);
+  box-shadow: 0 0 0 3px #FF5630, inset 0 -7px 0 rgba(0, 0, 0, 0.22);
+}
+
+.pad-jump.inf-jump .jump-tag {
+  background: var(--ink);
+  color: var(--yellow);
+}
